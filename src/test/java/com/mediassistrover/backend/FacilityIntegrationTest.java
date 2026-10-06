@@ -40,7 +40,7 @@ class FacilityIntegrationTest extends MySqlIntegrationTest {
     @BeforeEach
     void cleanAndCreateAdmin() {
         jdbcTemplate.execute("SET FOREIGN_KEY_CHECKS=0");
-        for (String table : new String[]{"RobotLocationHistory","RobotStatusHistory","Robot","EndpointGroupMember","Endpoint","Room","EndpointGroup","Zone","Map","Floor","HospitalInformation","AuditLog","RevokedToken","RefreshToken","StaffProfile","SystemSetting","Account"}) {
+        for (String table : new String[]{"RobotLocationHistory","RobotStatusHistory","Robot","EndpointGroupMember","Endpoint","Room","EndpointGroup","Zone","Map","Floor","HospitalInformation","AuditLog","RevokedToken","RefreshToken","StaffProfile","Account"}) {
             jdbcTemplate.execute("TRUNCATE TABLE `" + table + "`");
         }
         jdbcTemplate.execute("SET FOREIGN_KEY_CHECKS=1");

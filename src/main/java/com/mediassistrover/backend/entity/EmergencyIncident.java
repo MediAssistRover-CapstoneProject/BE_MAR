@@ -12,7 +12,7 @@ import java.util.UUID;
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class EmergencyIncident {
     @Id @GeneratedValue @UuidGenerator @Column(name="incident_id",columnDefinition="BINARY(16)") private UUID incidentId;
-    @Column(name="detection_event_id",columnDefinition="BINARY(16)") private UUID detectionEventId;
+    @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="detection_event_id") private DetectionEvent detectionEvent;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="robot_id") private Robot robot;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="map_id") private FacilityMap map;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="endpoint_id") private Endpoint endpoint;

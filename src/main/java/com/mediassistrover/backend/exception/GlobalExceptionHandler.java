@@ -60,6 +60,11 @@ public class GlobalExceptionHandler {
     ResponseEntity<ApiErrorResponse> handleMissingEndpoint(Exception exception,HttpServletRequest request){
         return response(HttpStatus.NOT_FOUND,"RESOURCE_NOT_FOUND","API endpoint not found",request,null);
     }
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    ResponseEntity<ApiErrorResponse> handleMethodNotSupported(Exception exception,HttpServletRequest request){
+        return response(HttpStatus.METHOD_NOT_ALLOWED,"METHOD_NOT_ALLOWED",
+                "HTTP method is not supported for this endpoint",request,null);
+    }
     @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
     ResponseEntity<ApiErrorResponse> handleUnreadableBody(Exception exception,HttpServletRequest request){
         return response(HttpStatus.BAD_REQUEST,"VALIDATION_ERROR","Invalid JSON or enum value",request,null);

@@ -38,7 +38,7 @@ class RobotPiIntegrationTest extends MySqlIntegrationTest {
     private String adminToken;
     private FacilityMap map;
 
-    @BeforeEach void setup(){jdbc.execute("SET FOREIGN_KEY_CHECKS=0");for(String t:new String[]{"RobotLocationHistory","RobotStatusHistory","Robot","EndpointGroupMember","Endpoint","Room","EndpointGroup","Zone","Map","Floor","HospitalInformation","AuditLog","RevokedToken","RefreshToken","StaffProfile","SystemSetting","Account"})jdbc.execute("TRUNCATE TABLE `"+t+"`");jdbc.execute("SET FOREIGN_KEY_CHECKS=1");
+    @BeforeEach void setup(){jdbc.execute("SET FOREIGN_KEY_CHECKS=0");for(String t:new String[]{"RobotLocationHistory","RobotStatusHistory","Robot","EndpointGroupMember","Endpoint","Room","EndpointGroup","Zone","Map","Floor","HospitalInformation","AuditLog","RevokedToken","RefreshToken","StaffProfile","Account"})jdbc.execute("TRUNCATE TABLE `"+t+"`");jdbc.execute("SET FOREIGN_KEY_CHECKS=1");
         admin=accountRepository.save(Account.builder().accountCode("ADM-PI").username("pi.admin").fullName("PI Admin").email("pi.admin@example.test").role(Role.ADMIN).authProvider(AuthProvider.LOCAL).passwordHash("unused").status(AccountStatus.ACTIVE).passwordChangedAt(Instant.now()).build());adminToken=jwtTokenService.issueAccessToken(admin).value();
         HospitalInformation h=hospitalRepository.save(HospitalInformation.builder().updatedBy(admin).infoCategory("HOSPITAL_PROFILE").title("Hospital").content("Profile").languageCode("vi-VN").keywordsJson(objectMapper.createArrayNode()).status(HospitalInformationStatus.PUBLISHED).publicVisible(true).build());
         Floor f=floorRepository.save(Floor.builder().hospitalInformation(h).floorCode("F1").floorName("Floor 1").displayOrder(1).active(true).build());

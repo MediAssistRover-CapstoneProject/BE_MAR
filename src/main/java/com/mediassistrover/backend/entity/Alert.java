@@ -15,7 +15,7 @@ import java.util.UUID;
 public class Alert {
     @Id @GeneratedValue @UuidGenerator @Column(name="alert_id",columnDefinition="BINARY(16)") private UUID alertId;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="incident_id") private EmergencyIncident incident;
-    @Column(name="detection_event_id",columnDefinition="BINARY(16)") private UUID detectionEventId;
+    @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="detection_event_id") private DetectionEvent detectionEvent;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="job_step_id") private JobStep jobStep;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="service_request_id") private ServiceRequest serviceRequest;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="zone_id") private Zone zone;
