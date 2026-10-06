@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 import java.time.Instant;
 import java.util.*;
 public interface JobRepository extends JpaRepository<Job,UUID> {
+    interface StatusCount { JobStatus getStatus(); long getTotal(); }
     boolean existsByWorkflowWorkflowId(UUID workflowId);
     Page<Job> findByStatus(JobStatus status,Pageable pageable);
     Page<Job> findByServiceRequestRequestedByAccountAccountId(UUID accountId,Pageable pageable);
@@ -22,4 +23,6 @@ public interface JobRepository extends JpaRepository<Job,UUID> {
     List<Job> lockRobotJobs(@Param("robotId") UUID robotId,@Param("statuses") Collection<JobStatus> statuses);
     @Query("select j from Job j where j.status in :statuses and j.dispatchExpiresAt is not null and j.dispatchExpiresAt < :now")
     List<Job> findOverdue(@Param("statuses") Collection<JobStatus> statuses,@Param("now") Instant now);
+    @Query("select j.status as status, count(j) as total from Job j group by j.status")
+    List<StatusCount> countGroupedByStatus();
 }

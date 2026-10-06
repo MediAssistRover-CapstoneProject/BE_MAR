@@ -8,4 +8,5 @@ public interface AlertRepository extends JpaRepository<Alert,UUID> {
     Optional<Alert> findByOperationKey(String operationKey);
     Page<Alert> findByStatus(AlertStatus status,Pageable pageable);
     List<Alert> findByIncidentIncidentId(UUID incidentId);
+    long countByStatusIn(Collection<AlertStatus> statuses);
 }
