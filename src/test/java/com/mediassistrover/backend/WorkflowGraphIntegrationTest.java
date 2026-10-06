@@ -53,7 +53,21 @@ class WorkflowGraphIntegrationTest extends MySqlIntegrationTest {
         assertThat(jdbc.queryForObject("SELECT data_type FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='Account' AND column_name='account_id'",String.class)).isEqualTo("binary");
         for(var workflow:seeded)response(post("/api/v1/admin/workflows/{id}/validate",workflow.getWorkflowId()).header("Authorization","Bearer "+token),200);
     }
+    @Test void semanticContractBlocksUnsupportedHandlersAndUndeclaredInputs()throws Exception{
+        String token=token();
+        ObjectNode unsupported=graph();ObjectNode unsupportedStep=(ObjectNode)unsupported.path("steps").get(0);
+        unsupportedStep.put("stepType","DATA_SERVICE");unsupportedStep.set("paramsJson",json.createObjectNode().put("service_key","NOT_IMPLEMENTED"));
+        mvc.perform(post("/api/v1/admin/workflows/graph").header("Authorization","Bearer "+token).contentType(MediaType.APPLICATION_JSON)
+                .content(graphRequest("CONTRACT_BAD_HANDLER_"+UUID.randomUUID().toString().replace("-","").toUpperCase(),unsupported).toString()))
+                .andExpect(status().isUnprocessableEntity());
+
+        ObjectNode undeclared=graph();((ObjectNode)undeclared.path("steps").get(0).path("inputMappingJson")).set("event_id",json.createObjectNode().put("$ref","/inputs/event_id"));
+        mvc.perform(post("/api/v1/admin/workflows/graph").header("Authorization","Bearer "+token).contentType(MediaType.APPLICATION_JSON)
+                .content(graphRequest("CONTRACT_BAD_INPUT_"+UUID.randomUUID().toString().replace("-","").toUpperCase(),undeclared).toString()))
+                .andExpect(status().isUnprocessableEntity());
+    }
     private ObjectNode definition(String code){ObjectNode n=json.createObjectNode();n.put("workflowCode",code).put("versionNo",1).put("workflowName","Aggregate test").put("serviceType","TEST").put("maxDurationSec",600).put("maxTotalVisits",10).put("graphVersion",3).put("schemaVersion",2);n.set("inputSchemaJson",json.createObjectNode().put("type","object"));for(String f:List.of("inputUiJson","defaultInputsJson","outputMappingJson"))n.set(f,json.createObjectNode());n.set("requiredCapabilitiesJson",json.createArrayNode());return n;}
     private ObjectNode graph(){ObjectNode n=json.createObjectNode().put("startStepCode","WAIT_ONCE");n.putArray("tasks").addObject().put("taskCode","MAIN").put("taskName","Main").put("sequenceNo",1).set("configJson",json.createObjectNode());ObjectNode s=n.putArray("steps").addObject().put("taskCode","MAIN").put("stepType","WAIT").put("stepCode","WAIT_ONCE").put("stepName","Wait once").put("sequenceNo",1).put("timeoutSec",30).put("maxAttempts",1).put("retryDelaySec",0).put("maxVisits",1).put("auditLevel","BASIC");s.set("paramsJson",json.createObjectNode().put("wait_type","DURATION").put("duration_sec",1));s.set("inputMappingJson",json.createObjectNode());s.set("retryCodesJson",json.createArrayNode());ArrayNode transitions=n.putArray("transitions");for(String outcome:List.of("SUCCESS","FAILURE","TIMEOUT"))transitions.addObject().put("fromStepCode","WAIT_ONCE").put("outcome",outcome).put("priority",1).put("defaultTransition",true).put("terminalStatus",outcome.equals("SUCCESS")?"SUCCEEDED":"FAILED");return n;}
+    private ObjectNode graphRequest(String code,ObjectNode graph){ObjectNode request=json.createObjectNode();request.set("workflow",definition(code));request.set("graph",graph);return request;}
     private JsonNode response(org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request,int expected)throws Exception{return json.readTree(mvc.perform(request).andExpect(status().is(expected)).andReturn().getResponse().getContentAsString());}
 }

@@ -5,12 +5,19 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mediassistrover.backend.entity.Endpoint;
+import com.mediassistrover.backend.entity.DetectionEvent;
+import com.mediassistrover.backend.entity.EmergencyIncident;
 import com.mediassistrover.backend.entity.JobStep;
+import com.mediassistrover.backend.enums.DetectionEventType;
+import com.mediassistrover.backend.enums.EmergencyIncidentSeverity;
+import com.mediassistrover.backend.enums.EmergencyIncidentStatus;
 import com.mediassistrover.backend.enums.HospitalInformationStatus;
 import com.mediassistrover.backend.enums.StepType;
 import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.repository.EndpointGroupMemberRepository;
 import com.mediassistrover.backend.repository.EndpointRepository;
+import com.mediassistrover.backend.repository.DetectionEventRepository;
+import com.mediassistrover.backend.repository.EmergencyIncidentRepository;
 import com.mediassistrover.backend.repository.HospitalInformationRepository;
 import com.mediassistrover.backend.service.ServerStepHandler;
 import lombok.RequiredArgsConstructor;
@@ -20,13 +27,18 @@ import org.springframework.stereotype.Component;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.Set;
 
 @Component
 @RequiredArgsConstructor
 public class DataServiceStepHandler implements ServerStepHandler {
+    public static final Set<String> SUPPORTED_SERVICE_KEYS=Set.of(
+            "QUERY_HOSPITAL_INFORMATION","RESOLVE_TARGETS","SELECT_TARGET","CHECK_TARGET","CREATE_FALL_INCIDENT");
     private final HospitalInformationRepository hospitalRepository;
     private final EndpointRepository endpointRepository;
     private final EndpointGroupMemberRepository groupMemberRepository;
+    private final DetectionEventRepository detectionEventRepository;
+    private final EmergencyIncidentRepository incidentRepository;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
@@ -50,6 +62,24 @@ public class DataServiceStepHandler implements ServerStepHandler {
             }
             case "CHECK_TARGET" -> {
                 UUID endpointId=uuid(inputs,"endpoint_id");Endpoint endpoint=endpointRepository.findById(endpointId).orElse(null);boolean valid=endpoint!=null&&endpoint.isActive()&&endpoint.isAccessible();data.put("is_valid",valid);if(valid)data.set("endpoint",endpoint(endpoint));
+            }
+            case "CREATE_FALL_INCIDENT" -> {
+                UUID detectionId=uuid(inputs,"detection_event_id");
+                DetectionEvent detection=detectionEventRepository.findById(detectionId)
+                        .orElseThrow(()->new BusinessRuleException("DetectionEvent not found: "+detectionId));
+                if(detection.getEventType()!=DetectionEventType.SUSPECTED_FALL)
+                    throw new BusinessRuleException("CREATE_FALL_INCIDENT requires a SUSPECTED_FALL detection");
+                if(step.getJobTask().getJob().getRobot()!=null&&!step.getJobTask().getJob().getRobot().getRobotId().equals(detection.getRobot().getRobotId()))
+                    throw new BusinessRuleException("DetectionEvent belongs to another Robot");
+                EmergencyIncident existing=incidentRepository.findByDetectionEventDetectionEventId(detectionId).orElse(null);
+                EmergencyIncident incident=existing!=null?existing:
+                        incidentRepository.saveAndFlush(EmergencyIncident.builder().detectionEvent(detection)
+                                .robot(detection.getRobot()).map(detection.getMap()).incidentType("SUSPECTED_FALL")
+                                .severity(EmergencyIncidentSeverity.CRITICAL).status(EmergencyIncidentStatus.OPEN)
+                                .description("Suspected fall confirmed by staff review").xM(detection.getXM()).yM(detection.getYM())
+                                .occurredAt(detection.getDetectedAt()).build());
+                data.put("incident_id",incident.getIncidentId().toString());
+                data.put("created",existing==null);
             }
             default -> throw new BusinessRuleException("Unsupported DATA_SERVICE service_key: "+key);
         }

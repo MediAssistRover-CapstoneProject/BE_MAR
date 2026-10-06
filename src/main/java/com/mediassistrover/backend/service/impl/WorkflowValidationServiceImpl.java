@@ -18,6 +18,7 @@ public class WorkflowValidationServiceImpl implements WorkflowValidationService 
     private final TaskRepository taskRepository; private final StepRepository stepRepository;
     private final StepTransitionRepository transitionRepository; private final ObjectMapper objectMapper;
     private final com.mediassistrover.backend.validation.WorkflowJsonValidator jsonValidator;
+    private final com.mediassistrover.backend.validation.WorkflowStepContractValidator stepContractValidator;
 
     @Override public CompilationResult validateAndCompile(Workflow workflow){
         jsonValidator.object(workflow.getInputSchemaJson(),"inputSchemaJson");
@@ -37,6 +38,7 @@ public class WorkflowValidationServiceImpl implements WorkflowValidationService 
             jsonValidator.object(step.getParamsJson(),"paramsJson");jsonValidator.object(step.getInputMappingJson(),"inputMappingJson");
             jsonValidator.array(step.getRetryCodesJson(),"retryCodesJson");
         }
+        stepContractValidator.validate(workflow,steps);
         Map<UUID,Step> byId=new LinkedHashMap<>(); for(Step s:steps){byId.put(s.getStepId(),s);if(!s.isEnabled())throw new BusinessRuleException("Disabled step cannot be published: "+s.getStepCode());if(s.getStepType().getStepTypeCode().equals("CONTROL_HARDWARE")&&s.getMaxAttempts()!=1)throw new BusinessRuleException("CONTROL_HARDWARE must use maxAttempts=1");}
         if(!byId.containsKey(workflow.getStartStep().getStepId()))throw new BusinessRuleException("Start step must belong to workflow");
         Map<UUID,List<StepTransition>> outgoing=new HashMap<>();Set<String> defaults=new HashSet<>();

@@ -46,7 +46,7 @@ class WorkflowIntegrationTest extends MySqlIntegrationTest {
         UUID taskId=UUID.fromString(response(post("/api/v1/admin/workflows/{id}/tasks",workflowId).header("Authorization",bearer(adminToken)).contentType(MediaType.APPLICATION_JSON).content("{\"taskCode\":\"MAIN\",\"taskName\":\"Main\",\"sequenceNo\":1,\"configJson\":{}}"),201).get("taskId").asText());
         String stepBody="""
             {"taskId":"%s","stepTypeCode":"NOTIFY","stepCode":"DONE","stepName":"Done","sequenceNo":1,
-             "enabled":true,"paramsJson":{},"inputMappingJson":{},"timeoutSec":60,"maxAttempts":1,
+             "enabled":true,"paramsJson":{"notification_type":"TEST_DONE"},"inputMappingJson":{},"timeoutSec":60,"maxAttempts":1,
              "retryDelaySec":0,"retryCodesJson":[],"maxVisits":1,"auditLevel":"BASIC"}
             """.formatted(taskId);
         UUID stepId=UUID.fromString(response(post("/api/v1/admin/workflows/{id}/steps",workflowId).header("Authorization",bearer(adminToken)).contentType(MediaType.APPLICATION_JSON).content(stepBody),201).get("stepId").asText());

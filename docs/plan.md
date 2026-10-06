@@ -98,6 +98,10 @@ Base /api/v1; UUID chuỗi; list pagination; DTO không Entity; UTC/correlation/
 | POST | /admin/workflows/{id}/validate,/publish,/archive,/clone | ADMIN | Lifecycle/CloneWorkflowRequest |
 | POST | /pi/auth/token | Device credentials | robotCode/deviceSecret |
 | POST | /pi/requests/information,/navigation,/escort | DEVICE | Existing request DTO + Idempotency-Key; Server creates Job |
+| POST | /pi/monitoring/detections,/crowd-density | DEVICE | Phase 11 append-only sensing PiEnvelope |
+| POST | /pi/voice/interactions,/commands | DEVICE | Phase 12 idempotent start/append PiEnvelope |
+| POST | /pi/voice/interactions/{id}/completion,/commands/{id}/result | DEVICE | Controlled Voice lifecycle transition |
+| GET | /voice/interactions[/{id}],/voice/commands[/{id}] | ADMIN/STAFF | Read-only Voice history |
 | GET/POST | Existing /requests, /jobs, /schedules routes | ADMIN/STAFF scope | Existing request/Job controls |
 | Existing | /pi telemetry/commands/runtime routes | DEVICE own robot | Protocol v1 envelope |
 
@@ -122,6 +126,8 @@ V4 Workflow/Task/Step/StepTransition; enum VARCHAR + CHECK11, no StepType FK/tab
 V5 seed eight DRAFT definitions. Legacy filename still contains step_types; contents no catalog.
 V6 request/schedule/job; nullable actor; source STAFF_UI/ROBOT_UI/VOICE/SYSTEM/DETECTOR.
 V7 job events/protocol; no PATIENT producer.
+V8 delivery/alert/emergency; V9 operations/retention settings; V10 Shift/Slot.
+V11 DetectionEvent/CrowdDensityRecord/HeatmapRecord; V12 VoiceInteraction/VoiceCommand.
 These are revised DEV baselines. No existing database/volume was deleted by this task. If older migrations already applied, checksums differ: back up and explicitly recreate only intended development DB, or use forward upgrade migration if data must be retained. Do NOT flyway repair to disguise incompatible schema.
 After shared environment schema freeze, only new forward migrations. Keep baseline-on-migrate=false, clean-disabled=true, ddl-auto=validate; no automatic destructive reset.
 ERD Draw.io itself remains unchanged; this approved schema delta must be incorporated into its next revision.
@@ -129,7 +135,7 @@ ERD Draw.io itself remains unchanged; this approved schema delta must be incorpo
 ## 10. Phases 6–9
 Phase 6 DONE — core runtime: ServiceRequest/Navigation/Escort/Schedule/Job/JobTask/JobStep/JobEvent; real JSON Pointer resolver; condition/priority/default transition evaluation; runtime guard; repeated step visits; queue và một active Job mỗi Robot; DISPATCH/CANCEL command + ACK; timeout; offline/reboot chuyển RECOVERY_REQUIRED; reconciliation; DATA_SERVICE handler và INTERACT orchestration. Nhánh không được chọn được phản ánh ở JobTask `NOT_VISITED`; không tạo JobStep giả cho nhánh đó. Device screen hiện chỉ có information/navigation/escort; SOS thuộc Phase 7. Step SERVER chưa có handler nghiệp vụ fail-closed, tuyệt đối không tự báo success.
 Phase 7 NEW: DeliveryRequest/DeliveryItem, Alert/AlertRecipient, EmergencyIncident/AuthVerification; confirm schema then migration forward; authorized verification, payload safe errors, audit. DoD end-to-end delivery/SOS tests and no fake server result.
-Phase 8 DONE: Audit existing; all schedulers use app.operations.scheduler-enabled. Expired token cleanup, robot offline, due Schedule, overdue Job/Step timeout include edge-boundary tests and pessimistic locking; runtime settings override property fallback. Basic report API is implemented. Retention preparation only: Audit/JobEvent/Alert/Emergency3y; RobotStatus1y/location6mo; Detection/Crowd/Heatmap1y; no automatic history deletion. Later multi-instance ShedLock MySQL.
+Phase 8 DONE: Audit existing; all schedulers use app.operations.scheduler-enabled. Expired token cleanup, robot offline, due Schedule, overdue Job/Step timeout include edge-boundary tests and pessimistic locking; runtime settings override property fallback. Basic report API is implemented. Retention preparation only: Audit/JobEvent/Alert/Emergency3y; RobotStatus1y/location6mo; Detection/Crowd/Heatmap1y; no automatic history deletion. Multi-instance locking và retention execution thuộc Phase 13.
 Phase 9 DONE — automated backend scope: JUnit5/Mockito/MockMvc/Testcontainers MySQL; fresh migrations, security isolation, rollback, unique/FK/case UUID JSON, concurrency/idempotency/reboot/offline and automated OpenAPI acceptance are covered. CI runs compile/test/JAR/image and validates Compose; Compose includes backend+MySQL and a production Nginx HTTPS profile. Hardware/Pi acceptance remains a separate integration activity.
 
 ## 10A. Phase 10 — Staff Shift/Slot
@@ -137,7 +143,32 @@ DONE. V10 creates `Shift` and `Slot` exactly with PascalCase tables, UUID `BINAR
 
 DoD Phase 10: Flyway V1–V10 and Hibernate validate pass on MySQL 8.4; `Phase10IntegrationTest` passes 3/3; full regression passes 47/47; JAR, both Compose models and Docker image build pass.
 
-Advanced sensing/Voice/Heatmap schema coverage remains separate follow-up scope; no hardware code.
+## 10B. Phase 11 — Detection/Crowd/Heatmap
+DONE. V11 tạo `DetectionEvent`, `CrowdDensityRecord`, `HeatmapRecord` theo Logical ERD và nối FK deferred từ Alert/EmergencyIncident. Device gửi detection/crowd qua Pi envelope với message-id idempotency, kiểm tra Robot–Map–Zone–Endpoint–JobStep ownership và chỉ lưu evidence reference. Admin đọc lịch sử và lưu heatmap tổng hợp; không có API sửa/xóa history và backend không chạy AI.
+
+## 10C. Phase 12 — VoiceInteraction/VoiceCommand
+DONE. V12 tạo đủ 10 field `VoiceInteraction` và 13 field `VoiceCommand` theo Logical ERD, UUID `BINARY(16)`, JSON, unique interaction/sequence, FK và CHECK lifecycle/timestamp/confidence. Device có contract start/complete interaction, append command và record controlled result; message-id chống trùng, Robot ownership và ServiceRequest ownership được kiểm tra. ADMIN/STAFF chỉ đọc lịch sử; không có CRUD sửa/xóa và backend không chạy speech/intent AI.
+
+DoD Phase 11–12: fresh MySQL apply Flyway V1–V12, Hibernate validate và full regression pass 53/53 ngày 2026-10-06. Contract của tám DRAFT seed được harden tại V13; hardware/Pi acceptance vẫn tách riêng theo `pi-contract-and-hardware-acceptance.md`.
+
+## 10D. Phase 13 — Multi-instance & Operations Scalability
+
+PLANNED. Phase này gồm hai workstream:
+
+1. **ShedLock cho nhiều Backend instance**: dùng JDBC/MySQL làm shared lock provider; tạo lock table bằng forward Flyway migration; áp dụng lock có tên ổn định cho schedule scan, robot offline scan, Job overdue, Step timeout, token cleanup và retention. Mỗi task phải có `lockAtMostFor` lớn hơn worst-case runtime hợp lý, `lockAtLeastFor` khi cần chống chạy dồn, và vẫn giữ transaction/pessimistic lock nghiệp vụ hiện có.
+2. **Retention tự động xóa/archive dữ liệu**: đọc policy `retention.*_days` từ SystemSetting; cutoff theo UTC; xử lý batch có giới hạn; tôn trọng thứ tự FK và không đụng active/non-terminal records. Chế độ DELETE hoặc ARCHIVE phải được cấu hình rõ theo từng dataset; archive phải xác nhận thành công trước khi xóa nguồn. Mỗi run có audit, metrics, số bản ghi xử lý, duration và lỗi có thể retry.
+
+Không đồng nhất ShedLock với business lock: ShedLock chỉ bảo đảm một instance nhận scheduler tick, còn idempotency, unique key và row lock vẫn là lớp bảo vệ cuối. Không chạy retention destructive mặc định khi chưa có policy hợp lệ; không dùng Flyway để xóa dữ liệu lịch sử.
+
+DoD Phase 13: test đồng thời tối thiểu hai application instance chỉ có một scheduler owner; lock hết hạn có thể recovery; retention dry-run và execute đúng cutoff/batch/FK; archive failure không xóa nguồn; full regression và package pass trên fresh MySQL.
+
+## 10E. Phase 14 — Analytics & Advanced Reports
+
+PLANNED. Mở rộng `Admin Reports` hiện có với bộ lọc time range/timezone và các nhóm báo cáo: request/job throughput, success/failure/recovery rate, SLA và duration percentile, Robot utilization/offline/battery, delivery/emergency response, crowd/fall/restricted-zone trends. Hỗ trợ breakdown theo workflow, Robot, map/zone và khoảng thời gian; export CSV ở background hoặc streaming có giới hạn.
+
+Report phải chỉ đọc, phân quyền ADMIN, tránh lộ dữ liệu nhạy cảm, dùng aggregate/index phù hợp thay vì load toàn bộ history vào memory. Contract response phải nêu timezone, interval, generated-at và tiêu chí tính metric; pagination/row limit bắt buộc cho detail drill-down.
+
+DoD Phase 14: metric có công thức được tài liệu hóa và fixture kiểm chứng; timezone/boundary chính xác; query plan/index được kiểm tra trên volume đại diện; export có giới hạn và audit; không làm ảnh hưởng scheduler/runtime SLA.
 
 ## 11. Files/classes and DoD
 Existing packages config/controller/dto/entity/enums/exception/repository/security/service/service.impl/mapper/validation/scheduler/integration/util remain.
@@ -147,4 +178,4 @@ Workflow: enum StepType (remove entity/repository), WorkflowRequests/Responses/M
 Request/runtime: ServiceRequestService/Impl, PiRequestController, JobExecutionService/Impl, JobDispatchService/Impl, PiJobRuntimeService/Impl, PiStepService/Impl, JobStepInputResolver/Impl, WorkflowRuntimeTransitionService/Impl, JobStepRuntimeGuard/Impl, ServerStepHandler implementations, JobStepRepository.
 Tests: AuthFlowIntegrationTest, WorkflowGraphIntegrationTest, WorkflowIntegrationTest, RequestJobIntegrationTest, WorkflowRuntimeTransitionServiceTest, JobStepInputResolverTest and adapted preexisting tests.
 Future phases extend existing modules; no duplicate V2 classes. Exact class lists should follow actual schema, not generate unused repository/controller per history table.
-DoD current checkpoint: Maven full suite passes on Java 21/MySQL 8.4 Testcontainers fresh schema (47/47), Flyway V1–V10 and Hibernate validation pass. Robot/Raspberry Pi hardware acceptance and optional manual Swagger walkthrough remain separate from automated backend completion.
+DoD current checkpoint: Maven full suite passes on Java 21/fresh MySQL schema (55/55), Flyway V1–V13 and Hibernate validation pass. Robot/Raspberry Pi hardware acceptance and optional manual Swagger walkthrough remain separate from automated backend completion.
