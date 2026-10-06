@@ -15,14 +15,16 @@ public interface JobRepository extends JpaRepository<Job,UUID> {
     List<Job> findByServiceRequestServiceRequestId(UUID requestId);
     Page<Job> findByAssignedStaffAccountAccountIdOrServiceRequestRequestedByAccountAccountId(UUID assigned,UUID requester,Pageable pageable);
     List<Job> findByRobotRobotIdAndStatusIn(UUID robotId,Collection<JobStatus> statuses);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     List<Job> findByStatusAndRobotIsNullOrderByPriorityDescQueuedAtAsc(JobStatus status,Pageable pageable);
     Optional<Job> findFirstByRobotRobotIdAndStatusOrderByQueuedAtAsc(UUID robotId,JobStatus status);
     boolean existsByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(UUID scheduleId,Instant fireAt,String itemKey);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select j from Job j where j.robot.robotId=:robotId and j.status in :statuses order by j.queuedAt")
     List<Job> lockRobotJobs(@Param("robotId") UUID robotId,@Param("statuses") Collection<JobStatus> statuses);
-    @Query("select j from Job j where j.status in :statuses and j.dispatchExpiresAt is not null and j.dispatchExpiresAt < :now")
-    List<Job> findOverdue(@Param("statuses") Collection<JobStatus> statuses,@Param("now") Instant now);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select j from Job j where j.status in :statuses and j.dispatchExpiresAt is not null and j.dispatchExpiresAt <= :now")
+    List<Job> lockOverdue(@Param("statuses") Collection<JobStatus> statuses,@Param("now") Instant now);
     @Query("select j.status as status, count(j) as total from Job j group by j.status")
     List<StatusCount> countGroupedByStatus();
 }

@@ -8,5 +8,5 @@ import java.util.UUID;
 
 public interface RevokedTokenRepository extends JpaRepository<RevokedToken, UUID> {
     boolean existsByJti(String jti);
-    long deleteByExpiresAtBefore(Instant threshold);
+    long deleteByExpiresAtLessThanEqual(Instant threshold);
 }

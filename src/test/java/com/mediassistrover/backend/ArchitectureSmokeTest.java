@@ -36,6 +36,11 @@ class ArchitectureSmokeTest extends MySqlIntegrationTest {
     void openApiEndpointIsPublic() throws Exception {
         mockMvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.info.title").value("MediAssistRover Backend API"));
+                .andExpect(jsonPath("$.info.title").value("MediAssistRover Backend API"))
+                .andExpect(jsonPath("$.components.securitySchemes.bearerAuth.type").value("http"))
+                .andExpect(jsonPath("$.components.securitySchemes.deviceBearerAuth.type").value("http"))
+                .andExpect(jsonPath("$.paths['/api/v1/auth/login'].post").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/pi/auth/token'].post").exists())
+                .andExpect(jsonPath("$.paths['/api/v1/admin/reports/overview'].get").exists());
     }
 }

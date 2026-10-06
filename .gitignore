@@ -4,5 +4,6 @@ target/
 *.iml
 *.log
 .env
+secrets/
 .DS_Store
 Thumbs.db

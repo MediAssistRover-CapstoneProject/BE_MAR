@@ -25,5 +25,15 @@ jobs:
       - name: Compile and test
         run: mvn --batch-mode --no-transfer-progress verify
 
+      - name: Validate development and production Compose models
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-password
+          MYSQL_PASSWORD: ci-app-password
+          JWT_SECRET: ci-user-jwt-secret-at-least-thirty-two-bytes
+          DEVICE_JWT_SECRET: ci-device-jwt-secret-at-least-thirty-two
+        run: |
+          docker compose config --quiet
+          docker compose --profile production config --quiet
+
       - name: Build Docker image
         run: docker build --tag mediassist-rover-backend:${{ github.sha }} .

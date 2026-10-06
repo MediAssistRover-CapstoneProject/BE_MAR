@@ -34,7 +34,19 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
       OPERATIONS_SCHEDULER_ENABLED: ${OPERATIONS_SCHEDULER_ENABLED:-true}
     ports:
-      - "${BACKEND_PORT:-8080}:8080"
+      - "${BACKEND_BIND_ADDRESS:-127.0.0.1}:${BACKEND_PORT:-8080}:8080"
+
+  reverse-proxy:
+    image: nginx:1.27-alpine
+    profiles: ["production"]
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${TLS_CERT_DIR:-./secrets/tls}:/etc/nginx/tls:ro
 
 volumes:
   mysql-data:
