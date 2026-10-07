@@ -153,7 +153,7 @@ DoD Phase 11–12: fresh MySQL apply Flyway V1–V12, Hibernate validate và ful
 
 ## 10D. Phase 13 — Multi-instance & Operations Scalability
 
-PLANNED. Phase này gồm hai workstream:
+DONE. Phase này gồm hai workstream:
 
 1. **ShedLock cho nhiều Backend instance**: dùng JDBC/MySQL làm shared lock provider; tạo lock table bằng forward Flyway migration; áp dụng lock có tên ổn định cho schedule scan, robot offline scan, Job overdue, Step timeout, token cleanup và retention. Mỗi task phải có `lockAtMostFor` lớn hơn worst-case runtime hợp lý, `lockAtLeastFor` khi cần chống chạy dồn, và vẫn giữ transaction/pessimistic lock nghiệp vụ hiện có.
 2. **Retention tự động xóa/archive dữ liệu**: đọc policy `retention.*_days` từ SystemSetting; cutoff theo UTC; xử lý batch có giới hạn; tôn trọng thứ tự FK và không đụng active/non-terminal records. Chế độ DELETE hoặc ARCHIVE phải được cấu hình rõ theo từng dataset; archive phải xác nhận thành công trước khi xóa nguồn. Mỗi run có audit, metrics, số bản ghi xử lý, duration và lỗi có thể retry.
@@ -162,13 +162,17 @@ Không đồng nhất ShedLock với business lock: ShedLock chỉ bảo đảm 
 
 DoD Phase 13: test đồng thời tối thiểu hai application instance chỉ có một scheduler owner; lock hết hạn có thể recovery; retention dry-run và execute đúng cutoff/batch/FK; archive failure không xóa nguồn; full regression và package pass trên fresh MySQL.
 
+Kết quả: ShedLock 7.10.1 dùng JDBC/MySQL và DB time; sáu scheduler hiện hữu cùng retention scheduler có lock name ổn định. V14 tạo `ShedLock`, `RetentionArchive` và safety settings. Retention hỗ trợ dry-run, `DISABLED`/`DELETE`/`ARCHIVE`, UTC cutoff, bounded batch/FK order, archive verification, audit và Micrometer metrics. Execution destructive mặc định tắt. `Phase13IntegrationTest` pass 3/3.
+
 ## 10E. Phase 14 — Analytics & Advanced Reports
 
-PLANNED. Mở rộng `Admin Reports` hiện có với bộ lọc time range/timezone và các nhóm báo cáo: request/job throughput, success/failure/recovery rate, SLA và duration percentile, Robot utilization/offline/battery, delivery/emergency response, crowd/fall/restricted-zone trends. Hỗ trợ breakdown theo workflow, Robot, map/zone và khoảng thời gian; export CSV ở background hoặc streaming có giới hạn.
+DONE. Mở rộng `Admin Reports` hiện có với bộ lọc time range/timezone và các nhóm báo cáo: request/job throughput, success/failure/recovery rate, SLA và duration percentile, Robot utilization/offline/battery, delivery/emergency response, crowd/fall/restricted-zone trends. Hỗ trợ breakdown theo workflow, Robot, map/zone và khoảng thời gian; export CSV đồng bộ có giới hạn 5.000 dòng.
 
 Report phải chỉ đọc, phân quyền ADMIN, tránh lộ dữ liệu nhạy cảm, dùng aggregate/index phù hợp thay vì load toàn bộ history vào memory. Contract response phải nêu timezone, interval, generated-at và tiêu chí tính metric; pagination/row limit bắt buộc cho detail drill-down.
 
 DoD Phase 14: metric có công thức được tài liệu hóa và fixture kiểm chứng; timezone/boundary chính xác; query plan/index được kiểm tra trên volume đại diện; export có giới hạn và audit; không làm ảnh hưởng scheduler/runtime SLA.
+
+Kết quả: API ADMIN `/analytics`, `/jobs`, `/jobs/export.csv` đã hoàn tất; response có generated-at/timezone/interval, bucket `[start,end)`, breakdown Workflow/Robot/Map/Zone. V15 thêm index truy vấn. CSV chống formula injection, giới hạn cấu hình và ghi `REPORT_CSV_EXPORTED`. Công thức và contract nằm tại `docs/analytics-reports.md`; `Phase14IntegrationTest` pass 4/4 trên MySQL 8.4.
 
 ## 11. Files/classes and DoD
 Existing packages config/controller/dto/entity/enums/exception/repository/security/service/service.impl/mapper/validation/scheduler/integration/util remain.
@@ -178,4 +182,4 @@ Workflow: enum StepType (remove entity/repository), WorkflowRequests/Responses/M
 Request/runtime: ServiceRequestService/Impl, PiRequestController, JobExecutionService/Impl, JobDispatchService/Impl, PiJobRuntimeService/Impl, PiStepService/Impl, JobStepInputResolver/Impl, WorkflowRuntimeTransitionService/Impl, JobStepRuntimeGuard/Impl, ServerStepHandler implementations, JobStepRepository.
 Tests: AuthFlowIntegrationTest, WorkflowGraphIntegrationTest, WorkflowIntegrationTest, RequestJobIntegrationTest, WorkflowRuntimeTransitionServiceTest, JobStepInputResolverTest and adapted preexisting tests.
 Future phases extend existing modules; no duplicate V2 classes. Exact class lists should follow actual schema, not generate unused repository/controller per history table.
-DoD current checkpoint: Maven full suite passes on Java 21/fresh MySQL schema (55/55), Flyway V1–V13 and Hibernate validation pass. Robot/Raspberry Pi hardware acceptance and optional manual Swagger walkthrough remain separate from automated backend completion.
+DoD current checkpoint: Maven clean full suite passes 62/62 on Java 21/fresh MySQL schema; Flyway V1–V15 and Hibernate validation pass. JAR, Docker image và Compose config pass. Manual Swagger walkthrough và Admin publish tám Workflow đã pass trong database demo; xem `backend-demo-acceptance.md`. Robot/Raspberry Pi hardware acceptance remains separate from backend completion.

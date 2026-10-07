@@ -29,4 +29,23 @@ public class RuntimeSettingServiceImpl implements RuntimeSettingService {
                     return fallback;
                 });
     }
+
+    @Override
+    public boolean getBoolean(String key, boolean fallback) {
+        return repository.findBySettingKey(key).map(SystemSetting::getSettingValue)
+                .map(value -> value.get("value"))
+                .filter(Boolean.class::isInstance)
+                .map(Boolean.class::cast)
+                .orElse(fallback);
+    }
+
+    @Override
+    public String getString(String key, String fallback) {
+        return repository.findBySettingKey(key).map(SystemSetting::getSettingValue)
+                .map(value -> value.get("value"))
+                .filter(String.class::isInstance)
+                .map(String.class::cast)
+                .filter(value -> !value.isBlank())
+                .orElse(fallback);
+    }
 }
