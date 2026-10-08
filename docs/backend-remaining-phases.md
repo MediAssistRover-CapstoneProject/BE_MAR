@@ -1,6 +1,6 @@
 # Kế hoạch hoàn thiện riêng Backend — Phase 15–21
 
-Cập nhật: 2026-10-08. **Phase 15 và Phase 16 DONE**; full regression Phase 16 đạt 100/100 test. Phase 17–21 vẫn là kế hoạch, chưa tự bắt đầu. Xem [checkpoint Phase 15](phase15-runtime-authorization.md), [ma trận contract Phase 16](step-contract-matrix.md) và [implementation-status](implementation-status.md).
+Cập nhật: 2026-10-08. **Phase 15–18 DONE**; full regression Phase 17–18 đạt 106/106 test. Phase 19–21 vẫn là kế hoạch, chưa tự bắt đầu. Xem [checkpoint Phase 15](phase15-runtime-authorization.md), [ma trận contract Phase 16](step-contract-matrix.md), [checkpoint Phase 17–18](phase17-18-runtime-delivery.md) và [implementation-status](implementation-status.md).
 
 ## 1. Kết luận và phạm vi
 
@@ -18,8 +18,8 @@ Phân loại: **REVISE** = phần có code nhưng chưa đủ; **NEW** = xử l�
 |---|---|---|---|
 | 15 | Khóa quyền hoàn tất Step, cấp grant, scope operationKey | DONE | 83/83 regression đạt ngày 2026-10-08 |
 | 16 | Contract input/output cho 11 StepType và message protocol | DONE | 100/100 regression; contract schema 2/graph 3 đã khóa |
-| 17 | Runtime context, WAIT/event, NOTIFY/ACK và chống race | REVISE + NEW | 15; dùng contract chốt tại 16 |
-| 18 | Giao nhận đầy đủ, QR/Staff confirmation, recovery và SOS | REVISE + NEW | 15–17; chốt QR và recovery policy |
+| 17 | Runtime context, WAIT/event, NOTIFY/ACK và chống race | DONE | 106/106 regression; event consume/ACK transaction đã khóa |
+| 18 | Giao nhận đầy đủ, QR/Staff confirmation, recovery và SOS | DONE | QR hash/single-use; cargo/stage/recovery/SOS lifecycle đã kiểm thử |
 | 19 | Đối chiếu schema, thông tin bệnh viện và API hỏi đáp | REVISE + DECISION | Chốt nghĩa HospitalInformation, nguồn câu trả lời |
 | 20 | Hoàn thiện catalog Workflow và các đường tạo Job còn thiếu | REVISE + NEW có điều kiện | 16–19; chốt bộ Workflow cần hỗ trợ |
 | 21 | Nghiệm thu Backend bằng API, regression, tải và restore | NEW verification + sửa lỗi phát hiện | 15–20 hoàn tất phạm vi được duyệt |
@@ -64,6 +64,8 @@ Không đưa Shift/Slot, Detection/Crowd/Heatmap, Voice log, ShedLock, retention
 
 ## 5. Phase 17 — Context, event chờ và ACK nghiệp vụ
 
+**DONE — 2026-10-08.** Chi tiết implementation, API, migration và test: [phase17-18-runtime-delivery.md](phase17-18-runtime-delivery.md).
+
 **Mục tiêu:** sửa P1-03, P1-04 và hoàn thiện event lifecycle phía Server.
 
 - Entity: Job.contextJson, JobStep, JobEvent, Alert, AlertRecipient; tận dụng bảng có sẵn trước khi đề xuất bảng mới.
@@ -80,6 +82,8 @@ Không đưa Shift/Slot, Detection/Crowd/Heatmap, Voice log, ShedLock, retention
 - Dependency: Phase 15–16.
 
 ## 6. Phase 18 — Giao nhận và xử lý sự cố hoàn chỉnh
+
+**DONE — 2026-10-08.** Đã chốt QR challenge TTL/scope/single-use, confirmation vật lý và recovery policy; chi tiết: [phase17-18-runtime-delivery.md](phase17-18-runtime-delivery.md).
 
 **Mục tiêu:** sửa P1-05, P2-01; nối nghiệp vụ Staff với runtime, không chỉ lưu timestamp.
 
@@ -150,8 +154,8 @@ Không đưa Shift/Slot, Detection/Crowd/Heatmap, Voice log, ShedLock, retention
 
 1. Phase 15 đã hoàn tất kiểm soát quyền runtime.
 2. Phase 16 đã khóa và kiểm thử contract 11 StepType.
-3. Bước kế tiếp là Phase 17 rồi 18 để hoàn thiện runtime và nghiệp vụ.
-4. Hoàn tất Phase 19 với delta đã duyệt; Phase 20 theo danh mục được chọn.
+3. Phase 17–18 đã hoàn tất runtime event/ACK và nghiệp vụ giao nhận/recovery.
+4. Bước kế tiếp là Phase 19 với delta đã duyệt; Phase 20 theo danh mục được chọn.
 5. Phase 21 nghiệm thu riêng Backend và cập nhật trạng thái có bằng chứng.
 
 Bảy phase là cách chia công việc đề xuất, không phải bảy module còn trống. Phase 15/17/18 chủ yếu sửa phần đã có; Phase 16/19/20 có quyết định nguồn cần chốt. Không tự thêm ngày hoàn thành, không hứa thời điểm hết token; kết thúc mỗi phase cần checkpoint file/class/test/gap còn lại.

@@ -15,4 +15,10 @@ public interface JobStepRepository extends JpaRepository<JobStep,UUID> {
     Optional<JobStep> findByOperationKey(String operationKey);
     long countByJobTaskJobJobId(UUID jobId);
     long countByJobTaskJobJobIdAndStepStepId(UUID jobId,UUID stepId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from JobStep s where s.jobStepId=:id")
+    Optional<JobStep> lockById(@Param("id") UUID id);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from JobStep s where s.jobTask.job.jobId=:jobId and s.stepTypeSnapshot='WAIT' and s.status='RUNNING' order by s.executionSequenceNo")
+    List<JobStep> lockRunningWaits(@Param("jobId") UUID jobId);
 }

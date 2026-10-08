@@ -17,6 +17,7 @@ public class JobEvent {
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="job_task_id") private JobTask jobTask;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="job_step_id") private JobStep jobStep;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="actor_account_id") private Account actorAccount;
+    @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="consumed_by_job_step_id") private JobStep consumedByJobStep;
     @Enumerated(EnumType.STRING) @Column(name="producer_type",nullable=false,length=24) private JobEventProducerType producerType;
     @Column(name="producer_session_id",nullable=false,columnDefinition="BINARY(16)") private UUID producerSessionId;
     @Column(name="sequence_no",nullable=false) private long sequenceNo;
@@ -30,4 +31,5 @@ public class JobEvent {
     @Column(name="occurred_at",nullable=false) private Instant occurredAt;
     @Column(name="received_at",nullable=false) private Instant receivedAt;
     @Column(name="persisted_at",nullable=false) private Instant persistedAt;
+    @Column(name="consumed_at") private Instant consumedAt;
 }

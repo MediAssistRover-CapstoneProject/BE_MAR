@@ -21,7 +21,7 @@ Cập nhật: 2026-10-08
 | 14 | DONE | Analytics Job/Request/Robot/Delivery/Emergency/Monitoring, time bucket + breakdown, drill-down và CSV giới hạn có audit |
 
 ## Database
-V1–V12 DEV baselines đã điều chỉnh theo quyết định mới. V4 không còn StepType table; V5 seed tám Workflow DRAFT; V8 thêm nghiệp vụ Phase 7; V9 seed operations/retention metadata; V10 thêm Shift/Slot; V11 thêm Detection/Crowd/Heatmap; V12 thêm VoiceInteraction/VoiceCommand; V13 harden contract Team Pi; V14 thêm `ShedLock`/`RetentionArchive`; V15 thêm analytics indexes. Priority>=1; Account không approval/PATIENT.
+V1–V12 DEV baselines đã điều chỉnh theo quyết định mới. V4 không còn StepType table; V5 seed tám Workflow DRAFT; V8 thêm nghiệp vụ Phase 7; V9 seed operations/retention metadata; V10 thêm Shift/Slot; V11 thêm Detection/Crowd/Heatmap; V12 thêm VoiceInteraction/VoiceCommand; V13 harden contract Team Pi; V14 thêm `ShedLock`/`RetentionArchive`; V15 thêm analytics indexes; V16 thêm event consumption, QR challenge và physical delivery confirmation theo migration tiến tới. Priority>=1; Account không approval/PATIENT.
 ERD Draw.io không sửa. Không xóa database/volume hiện có. DB dev đã apply baseline cũ cần backup/recreate có chủ đích hoặc migration upgrade nếu phải giữ dữ liệu; không tự flyway repair.
 Mục tiêu 42 bảng domain/security đã đạt (41 ERD cũ - StepType + RefreshToken/RevokedToken); bổ sung 2 bảng vận hành `ShedLock` và `RetentionArchive`; không tạo Patient hoặc StepType table.
 
@@ -48,8 +48,8 @@ Kế hoạch tiếp nối riêng Backend: [backend-remaining-phases.md](backend-
 |---|---|---|
 | 15 | Quyền runtime, cấp grant, scope operationKey | DONE — 83/83 regression; chi tiết phase15-runtime-authorization.md |
 | 16 | Contract/validation 11 StepType | DONE — schema/result validation đủ 11 enum; 100/100 regression |
-| 17 | Context, WAIT/event, NOTIFY/ACK | PLANNED |
-| 18 | Delivery đầy đủ, QR, recovery, SOS | PLANNED — chốt proof/recovery |
+| 17 | Context, WAIT/event, NOTIFY/ACK | DONE — durable early event, duration deadline, ACK ANY/ALL, row-lock race safety |
+| 18 | Delivery đầy đủ, QR, recovery, SOS | DONE — cargo/stage/physical confirmation, hashed single-use QR, recovery, false-alarm |
 | 19 | Schema và dịch vụ thông tin bệnh viện | PLANNED — chờ nghĩa dữ liệu được duyệt |
 | 20 | Catalog Workflow và entry point nghiệp vụ | PLANNED — chờ danh mục canonical |
 | 21 | Nghiệm thu riêng Backend bằng API/simulator | PLANNED |
@@ -72,12 +72,20 @@ Các phase này không bao gồm triển khai Pi, frontend, driver hoặc model 
 - Khóa ba version độc lập: transport protocol `1.0`, Step schema `2`, Workflow graph `3`. Workflow/Job có version không được runtime hỗ trợ bị từ chối rõ ràng.
 - Publish-time validation kiểm tra contract theo từng StepType, JSON Pointer/reference, condition budget, DATA_SERVICE allowlist và chặn cấu hình URL/SQL/script/code.
 - Runtime validation kiểm tra exact root schema, kiểu dữ liệu và success semantics đủ 11 loại trước khi ghi `JobStep=SUCCEEDED`. Áp dụng cho callback Device, Server handler và AuthVerification; result sai rollback và không đổi trạng thái Step.
-- Giữ compatibility profile hiện hữu `/inputs`, `/outputs/{STEP_CODE}`, `/vars`; không sửa graph đã publish hoặc trộn syntax nguồn mới vào schema 2. `NOTIFY` mới chỉ lưu record không còn giả lập delivered/ACK; lifecycle đầy đủ thuộc Phase 17.
+- Giữ compatibility profile hiện hữu `/inputs`, `/outputs/{STEP_CODE}`, `/vars`; không sửa graph đã publish hoặc trộn syntax nguồn mới vào schema 2. Tại checkpoint Phase 16, `NOTIFY` mới chỉ lưu record; lifecycle delivery/ACK sau đó đã hoàn tất ở Phase 17.
 - Tài liệu chuẩn: [step-contract-matrix.md](step-contract-matrix.md).
 - `mvn -q -l target/phase16-final-regression.log test` bằng Java 21, MySQL 8.4 Testcontainers: **100 tests / 22 suites, 0 failure, 0 error, 0 skipped**. Bao gồm fixture đúng đủ 11 loại, negative schema/semantic/version và integration rollback result sai.
 - Không thay schema, không thêm migration và không tác động database demo. Phần Pi/ROS2/hardware vẫn ngoài phạm vi.
 
-Ưu tiên review 2026-10-07: [backend-completeness-review.md](backend-completeness-review.md) ghi nhận các gap bằng chứng từ code. Phase 15 đã đóng gap quyền/executor/grant/scope operationKey và Phase 16 đã đóng gap contract 11 StepType. Backend vẫn chưa hoàn thiện toàn bộ yêu cầu vì ACK nghiệp vụ, đồng bộ context và delivery recovery còn thuộc Phase 17–18.
+### Phase 17–18 — checkpoint 2026-10-08
+
+- Hoàn thiện `SET_CONTEXT`, WAIT duration/event bền vững, NOTIFY delivery/ACK ANY–ALL và khóa race bằng pessimistic row lock.
+- Nối confirmation pickup/handoff vào đúng HANDLE_PAYLOAD Step, đối chiếu item code/quantity và xác nhận đóng/khóa vật lý.
+- Bổ sung QR challenge 256-bit chỉ lưu hash, TTL/scope và chống replay; recovery sau tác động vật lý; SOS không phụ thuộc robot rảnh và có lifecycle false-alarm riêng.
+- Migration forward V16; không sửa V1–V15 và không tác động database demo. Chi tiết: [phase17-18-runtime-delivery.md](phase17-18-runtime-delivery.md).
+- Fresh MySQL Flyway V1–V16 + Hibernate validate thành công. Full regression: **106 test / 24 suite, 0 failure, 0 error, 0 skipped**.
+
+Ưu tiên review 2026-10-07: [backend-completeness-review.md](backend-completeness-review.md) ghi nhận các gap bằng chứng từ code. Phase 15–18 đã đóng các gap quyền/executor/grant/scope operationKey, contract 11 StepType, ACK/context và delivery recovery. Phase 19–21 vẫn còn theo kế hoạch riêng.
 
 0. Bộ nguồn mới được đọc và lưu ngày 2026-10-07: xem [source-baseline.md](source-baseline.md) và [source-alignment-plan.md](source-alignment-plan.md). Có khác biệt thực tế về schema tổng quan, contract StepType, tên workflow, state và transport. Kết quả Phase 1–14 bên trên thuộc baseline cũ; chưa chứng minh tương thích trọn bộ nguồn mới. Lượt lưu nguồn chỉ bổ sung tài liệu; Phase 15 sau đó đã sửa code và kiểm thử như checkpoint phía trên.
 

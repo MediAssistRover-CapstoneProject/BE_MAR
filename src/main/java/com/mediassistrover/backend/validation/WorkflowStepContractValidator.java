@@ -51,6 +51,7 @@ public class WorkflowStepContractValidator {
                     if(!params.path("recipients").isArray())throw invalid(step,"recipients must be an array");
                     optionalEnum(step,params,"severity",Set.of("INFO","WARNING","CRITICAL"));
                     if(params.has("require_ack")&&!params.path("require_ack").isBoolean())throw invalid(step,"require_ack must be boolean");
+                    optionalEnum(step,params,"ack_policy",Set.of("ANY","ALL"));
                 }
                 case EXECUTE_SENSING -> {
                     String sensing=requireText(step,params,"sensing_type");
@@ -73,8 +74,9 @@ public class WorkflowStepContractValidator {
                 case SET_CONTEXT -> {
                     if(!params.path("operations").isArray()||params.path("operations").isEmpty())throw invalid(step,"operations must be a non-empty array");
                     if(params.path("operations").size()>128)throw invalid(step,"operations exceed 128 entries");
-                    for(JsonNode op:params.path("operations")){
+                    Set<String> assignedPaths=new HashSet<>();for(JsonNode op:params.path("operations")){
                         if(!op.isObject()||!op.path("path").isTextual()||!op.path("path").asText().matches("^/vars/[A-Za-z][A-Za-z0-9_]*$"))throw invalid(step,"operation path must target /vars/<identifier>");
+                        if(!assignedPaths.add(op.path("path").asText()))throw invalid(step,"operations cannot assign the same path twice");
                         if(op.has("operation")&&!Set.of("SET","INCREMENT").contains(op.path("operation").asText()))throw invalid(step,"unsupported context operation");
                         if(!op.has("value"))throw invalid(step,"context operation value is required");
                     }

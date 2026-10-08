@@ -21,5 +21,11 @@ public final class DeliveryRequests {
                          @Size(max=4000) String temperatureRequirement,@Future Instant deliveryDeadline,
                          @Size(max=4000) String deliveryNote,@NotEmpty List<@Valid Item> items,
                          @Min(0) @Max(100) int priority,@Size(max=4000) String note,JsonNode data) { }
-    public record Confirm(@NotNull UUID verificationId,@Size(max=1000) String note) { }
+    public record ConfirmedItem(@NotBlank @Size(max=80) String itemCode,@Min(1) int quantity) { }
+    public record Confirm(@NotNull UUID verificationId,@NotNull UUID jobStepId,
+                          @NotEmpty List<@Valid ConfirmedItem> items,
+                          @AssertTrue boolean compartmentClosed,@AssertTrue boolean compartmentLocked,
+                          @Size(max=1000) String note) {
+        public Confirm(UUID verificationId,String note){this(verificationId,null,null,false,false,note);}
+    }
 }

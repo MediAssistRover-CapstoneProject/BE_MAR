@@ -14,4 +14,5 @@ public interface EmergencyService {
     IncidentResponse start(UUID id,AccountPrincipal actor,RequestMetadata metadata);
     IncidentResponse resolve(UUID id,Resolution request,AccountPrincipal actor,RequestMetadata metadata);
     IncidentResponse close(UUID id,AccountPrincipal actor,RequestMetadata metadata);
+    IncidentResponse falseAlarm(UUID id,Resolution request,AccountPrincipal actor,RequestMetadata metadata);
 }

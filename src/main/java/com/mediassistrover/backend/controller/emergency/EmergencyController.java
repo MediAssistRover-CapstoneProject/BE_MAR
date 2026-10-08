@@ -27,4 +27,5 @@ public class EmergencyController {
     @PostMapping("/{id}/start") public IncidentResponse start(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.start(id,actor,RequestMetadataFactory.from(request));}
     @PostMapping("/{id}/resolve") public IncidentResponse resolve(@PathVariable UUID id,@Valid @RequestBody Resolution body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.resolve(id,body,actor,RequestMetadataFactory.from(request));}
     @PostMapping("/{id}/close") public IncidentResponse close(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.close(id,actor,RequestMetadataFactory.from(request));}
+    @PostMapping("/{id}/false-alarm") public IncidentResponse falseAlarm(@PathVariable UUID id,@Valid @RequestBody Resolution body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.falseAlarm(id,body,actor,RequestMetadataFactory.from(request));}
 }

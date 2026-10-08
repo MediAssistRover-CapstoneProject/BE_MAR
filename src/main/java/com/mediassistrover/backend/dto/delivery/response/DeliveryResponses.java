@@ -15,6 +15,7 @@ public final class DeliveryResponses {
                                    UUID resolvedDeliveryEndpointId,UUID senderAccountId,UUID receiverAccountId,
                                    TargetMode targetMode,String recipientName,String recipientContact,
                                    boolean requiresConfirmation,String temperatureRequirement,Instant deliveryDeadline,
-                                   Instant pickedUpAt,Instant deliveredAt,String deliveryNote,long rowVersion,
+                                   Instant pickedUpAt,Instant deliveredAt,Instant pickupCompartmentConfirmedAt,
+                                   Instant deliveryCompartmentConfirmedAt,String deliveryNote,long rowVersion,
                                    List<ItemResponse> items) { }
 }

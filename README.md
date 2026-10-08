@@ -1,6 +1,6 @@
 # MediAssistRover Backend
 
-Spring Boot backend quản lý nghiệp vụ bệnh viện, workflow/job và hợp đồng giao tiếp Server–Raspberry Pi. Source hiện đã triển khai đến Phase 12; Phase 13 (ShedLock + retention automation) và Phase 14 (advanced analytics/reports) đang ở roadmap. Trạng thái kiểm chứng mới nhất được ghi tại `docs/implementation-status.md`, còn ma trận contract/hardware tại `docs/pi-contract-and-hardware-acceptance.md`.
+Spring Boot backend quản lý nghiệp vụ bệnh viện, workflow/job và hợp đồng giao tiếp Server–Raspberry Pi. Source hiện đã hoàn tất Phase 1–18 trong phạm vi Backend; Phase 19–21 còn theo kế hoạch. Trạng thái kiểm chứng mới nhất được ghi tại `docs/implementation-status.md`, checkpoint runtime/giao nhận tại `docs/phase17-18-runtime-delivery.md`, còn ma trận contract/hardware tại `docs/pi-contract-and-hardware-acceptance.md`.
 
 ## Yêu cầu
 

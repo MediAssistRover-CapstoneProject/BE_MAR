@@ -9,6 +9,7 @@ import java.util.*;
 public interface ServiceRequestRepository extends JpaRepository<ServiceRequest,UUID> {
     interface TypeCount { ServiceRequestType getRequestType(); long getTotal(); }
     Optional<ServiceRequest> findByIdempotencyKey(String key);
+    Optional<ServiceRequest> findByRelatedIncidentId(UUID incidentId);
     Page<ServiceRequest> findByStatus(ServiceRequestStatus status,Pageable pageable);
     Page<ServiceRequest> findByRequestedByAccountAccountId(UUID accountId,Pageable pageable);
     Page<ServiceRequest> findByRequestedByAccountAccountIdAndStatus(UUID accountId,ServiceRequestStatus status,Pageable pageable);

@@ -28,6 +28,8 @@ public class DeliveryRequest {
     @Column(name="delivery_deadline") private Instant deliveryDeadline;
     @Column(name="picked_up_at") private Instant pickedUpAt;
     @Column(name="delivered_at") private Instant deliveredAt;
+    @Column(name="pickup_compartment_confirmed_at") private Instant pickupCompartmentConfirmedAt;
+    @Column(name="delivery_compartment_confirmed_at") private Instant deliveryCompartmentConfirmedAt;
     @Column(name="delivery_note",columnDefinition="TEXT") private String deliveryNote;
     @Version @Column(name="row_version",nullable=false) private long rowVersion;
 }
