@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.mediassistrover.backend.exception.BusinessRuleException;
 import org.springframework.stereotype.Component;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /** Structural validation only; no workflow-specific ordering rules. */
 @Component
@@ -29,10 +30,15 @@ public class WorkflowJsonValidator {
     }
     public void condition(JsonNode node){
         if(node==null||!node.isObject())throw new BusinessRuleException("Condition must be a JSON object");
+        Set<String> allowed=Set.of("path","operator","value");
+        node.fieldNames().forEachRemaining(field->{if(!allowed.contains(field))throw new BusinessRuleException("Unknown condition field: "+field);});
         if(!node.path("path").isTextual()||node.path("path").asText().isBlank()
                 ||!node.path("operator").isTextual()
                 ||!Set.of("EQ","NE","GT","GTE","LT","LTE","IN","EXISTS").contains(node.path("operator").asText()))
             throw new BusinessRuleException("Condition requires path and a supported SAFE_EXPR operator");
         if(!"EXISTS".equals(node.path("operator").asText())&&!node.has("value"))throw new BusinessRuleException("Condition value is required");
+        if(node.path("path").asText().length()>500)throw new BusinessRuleException("Condition path is too long");
+        AtomicInteger count=new AtomicInteger();count(node,count);if(count.get()>128)throw new BusinessRuleException("Condition exceeds 128 nodes");
     }
+    private void count(JsonNode node,AtomicInteger count){count.incrementAndGet();if(node!=null&&node.isContainerNode())node.forEach(child->count(child,count));}
 }

@@ -1,4 +1,9 @@
 # MediAssistRover — Backend Implementation Plan
+
+> Kế hoạch làm tiếp riêng Backend (2026-10-08): [Phase 15–21](backend-remaining-phases.md). Phase 15 và Phase 16 đã DONE; Phase 16 đạt 100/100 regression. Phase 17–21 chưa triển khai.
+
+> Bổ sung nguồn ngày 2026-10-07: đọc [bản ghi nhớ nguồn](source-baseline.md), [kế hoạch đối chiếu](source-alignment-plan.md) và [danh mục nguồn có hash](sources/README.md) trước công việc tiếp theo. Đây là review/delta đề xuất; chưa thay schema, protocol hoặc tám workflow hiện hành. Trạng thái triển khai mới nhất xem [implementation-status.md](implementation-status.md); một số nhãn Phase cũ bên dưới là lịch sử kế hoạch.
+
 Cập nhật: 2026-10-05. Quyết định business mới thay thế các mục Patient authentication và StepType catalog trong kế hoạch cũ.
 
 ## 1. Phạm vi và nguyên tắc

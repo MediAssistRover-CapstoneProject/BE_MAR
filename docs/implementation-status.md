@@ -1,5 +1,5 @@
 # MediAssistRover Backend — Implementation Status
-Cập nhật: 2026-10-07
+Cập nhật: 2026-10-08
 
 ## Checkpoint
 | Phase | Trạng thái | Kết quả |
@@ -41,6 +41,46 @@ Phase14IntegrationTest kiểm tra công thức Job/SLA percentile, timezone buck
 Swagger/OpenAPI manual acceptance đã hoàn tất trên Chromium với Bearer JWT và protected API HTTP 200/401. Chưa thực hiện robot hardware acceptance. Phase 6 hoàn thành ở server contract/core runtime; không đồng nghĩa đã kiểm thử phần mềm hoặc phần cứng trên Raspberry Pi thật.
 
 ## Cần tiếp tục
+
+Kế hoạch tiếp nối riêng Backend: [backend-remaining-phases.md](backend-remaining-phases.md).
+
+| Phase đề xuất | Phạm vi | Trạng thái |
+|---|---|---|
+| 15 | Quyền runtime, cấp grant, scope operationKey | DONE — 83/83 regression; chi tiết phase15-runtime-authorization.md |
+| 16 | Contract/validation 11 StepType | DONE — schema/result validation đủ 11 enum; 100/100 regression |
+| 17 | Context, WAIT/event, NOTIFY/ACK | PLANNED |
+| 18 | Delivery đầy đủ, QR, recovery, SOS | PLANNED — chốt proof/recovery |
+| 19 | Schema và dịch vụ thông tin bệnh viện | PLANNED — chờ nghĩa dữ liệu được duyệt |
+| 20 | Catalog Workflow và entry point nghiệp vụ | PLANNED — chờ danh mục canonical |
+| 21 | Nghiệm thu riêng Backend bằng API/simulator | PLANNED |
+
+Các phase này không bao gồm triển khai Pi, frontend, driver hoặc model AI; nghiệm thu hardware vẫn tách riêng.
+
+### Phase 15 — checkpoint 2026-10-08
+
+- Chặn Device hoàn tất/báo lỗi thay Server/Staff; kiểm cả cấu hình gốc và resolved inputs để mapping không hạ quyền. Callback Patient/display/audio hợp lệ vẫn giữ.
+- AuthVerification kiểm role, owner/assigned Job, Account ACTIVE, mustChangePassword, purpose và permission cấu hình; không chấp nhận QR_CODE chưa có proof. Retry cùng actor trả grant còn hiệu lực, không cấp hai lần.
+- Step visit kiểm operationKey đúng Robot/Job/Step; khóa Job trong transaction cho runtime/Server execute/grant; terminal Job không tạo visit mới.
+- Không đổi schema, Flyway hoặc Workflow đã publish. Không tác động dữ liệu demo.
+- `mvn -q -l target/phase15-final-regression.log test` bằng Java 21, MySQL 8.4 Testcontainers: **83 tests / 21 suites, 0 failure, 0 error, 0 skipped**, exit 0. Trong đó 15 unit case và 6 integration case mới; có concurrent visit/grant, audit actor và negative authorization.
+- Lần chạy đầu ngày 08 bị lỗi môi trường do Docker chưa chạy; đã khởi động Docker và chạy lại toàn bộ thành công. Không bỏ qua integration test để đánh dấu DONE.
+- Chi tiết file/API/logic cũ–mới: [phase15-runtime-authorization.md](phase15-runtime-authorization.md). Chưa nghiệm thu hardware hoặc toàn graph delivery; QR proof và API xác nhận cửa/chốt thuộc Phase 18, contract tổng quát thuộc Phase 16.
+
+### Phase 16 — checkpoint 2026-10-08
+
+- Giữ đúng 11 `StepType` enum; không tạo bảng hoặc CRUD StepType. Read-only catalog hiện hữu tiếp tục dùng `/api/v1/admin/workflows/step-types`.
+- Khóa ba version độc lập: transport protocol `1.0`, Step schema `2`, Workflow graph `3`. Workflow/Job có version không được runtime hỗ trợ bị từ chối rõ ràng.
+- Publish-time validation kiểm tra contract theo từng StepType, JSON Pointer/reference, condition budget, DATA_SERVICE allowlist và chặn cấu hình URL/SQL/script/code.
+- Runtime validation kiểm tra exact root schema, kiểu dữ liệu và success semantics đủ 11 loại trước khi ghi `JobStep=SUCCEEDED`. Áp dụng cho callback Device, Server handler và AuthVerification; result sai rollback và không đổi trạng thái Step.
+- Giữ compatibility profile hiện hữu `/inputs`, `/outputs/{STEP_CODE}`, `/vars`; không sửa graph đã publish hoặc trộn syntax nguồn mới vào schema 2. `NOTIFY` mới chỉ lưu record không còn giả lập delivered/ACK; lifecycle đầy đủ thuộc Phase 17.
+- Tài liệu chuẩn: [step-contract-matrix.md](step-contract-matrix.md).
+- `mvn -q -l target/phase16-final-regression.log test` bằng Java 21, MySQL 8.4 Testcontainers: **100 tests / 22 suites, 0 failure, 0 error, 0 skipped**. Bao gồm fixture đúng đủ 11 loại, negative schema/semantic/version và integration rollback result sai.
+- Không thay schema, không thêm migration và không tác động database demo. Phần Pi/ROS2/hardware vẫn ngoài phạm vi.
+
+Ưu tiên review 2026-10-07: [backend-completeness-review.md](backend-completeness-review.md) ghi nhận các gap bằng chứng từ code. Phase 15 đã đóng gap quyền/executor/grant/scope operationKey và Phase 16 đã đóng gap contract 11 StepType. Backend vẫn chưa hoàn thiện toàn bộ yêu cầu vì ACK nghiệp vụ, đồng bộ context và delivery recovery còn thuộc Phase 17–18.
+
+0. Bộ nguồn mới được đọc và lưu ngày 2026-10-07: xem [source-baseline.md](source-baseline.md) và [source-alignment-plan.md](source-alignment-plan.md). Có khác biệt thực tế về schema tổng quan, contract StepType, tên workflow, state và transport. Kết quả Phase 1–14 bên trên thuộc baseline cũ; chưa chứng minh tương thích trọn bộ nguồn mới. Lượt lưu nguồn chỉ bổ sung tài liệu; Phase 15 sau đó đã sửa code và kiểm thử như checkpoint phía trên.
+
 1. Tám Workflow đã được Admin validate/publish trong database demo và Swagger acceptance đã hoàn tất; xem `backend-demo-acceptance.md`. Team Pi vẫn cần chạy bảng hardware acceptance `pi-contract-and-hardware-acceptance.md` trên thiết bị thật và review bốn message type Voice trước deploy.
 2. Trước khi bật retention destructive, Admin phải cấu hình mode/ngày giữ dữ liệu và bật `retention.execution_enabled`; mặc định hệ thống chỉ dry-run/disabled.
 3. Khi triển khai nhiều instance, dùng chung MySQL lock table và theo dõi metric scheduler/retention; business idempotency và row lock vẫn giữ nguyên.

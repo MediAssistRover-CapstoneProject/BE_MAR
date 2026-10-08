@@ -21,6 +21,7 @@ public class WorkflowValidationServiceImpl implements WorkflowValidationService 
     private final com.mediassistrover.backend.validation.WorkflowStepContractValidator stepContractValidator;
 
     @Override public CompilationResult validateAndCompile(Workflow workflow){
+        com.mediassistrover.backend.validation.StepContractVersions.requireWorkflow(workflow.getSchemaVersion(),workflow.getGraphVersion());
         jsonValidator.object(workflow.getInputSchemaJson(),"inputSchemaJson");
         jsonValidator.object(workflow.getInputUiJson(),"inputUiJson");
         jsonValidator.object(workflow.getDefaultInputsJson(),"defaultInputsJson");

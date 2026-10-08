@@ -14,6 +14,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.*;
+import com.mediassistrover.backend.validation.RuntimeAuthorizationPolicy;
+import com.mediassistrover.backend.validation.StepResultContractValidator;
+import org.springframework.security.access.AccessDeniedException;
 import java.util.*;
 
 @Service @RequiredArgsConstructor @Transactional(readOnly=true)
@@ -22,13 +25,32 @@ public class AuthVerificationServiceImpl implements AuthVerificationService {
     private final JobStepRepository stepRepository; private final AccountRepository accountRepository;
     private final JobEventRepository eventRepository; private final AuditService auditService;
     private final ObjectMapper objectMapper; private final Clock clock;
+    private final StepResultContractValidator stepResultContractValidator;
 
     @Override @Transactional public AuthVerificationResponse create(UUID jobId,Create r,AccountPrincipal actor,RequestMetadata md){
-        Job job=jobRepository.findById(jobId).orElseThrow(()->new ResourceNotFoundException("Job not found: "+jobId));JobStep step=stepRepository.findById(r.authJobStepId()).orElseThrow(()->new ResourceNotFoundException("JobStep not found: "+r.authJobStepId()));
-        if(!step.getJobTask().getJob().getJobId().equals(jobId))throw new BusinessRuleException("Authentication Step does not belong to Job");if(step.getStep().getStepType()!=StepType.AUTHENTICATE)throw new BusinessRuleException("JobStep is not AUTHENTICATE");if(step.getStatus()!=JobStepStatus.RUNNING)throw new BusinessRuleException("AUTHENTICATE Step must be RUNNING");
-        AuthVerification existing=repository.findByAuthJobStepJobStepId(step.getJobStepId()).orElse(null);if(existing!=null)return response(existing);Account account=account(actor.accountId());Instant now=Instant.now(clock);String permission=r.purpose()==AuthVerificationPurpose.DELIVERY_SENDER?"DELIVERY_SEND":"DELIVERY_RECEIVE";
+        Job job=jobRepository.lockById(jobId).orElseThrow(()->new ResourceNotFoundException("Job not found: "+jobId));RuntimeAuthorizationPolicy.requireJobScope(job,actor);JobStep step=stepRepository.findById(r.authJobStepId()).orElseThrow(()->new ResourceNotFoundException("JobStep not found: "+r.authJobStepId()));
+        if(!step.getJobTask().getJob().getJobId().equals(jobId))throw new BusinessRuleException("Authentication Step does not belong to Job");if(step.getStep().getStepType()!=StepType.AUTHENTICATE)throw new BusinessRuleException("JobStep is not AUTHENTICATE");
+        if(r.method()!=AuthVerificationMethod.STAFF_CONFIRMATION)throw new BusinessRuleException("QR_CODE requires proof verification; not supported by this endpoint");
+        if(r.purpose()!=RuntimeAuthorizationPolicy.purpose(step))throw new BusinessRuleException("Authentication purpose does not match Step configuration");
+        Account account=account(actor.accountId());
+        if(account.getStatus()!=AccountStatus.ACTIVE||account.getRole()!=actor.role()||account.isMustChangePassword())throw new AccessDeniedException("An active, unrestricted Staff/Admin account is required");
+        String permission=r.purpose()==AuthVerificationPurpose.DELIVERY_SENDER?"DELIVERY_SEND":"DELIVERY_RECEIVE";
+        String configured=step.getStep().getParamsJson().path("required_permission").asText(permission);
+        if(!permission.equals(configured))throw new BusinessRuleException("Unsupported permission for authentication purpose");
+        AuthVerification existing=repository.findByAuthJobStepJobStepId(step.getJobStepId()).orElse(null);
+        if(existing!=null){
+            if(!existing.getActorAccount().getAccountId().equals(actor.accountId()))throw new AccessDeniedException("Verification belongs to another actor");
+            if(existing.getMethod()!=r.method()||existing.getPurpose()!=r.purpose())throw new ConflictException("Verification already issued with another contract");
+            if(existing.getRevokedAt()!=null||!existing.getValidUntil().isAfter(Instant.now(clock)))throw new BusinessRuleException("Verification is revoked or expired");
+            return response(existing);
+        }
+        RuntimeAuthorizationPolicy.requireRunning(job);
+        if(step.getStatus()!=JobStepStatus.RUNNING)throw new BusinessRuleException("AUTHENTICATE Step must be RUNNING");
+        Instant now=Instant.now(clock);
         AuthVerification verification=repository.save(AuthVerification.builder().job(job).authJobStep(step).actorAccount(account).method(r.method()).purpose(r.purpose()).requiredPermission(permission).issuedAt(now).validUntil(now.plusSeconds(r.validForSeconds())).build());
-        ObjectNode result=objectMapper.createObjectNode().put("verification_id",verification.getVerificationId().toString()).put("purpose",r.purpose().name()).put("verified",true).put("valid_until",verification.getValidUntil().toString());step.setResultJson(result);step.setStatus(JobStepStatus.SUCCEEDED);step.setEndedAt(now);
+        ObjectNode result=objectMapper.createObjectNode().put("authenticated",true).put("verified",true).put("verification_id",verification.getVerificationId().toString()).put("actor_user_id",account.getAccountId().toString()).put("purpose",r.purpose().name()).put("valid_until",verification.getValidUntil().toString());
+        stepResultContractValidator.validate(step,result);
+        step.setResultJson(result);step.setStatus(JobStepStatus.SUCCEEDED);step.setEndedAt(now);
         eventRepository.save(JobEvent.builder().jobEventId(UUID.randomUUID()).job(job).robot(job.getRobot()).jobTask(step.getJobTask()).jobStep(step).actorAccount(account).producerType(actor.role()==Role.ADMIN?JobEventProducerType.ADMIN:JobEventProducerType.STAFF).producerSessionId(UUID.randomUUID()).sequenceNo(1).eventType("AUTH_VERIFICATION_ISSUED").previousStatus(JobStepStatus.RUNNING.name()).newStatus(JobStepStatus.SUCCEEDED.name()).statusScope("JOB_STEP").eventDataJson(result).occurredAt(now).receivedAt(now).persistedAt(now).build());
         auditService.record(account,"AUTH_VERIFICATION_ISSUED","AuthVerification",verification.getVerificationId(),null,Map.of("jobId",jobId,"purpose",r.purpose().name()),md);return response(verification);
     }

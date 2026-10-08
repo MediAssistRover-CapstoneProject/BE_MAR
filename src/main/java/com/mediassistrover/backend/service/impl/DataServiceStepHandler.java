@@ -46,7 +46,7 @@ public class DataServiceStepHandler implements ServerStepHandler {
 
     @Override public ServerStepExecution execute(JobStep step,JsonNode inputs){
         String key=inputs.path("service_key").asText(step.getStepCodeSnapshot().equals("QUERY")?"QUERY_HOSPITAL_INFORMATION":step.getStepCodeSnapshot());
-        ObjectNode result=objectMapper.createObjectNode();ObjectNode data=result.putObject("data");
+        ObjectNode result=objectMapper.createObjectNode().put("request_id",step.getOperationKey());ObjectNode data=result.putObject("data");
         switch(key){
             case "QUERY_HOSPITAL_INFORMATION" -> {
                 ArrayNode items=data.putArray("items");

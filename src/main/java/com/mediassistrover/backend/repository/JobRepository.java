@@ -8,6 +8,9 @@ import org.springframework.data.repository.query.Param;
 import java.time.Instant;
 import java.util.*;
 public interface JobRepository extends JpaRepository<Job,UUID> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select j from Job j where j.jobId=:id")
+    Optional<Job> lockById(@Param("id") UUID id);
     interface StatusCount { JobStatus getStatus(); long getTotal(); }
     boolean existsByWorkflowWorkflowId(UUID workflowId);
     Page<Job> findByStatus(JobStatus status,Pageable pageable);

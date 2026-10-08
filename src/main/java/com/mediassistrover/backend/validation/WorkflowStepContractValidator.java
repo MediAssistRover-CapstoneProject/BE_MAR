@@ -26,18 +26,43 @@ public class WorkflowStepContractValidator {
         for(Step step:steps){
             JsonNode params=step.getParamsJson();JsonNode mapping=step.getInputMappingJson();
             switch(step.getStepType()){
+                case MOVE -> {
+                    optionalEnum(step,params,"mode",Set.of("NORMAL","ESCORT","PATROL"));
+                    optionalNumberRange(step,params,"max_speed_mps",0.000001,0.3);
+                }
                 case DATA_SERVICE -> {
                     String key=text(params,"service_key");
                     if(key==null&&"QUERY".equals(step.getStepCode()))key="QUERY_HOSPITAL_INFORMATION";
                     if(key==null||!DataServiceStepHandler.SUPPORTED_SERVICE_KEYS.contains(key))
                         throw invalid(step,"unsupported DATA_SERVICE service_key: "+key);
+                    rejectDangerousServiceFields(step,params);rejectDangerousServiceFields(step,mapping);
+                    optionalEnum(step,params,"operation",Set.of("QUERY","CREATE","UPDATE"));
                 }
-                case INTERACT -> requireText(step,params,"prompt_key");
-                case NOTIFY -> requireText(step,params,"notification_type");
-                case EXECUTE_SENSING -> requireText(step,params,"sensing_type");
+                case INTERACT -> {requireText(step,params,"prompt_key");optionalEnum(step,params,"action",Set.of("SPEAK","DISPLAY","CAPTURE_INPUT","CONFIRM"));}
+                case AUTHENTICATE -> {optionalEnum(step,params,"method",Set.of("QR_CODE","STAFF_CONFIRMATION"));requireText(step,params,"purpose");}
+                case CONTROL_HARDWARE -> {
+                    String action=requireText(step,params,"action");
+                    if(!Set.of("LOCK_COMPARTMENT","UNLOCK_COMPARTMENT","LOCK","UNLOCK").contains(action))throw invalid(step,"unsupported hardware action: "+action);
+                    if(step.getMaxAttempts()!=1)throw invalid(step,"hardware commands cannot be retried automatically");
+                }
+                case HANDLE_PAYLOAD -> optionalEnum(step,params,"action",Set.of("LOAD","UNLOAD","VERIFY"));
+                case NOTIFY -> {
+                    requireText(step,params,"notification_type");
+                    if(!params.path("recipients").isArray())throw invalid(step,"recipients must be an array");
+                    optionalEnum(step,params,"severity",Set.of("INFO","WARNING","CRITICAL"));
+                    if(params.has("require_ack")&&!params.path("require_ack").isBoolean())throw invalid(step,"require_ack must be boolean");
+                }
+                case EXECUTE_SENSING -> {
+                    String sensing=requireText(step,params,"sensing_type");
+                    if(!Set.of("ROBOT_HEALTH","SIDE_CLEARANCE","CROWD_DENSITY","RESTRICTED_AREA_INTRUSION","RESTRICTED_ZONE").contains(sensing))throw invalid(step,"unsupported sensing_type: "+sensing);
+                    optionalNumberRange(step,params,"window_sec",0,30);
+                }
                 case WAIT -> {
                     String type=requireText(step,params,"wait_type");
-                    if("DURATION".equals(type)&&params.path("duration_sec").asInt(0)<1)throw invalid(step,"DURATION requires duration_sec >= 1");
+                    if("DURATION".equals(type)){
+                        if(!params.path("duration_sec").isNumber()||params.path("duration_sec").asDouble()<0||params.path("duration_sec").asDouble()>3600)throw invalid(step,"DURATION requires duration_sec between 0 and 3600");
+                        if(step.getTimeoutSec()<=params.path("duration_sec").asDouble())throw invalid(step,"timeoutSec must be greater than duration_sec");
+                    }
                     if("EVENT".equals(type))requireText(step,params,"event_type");
                     if(!Set.of("DURATION","EVENT").contains(type))throw invalid(step,"unsupported wait_type: "+type);
                 }
@@ -47,10 +72,12 @@ public class WorkflowStepContractValidator {
                 }
                 case SET_CONTEXT -> {
                     if(!params.path("operations").isArray()||params.path("operations").isEmpty())throw invalid(step,"operations must be a non-empty array");
-                }
-                case CONTROL_HARDWARE -> {
-                    String action=requireText(step,params,"action");
-                    if(!Set.of("LOCK_COMPARTMENT","UNLOCK_COMPARTMENT").contains(action))throw invalid(step,"unsupported hardware action: "+action);
+                    if(params.path("operations").size()>128)throw invalid(step,"operations exceed 128 entries");
+                    for(JsonNode op:params.path("operations")){
+                        if(!op.isObject()||!op.path("path").isTextual()||!op.path("path").asText().matches("^/vars/[A-Za-z][A-Za-z0-9_]*$"))throw invalid(step,"operation path must target /vars/<identifier>");
+                        if(op.has("operation")&&!Set.of("SET","INCREMENT").contains(op.path("operation").asText()))throw invalid(step,"unsupported context operation");
+                        if(!op.has("value"))throw invalid(step,"context operation value is required");
+                    }
                 }
                 default -> { }
             }
@@ -75,6 +102,9 @@ public class WorkflowStepContractValidator {
         if(node.isContainerNode()){Iterator<JsonNode> it=node.elements();while(it.hasNext())validateReferences(step,it.next(),stepCodes,inputs);}
     }
     private String requireText(Step step,JsonNode node,String field){String value=text(node,field);if(value==null)throw invalid(step,field+" is required");return value;}
+    private void optionalEnum(Step step,JsonNode node,String field,Set<String> values){if(node!=null&&node.has(field)&&(!node.path(field).isTextual()||!values.contains(node.path(field).asText())))throw invalid(step,field+" has an unsupported value");}
+    private void optionalNumberRange(Step step,JsonNode node,String field,double min,double max){if(node!=null&&node.has(field)&&(!node.path(field).isNumber()||node.path(field).asDouble()<min||node.path(field).asDouble()>max))throw invalid(step,field+" is outside the supported range");}
+    private void rejectDangerousServiceFields(Step step,JsonNode node){if(node==null)return;if(node.isObject()){for(String field:java.util.List.of("url","sql","script","code"))if(node.has(field))throw invalid(step,"DATA_SERVICE cannot configure "+field);node.forEach(child->rejectDangerousServiceFields(step,child));}else if(node.isArray())node.forEach(child->rejectDangerousServiceFields(step,child));}
     private String text(JsonNode node,String field){return node!=null&&node.path(field).isTextual()&&!node.path(field).asText().isBlank()?node.path(field).asText():null;}
     private String unescape(String value){return value.replace("~1","/").replace("~0","~");}
     private BusinessRuleException invalid(Step step,String reason){return new BusinessRuleException("Invalid contract for step "+step.getStepCode()+": "+reason);}
