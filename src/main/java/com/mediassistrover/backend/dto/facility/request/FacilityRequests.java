@@ -23,6 +23,18 @@ public final class FacilityRequests {
             Instant effectiveFrom,
             Instant effectiveUntil) { }
 
+    public record HospitalInformationArticleRequest(
+            @NotBlank @Size(max = 80) @Pattern(regexp = "[A-Z0-9][A-Z0-9_-]*") String articleCode,
+            @NotBlank @Size(max = 64) String category,
+            @NotBlank @Size(max = 500) String canonicalQuestion,
+            @NotBlank @Size(max = 255) String title,
+            @NotBlank @Size(max = 20000) String answer,
+            @NotBlank @Size(max = 16) @Pattern(regexp = "[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})*") String languageCode,
+            @NotNull JsonNode keywordsJson,
+            boolean publicVisible,
+            Instant effectiveFrom,
+            Instant effectiveUntil) { }
+
     public record FloorRequest(
             @NotNull UUID hospitalInformationId,
             @NotBlank @Size(max = 64) String floorCode,

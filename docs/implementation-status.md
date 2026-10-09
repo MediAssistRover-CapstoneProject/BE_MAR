@@ -1,5 +1,5 @@
 # MediAssistRover Backend — Implementation Status
-Cập nhật: 2026-10-08
+Cập nhật: 2026-10-09
 
 ## Checkpoint
 | Phase | Trạng thái | Kết quả |
@@ -21,9 +21,9 @@ Cập nhật: 2026-10-08
 | 14 | DONE | Analytics Job/Request/Robot/Delivery/Emergency/Monitoring, time bucket + breakdown, drill-down và CSV giới hạn có audit |
 
 ## Database
-V1–V12 DEV baselines đã điều chỉnh theo quyết định mới. V4 không còn StepType table; V5 seed tám Workflow DRAFT; V8 thêm nghiệp vụ Phase 7; V9 seed operations/retention metadata; V10 thêm Shift/Slot; V11 thêm Detection/Crowd/Heatmap; V12 thêm VoiceInteraction/VoiceCommand; V13 harden contract Team Pi; V14 thêm `ShedLock`/`RetentionArchive`; V15 thêm analytics indexes; V16 thêm event consumption, QR challenge và physical delivery confirmation theo migration tiến tới. Priority>=1; Account không approval/PATIENT.
+V1–V12 DEV baselines đã điều chỉnh theo quyết định mới. V4 không còn StepType table; V5 seed tám Workflow DRAFT; V8 thêm nghiệp vụ Phase 7; V9 seed operations/retention metadata; V10 thêm Shift/Slot; V11 thêm Detection/Crowd/Heatmap; V12 thêm VoiceInteraction/VoiceCommand; V13 harden contract Team Pi; V14 thêm `ShedLock`/`RetentionArchive`; V15 thêm analytics indexes; V16 thêm event consumption, QR challenge và physical delivery confirmation; V17 thêm kho nội dung bệnh viện được duyệt `HospitalInformationArticle` theo migration tiến tới. Priority>=1; Account không approval/PATIENT.
 ERD Draw.io không sửa. Không xóa database/volume hiện có. DB dev đã apply baseline cũ cần backup/recreate có chủ đích hoặc migration upgrade nếu phải giữ dữ liệu; không tự flyway repair.
-Mục tiêu 42 bảng domain/security đã đạt (41 ERD cũ - StepType + RefreshToken/RevokedToken); bổ sung 2 bảng vận hành `ShedLock` và `RetentionArchive`; không tạo Patient hoặc StepType table.
+Hiện có 44 bảng domain/security (bao gồm `QrChallenge` và `HospitalInformationArticle`) và 2 bảng vận hành `ShedLock`, `RetentionArchive`; không tạo Patient hoặc StepType table. `HospitalInformationArticle` là delta đã được duyệt, không thay thế hồ sơ `HospitalInformation`.
 
 ## Verification
 AuthFlowIntegrationTest: Admin Staff create, BCrypt/no password response, mustChangePassword restriction, deactivate, token rotation/reuse/logout.
@@ -50,7 +50,7 @@ Kế hoạch tiếp nối riêng Backend: [backend-remaining-phases.md](backend-
 | 16 | Contract/validation 11 StepType | DONE — schema/result validation đủ 11 enum; 100/100 regression |
 | 17 | Context, WAIT/event, NOTIFY/ACK | DONE — durable early event, duration deadline, ACK ANY/ALL, row-lock race safety |
 | 18 | Delivery đầy đủ, QR, recovery, SOS | DONE — cargo/stage/physical confirmation, hashed single-use QR, recovery, false-alarm |
-| 19 | Schema và dịch vụ thông tin bệnh viện | PLANNED — chờ nghĩa dữ liệu được duyệt |
+| 19 | Schema và dịch vụ thông tin bệnh viện | DONE — V17, article approval/query/fallback; 110/110 regression |
 | 20 | Catalog Workflow và entry point nghiệp vụ | PLANNED — chờ danh mục canonical |
 | 21 | Nghiệm thu riêng Backend bằng API/simulator | PLANNED |
 
@@ -84,8 +84,17 @@ Các phase này không bao gồm triển khai Pi, frontend, driver hoặc model 
 - Bổ sung QR challenge 256-bit chỉ lưu hash, TTL/scope và chống replay; recovery sau tác động vật lý; SOS không phụ thuộc robot rảnh và có lifecycle false-alarm riêng.
 - Migration forward V16; không sửa V1–V15 và không tác động database demo. Chi tiết: [phase17-18-runtime-delivery.md](phase17-18-runtime-delivery.md).
 - Fresh MySQL Flyway V1–V16 + Hibernate validate thành công. Full regression: **106 test / 24 suite, 0 failure, 0 error, 0 skipped**.
+- Tái xác nhận Phase 18 ngày 2026-10-09 bằng Java 21 và MySQL 8.4 Testcontainers: acceptance chọn lọc **13/13 test** đạt; full regression **106 test / 24 suite, 0 failure, 0 error, 0 skipped**. Log mới: `target/phase18-reverification.log`.
 
-Ưu tiên review 2026-10-07: [backend-completeness-review.md](backend-completeness-review.md) ghi nhận các gap bằng chứng từ code. Phase 15–18 đã đóng các gap quyền/executor/grant/scope operationKey, contract 11 StepType, ACK/context và delivery recovery. Phase 19–21 vẫn còn theo kế hoạch riêng.
+### Phase 19 — checkpoint 2026-10-09
+
+- Khóa nghĩa dữ liệu: `HospitalInformation` tiếp tục là hồ sơ bệnh viện được `Floor` tham chiếu; nội dung FAQ/quy trình/vị trí được tách thành `HospitalInformationArticle` theo quyết định đã duyệt.
+- Migration forward V17 dùng UUID/FK `BINARY(16)`, PascalCase, JSON keywords, trạng thái `DRAFT/PUBLISHED/RETIRED`, thời hạn hiệu lực và optimistic locking; không sửa V1–V16 hay Draw.io.
+- API Admin tạo/sửa/publish/retire nội dung; Staff được xem. Runtime Device không có CRUD trực tiếp và chỉ nhận kết quả từ nội dung `PUBLISHED + public + effective` qua DATA_SERVICE.
+- `QUERY_HOSPITAL_INFORMATION` trả `found`, `answer`, `source`, `fallback_code`; giữ `items/count` tương thích workflow schema 2. Tra cứu deterministic, không giả lập AI/STT/TTS và không trả danh sách profile làm câu trả lời.
+- Fresh MySQL Flyway V1–V17 + Hibernate validate thành công. Clean full regression Java 21/MySQL 8.4 Testcontainers: **110 tests / 25 suites, 0 failure, 0 error, 0 skipped**. Chi tiết: [phase19-hospital-information.md](phase19-hospital-information.md).
+
+Ưu tiên review 2026-10-07: [backend-completeness-review.md](backend-completeness-review.md) ghi nhận các gap bằng chứng từ code. Phase 15–19 đã đóng các gap quyền/executor/grant/scope operationKey, contract 11 StepType, ACK/context, delivery recovery và nguồn nội dung bệnh viện được duyệt. Phase 20–21 vẫn còn theo kế hoạch riêng.
 
 0. Bộ nguồn mới được đọc và lưu ngày 2026-10-07: xem [source-baseline.md](source-baseline.md) và [source-alignment-plan.md](source-alignment-plan.md). Có khác biệt thực tế về schema tổng quan, contract StepType, tên workflow, state và transport. Kết quả Phase 1–14 bên trên thuộc baseline cũ; chưa chứng minh tương thích trọn bộ nguồn mới. Lượt lưu nguồn chỉ bổ sung tài liệu; Phase 15 sau đó đã sửa code và kiểm thử như checkpoint phía trên.
 

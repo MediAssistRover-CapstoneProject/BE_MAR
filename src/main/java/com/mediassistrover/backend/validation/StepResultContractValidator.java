@@ -62,7 +62,11 @@ public class StepResultContractValidator {
         exact(n,"data","request_id");object(n.path("data"),"data");text(n,"request_id");
         String service=input==null?"":input.path("service_key").asText();JsonNode data=n.path("data");
         switch(service){
-            case "QUERY_HOSPITAL_INFORMATION" -> {array(data.path("items"),"data.items");integer(data,"count");}
+            case "QUERY_HOSPITAL_INFORMATION" -> {
+                bool(data,"found");text(data,"answer");array(data.path("items"),"data.items");integer(data,"count");
+                if(data.path("found").asBoolean())object(data.path("source"),"data.source");
+                else text(data,"fallback_code");
+            }
             case "RESOLVE_TARGETS" -> array(data.path("targets"),"data.targets");
             case "SELECT_TARGET" -> bool(data,"has_target");
             case "CHECK_TARGET" -> bool(data,"is_valid");

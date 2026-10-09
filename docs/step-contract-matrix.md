@@ -31,7 +31,7 @@ Cập nhật: 2026-10-08. Tài liệu này là contract Backend đang thực thi
 
 Backend chỉ cho phép các key được đăng ký trong `DataServiceStepHandler`:
 
-- `QUERY_HOSPITAL_INFORMATION`: `data.items[]`, `data.count`.
+- `QUERY_HOSPITAL_INFORMATION`: `data.found`, `data.answer`, `data.source` hoặc `data.fallback_code`; giữ `data.items[]/count` để tương thích Workflow đã publish trước Phase 19.
 - `RESOLVE_TARGETS`: `data.targets[]`.
 - `SELECT_TARGET`: `data.has_target`.
 - `CHECK_TARGET`: `data.is_valid`.

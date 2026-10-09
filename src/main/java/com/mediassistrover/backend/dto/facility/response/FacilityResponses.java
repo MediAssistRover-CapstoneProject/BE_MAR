@@ -14,6 +14,11 @@ public final class FacilityResponses {
             String infoCategory, String title, String content, String languageCode, JsonNode keywordsJson,
             HospitalInformationStatus status, boolean publicVisible, Instant effectiveFrom, Instant effectiveUntil,
             Instant createdAt, Instant updatedAt) { }
+    public record HospitalInformationArticleResponse(UUID articleId, UUID hospitalInformationId,
+            UUID updatedByAccountId, String articleCode, String category, String canonicalQuestion,
+            String title, String answer, String languageCode, JsonNode keywordsJson,
+            HospitalInformationStatus status, boolean publicVisible, Instant effectiveFrom,
+            Instant effectiveUntil, long rowVersion, Instant createdAt, Instant updatedAt) { }
     public record FloorResponse(UUID floorId, UUID hospitalInformationId, String floorCode, String floorName,
             Integer levelNo, int displayOrder, String description, boolean active, Instant createdAt, Instant updatedAt) { }
     public record MapResponse(UUID mapId, UUID floorId, String mapCode, int versionNo, String mapName,

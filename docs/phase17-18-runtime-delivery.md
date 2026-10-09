@@ -1,6 +1,6 @@
 # Phase 17–18 — Runtime event, ACK và giao nhận an toàn
 
-Cập nhật: 2026-10-08. Trạng thái: **DONE** trong phạm vi Backend; không bao gồm scanner/camera, driver servo, Pi/ROS2 hoặc nghiệm thu phần cứng.
+Cập nhật: 2026-10-09. Trạng thái: **DONE** trong phạm vi Backend; không bao gồm scanner/camera, driver servo, Pi/ROS2 hoặc nghiệm thu phần cứng.
 
 ## Phase 17
 
@@ -27,4 +27,5 @@ Cập nhật: 2026-10-08. Trạng thái: **DONE** trong phạm vi Backend; khôn
 - `RuntimeContextEventIntegrationTest`: snapshot context; event sớm/consume/idempotency; delivery/ACK của NOTIFY.
 - `DeliveryWorkflowAcceptanceTest`: sai số lượng rollback; đúng hàng + đóng/khóa hoàn tất HANDLE_PAYLOAD; QR proof scope/single-use.
 - `target/phase17-18-final-regression.log`: MySQL 8.0 local isolated database, fresh Flyway V1–V16, Hibernate validate, **106 test / 24 suite, 0 failure, 0 error, 0 skipped**.
+- Tái xác nhận ngày 2026-10-09 trên Java 21 và MySQL 8.4 Testcontainers: acceptance chọn lọc **13/13 test** và full regression **106 test / 24 suite**, không có failure, error hoặc skipped; log `target/phase18-reverification.log`.
 - Database kiểm thử `backend_robot_phase1718_test` đã được xóa sau khi chạy; database demo `backend_robot_v1` không bị thay đổi.

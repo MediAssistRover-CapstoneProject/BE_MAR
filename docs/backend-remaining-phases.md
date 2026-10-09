@@ -1,6 +1,6 @@
 # Kế hoạch hoàn thiện riêng Backend — Phase 15–21
 
-Cập nhật: 2026-10-08. **Phase 15–18 DONE**; full regression Phase 17–18 đạt 106/106 test. Phase 19–21 vẫn là kế hoạch, chưa tự bắt đầu. Xem [checkpoint Phase 15](phase15-runtime-authorization.md), [ma trận contract Phase 16](step-contract-matrix.md), [checkpoint Phase 17–18](phase17-18-runtime-delivery.md) và [implementation-status](implementation-status.md).
+Cập nhật: 2026-10-09. **Phase 15–19 DONE**; full regression sau Phase 19 đạt 110/110 test. Phase 20–21 vẫn là kế hoạch, chưa tự bắt đầu. Xem [checkpoint Phase 15](phase15-runtime-authorization.md), [ma trận contract Phase 16](step-contract-matrix.md), [checkpoint Phase 17–18](phase17-18-runtime-delivery.md), [checkpoint Phase 19](phase19-hospital-information.md) và [implementation-status](implementation-status.md).
 
 ## 1. Kết luận và phạm vi
 
@@ -20,7 +20,7 @@ Phân loại: **REVISE** = phần có code nhưng chưa đủ; **NEW** = xử l�
 | 16 | Contract input/output cho 11 StepType và message protocol | DONE | 100/100 regression; contract schema 2/graph 3 đã khóa |
 | 17 | Runtime context, WAIT/event, NOTIFY/ACK và chống race | DONE | 106/106 regression; event consume/ACK transaction đã khóa |
 | 18 | Giao nhận đầy đủ, QR/Staff confirmation, recovery và SOS | DONE | QR hash/single-use; cargo/stage/recovery/SOS lifecycle đã kiểm thử |
-| 19 | Đối chiếu schema, thông tin bệnh viện và API hỏi đáp | REVISE + DECISION | Chốt nghĩa HospitalInformation, nguồn câu trả lời |
+| 19 | Đối chiếu schema, thông tin bệnh viện và API hỏi đáp | DONE | Profile giữ nguyên; content tách `HospitalInformationArticle`; 110/110 regression |
 | 20 | Hoàn thiện catalog Workflow và các đường tạo Job còn thiếu | REVISE + NEW có điều kiện | 16–19; chốt bộ Workflow cần hỗ trợ |
 | 21 | Nghiệm thu Backend bằng API, regression, tải và restore | NEW verification + sửa lỗi phát hiện | 15–20 hoàn tất phạm vi được duyệt |
 
@@ -102,6 +102,8 @@ Không đưa Shift/Slot, Detection/Crowd/Heatmap, Voice log, ShedLock, retention
 
 ## 7. Phase 19 — Schema nghiệp vụ và dịch vụ thông tin
 
+**DONE — 2026-10-09.** Đã giữ `HospitalInformation` làm hồ sơ bệnh viện và quan hệ `Floor.hospital_information_id`; bổ sung bảng nội dung được duyệt `HospitalInformationArticle` bằng migration forward V17. Admin quản lý/publish/retire, Staff chỉ đọc; runtime chỉ truy vấn bài `PUBLISHED`, public, đúng ngôn ngữ và thời hạn. Kết quả có answer/source metadata và fallback xác định, đồng thời giữ `items/count` cho graph schema 2. Chi tiết schema, API, contract và bằng chứng: [phase19-hospital-information.md](phase19-hospital-information.md), [schema-source-matrix.md](schema-source-matrix.md). Full regression: **110 tests / 25 suites, 0 failure, 0 error, 0 skipped**.
+
 **Mục tiêu:** sửa P2-04, phần information của P2-03; xác nhận dữ liệu Backend biểu diễn đúng nghiệp vụ.
 
 - DECISION: HospitalInformation là hồ sơ bệnh viện hay nội dung FAQ; source hiện tại đang có title/content/category trong khi Floor tham chiếu bảng này. ERD tổng quan mới không đủ field để tự chuyển schema.
@@ -155,7 +157,7 @@ Không đưa Shift/Slot, Detection/Crowd/Heatmap, Voice log, ShedLock, retention
 1. Phase 15 đã hoàn tất kiểm soát quyền runtime.
 2. Phase 16 đã khóa và kiểm thử contract 11 StepType.
 3. Phase 17–18 đã hoàn tất runtime event/ACK và nghiệp vụ giao nhận/recovery.
-4. Bước kế tiếp là Phase 19 với delta đã duyệt; Phase 20 theo danh mục được chọn.
+4. Phase 19 đã hoàn tất delta thông tin bệnh viện được duyệt; bước kế tiếp là Phase 20 sau khi chốt danh mục Workflow canonical.
 5. Phase 21 nghiệm thu riêng Backend và cập nhật trạng thái có bằng chứng.
 
 Bảy phase là cách chia công việc đề xuất, không phải bảy module còn trống. Phase 15/17/18 chủ yếu sửa phần đã có; Phase 16/19/20 có quyết định nguồn cần chốt. Không tự thêm ngày hoàn thành, không hứa thời điểm hết token; kết thúc mỗi phase cần checkpoint file/class/test/gap còn lại.

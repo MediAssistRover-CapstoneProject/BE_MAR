@@ -10,6 +10,9 @@ public interface FacilityMapper {
     @Mapping(target = "updatedByAccountId", source = "updatedBy.accountId")
     HospitalInformationResponse toResponse(HospitalInformation entity);
     @Mapping(target = "hospitalInformationId", source = "hospitalInformation.hospitalInformationId")
+    @Mapping(target = "updatedByAccountId", source = "updatedBy.accountId")
+    HospitalInformationArticleResponse toResponse(HospitalInformationArticle entity);
+    @Mapping(target = "hospitalInformationId", source = "hospitalInformation.hospitalInformationId")
     FloorResponse toResponse(Floor entity);
     @Mapping(target = "floorId", source = "floor.floorId") MapResponse toResponse(FacilityMap entity);
     @Mapping(target = "mapId", source = "map.mapId") ZoneResponse toResponse(Zone entity);
@@ -24,6 +27,10 @@ public interface FacilityMapper {
 
     @Mapping(target = "status", constant = "DRAFT") @Mapping(target = "updatedBy", ignore = true)
     HospitalInformation toEntity(HospitalInformationRequest request);
+    @Mapping(target = "status", constant = "DRAFT")
+    @Mapping(target = "hospitalInformation", ignore = true)
+    @Mapping(target = "updatedBy", ignore = true)
+    HospitalInformationArticle toEntity(HospitalInformationArticleRequest request);
     @Mapping(target = "hospitalInformation", ignore = true) Floor toEntity(FloorRequest request);
     @Mapping(target = "floor", ignore = true) @Mapping(target = "status", constant = "DRAFT") FacilityMap toEntity(MapRequest request);
     @Mapping(target = "map", ignore = true) Zone toEntity(ZoneRequest request);
@@ -35,6 +42,14 @@ public interface FacilityMapper {
     @Mapping(target = "hospitalInformationId", ignore = true) @Mapping(target = "updatedBy", ignore = true)
     @Mapping(target = "status", ignore = true) @Mapping(target = "createdAt", ignore = true) @Mapping(target = "updatedAt", ignore = true)
     void update(HospitalInformationRequest request, @MappingTarget HospitalInformation entity);
+    @Mapping(target = "articleId", ignore = true)
+    @Mapping(target = "hospitalInformation", ignore = true)
+    @Mapping(target = "updatedBy", ignore = true)
+    @Mapping(target = "status", ignore = true)
+    @Mapping(target = "rowVersion", ignore = true)
+    @Mapping(target = "createdAt", ignore = true)
+    @Mapping(target = "updatedAt", ignore = true)
+    void update(HospitalInformationArticleRequest request, @MappingTarget HospitalInformationArticle entity);
     @Mapping(target = "floorId", ignore = true) @Mapping(target = "hospitalInformation", ignore = true)
     @Mapping(target = "createdAt", ignore = true) @Mapping(target = "updatedAt", ignore = true)
     void update(FloorRequest request, @MappingTarget Floor entity);

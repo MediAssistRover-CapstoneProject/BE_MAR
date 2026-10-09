@@ -11,17 +11,15 @@ import com.mediassistrover.backend.entity.JobStep;
 import com.mediassistrover.backend.enums.DetectionEventType;
 import com.mediassistrover.backend.enums.EmergencyIncidentSeverity;
 import com.mediassistrover.backend.enums.EmergencyIncidentStatus;
-import com.mediassistrover.backend.enums.HospitalInformationStatus;
 import com.mediassistrover.backend.enums.StepType;
 import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.repository.EndpointGroupMemberRepository;
 import com.mediassistrover.backend.repository.EndpointRepository;
 import com.mediassistrover.backend.repository.DetectionEventRepository;
 import com.mediassistrover.backend.repository.EmergencyIncidentRepository;
-import com.mediassistrover.backend.repository.HospitalInformationRepository;
 import com.mediassistrover.backend.service.ServerStepHandler;
+import com.mediassistrover.backend.service.HospitalInformationQueryService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -34,7 +32,7 @@ import java.util.Set;
 public class DataServiceStepHandler implements ServerStepHandler {
     public static final Set<String> SUPPORTED_SERVICE_KEYS=Set.of(
             "QUERY_HOSPITAL_INFORMATION","RESOLVE_TARGETS","SELECT_TARGET","CHECK_TARGET","CREATE_FALL_INCIDENT");
-    private final HospitalInformationRepository hospitalRepository;
+    private final HospitalInformationQueryService informationQueryService;
     private final EndpointRepository endpointRepository;
     private final EndpointGroupMemberRepository groupMemberRepository;
     private final DetectionEventRepository detectionEventRepository;
@@ -49,8 +47,27 @@ public class DataServiceStepHandler implements ServerStepHandler {
         ObjectNode result=objectMapper.createObjectNode().put("request_id",step.getOperationKey());ObjectNode data=result.putObject("data");
         switch(key){
             case "QUERY_HOSPITAL_INFORMATION" -> {
+                String question=inputs.path("question").asText();
+                String language=inputs.path("language_code").asText("vi-VN");
+                var answer=informationQueryService.query(question,language);
+                data.put("found",answer.found()).put("answer",answer.answer()).put("language_code",language);
                 ArrayNode items=data.putArray("items");
-                hospitalRepository.findPublicEffective(HospitalInformationStatus.PUBLISHED,Instant.now(clock),PageRequest.of(0,20)).forEach(info->items.addObject().put("id",info.getHospitalInformationId().toString()).put("category",info.getInfoCategory()).put("title",info.getTitle()).put("content",info.getContent()).put("languageCode",info.getLanguageCode()));
+                if(answer.source()!=null){
+                    ObjectNode source=data.putObject("source")
+                            .put("article_id",answer.source().articleId().toString())
+                            .put("article_code",answer.source().articleCode())
+                            .put("category",answer.source().category())
+                            .put("title",answer.source().title())
+                            .put("language_code",answer.source().languageCode())
+                            .put("updated_at",answer.source().updatedAt().toString());
+                    items.addObject().put("id",answer.source().articleId().toString())
+                            .put("category",answer.source().category()).put("title",answer.source().title())
+                            .put("content",answer.answer()).put("languageCode",answer.source().languageCode());
+                    data.set("source",source);
+                }else{
+                    data.putNull("source");
+                    data.put("fallback_code",answer.fallbackCode());
+                }
                 data.put("count",items.size());
             }
             case "RESOLVE_TARGETS" -> {

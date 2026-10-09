@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mediassistrover.backend.entity.*;
 import com.mediassistrover.backend.enums.*;
 import com.mediassistrover.backend.repository.*;
+import com.mediassistrover.backend.service.HospitalInformationQueryService;
 import com.mediassistrover.backend.service.impl.DataServiceStepHandler;
 import org.junit.jupiter.api.Test;
 
@@ -19,7 +20,7 @@ import static org.mockito.Mockito.*;
 
 class DataServiceStepHandlerTest {
     @Test void createFallIncidentIsIdempotentByDetectionEvent(){
-        HospitalInformationRepository hospital=mock(HospitalInformationRepository.class);
+        HospitalInformationQueryService hospital=mock(HospitalInformationQueryService.class);
         EndpointRepository endpoints=mock(EndpointRepository.class);
         EndpointGroupMemberRepository members=mock(EndpointGroupMemberRepository.class);
         DetectionEventRepository detections=mock(DetectionEventRepository.class);

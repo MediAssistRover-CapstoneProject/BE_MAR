@@ -73,10 +73,10 @@ Những lựa chọn chưa có câu trả lời được ghi OPEN; không cản 
 |---|---|---|
 | A lưu nguồn | DONE — documentation | Sáu trích xuất, hash, ghi chú bảy hình, baseline và conflict register |
 | A khóa mọi khác biệt | OPEN | Cần quyết định cho các mục ảnh hưởng schema/protocol/catalog |
-| B1 | PLANNED | Chưa audit field-by-field hoặc sửa ERD |
+| B1 | PARTIAL | Phase 19 đã kiểm inventory/JPA/Flyway và hoàn tất delta Hospital profile/content được duyệt tại `schema-source-matrix.md`; Draw.io và state-machine source matrix tổng thể chưa cập nhật |
 | B2 | PLANNED | Đã phát hiện delta; chưa triển khai protocol mới |
 | B3 | PLANNED | Đã tổng hợp mười nguồn và tám hiện tại; chưa thay seed |
-| B4 | PLANNED | Chưa xác minh đầy đủ Major Features với từng service |
+| B4 | PARTIAL | Phase 18 đã đóng delivery/emergency; Phase 19 đã đóng kho information được duyệt và fallback; AI/feature coverage tổng thể còn mở |
 | B5 | PLANNED | Kế thừa bằng chứng demo cũ; cần chạy lại sau delta và nghiệm thu thật |
 
-Theo yêu cầu tiếp theo của người dùng, các gap Backend đã được chia thành [Phase 15–21](backend-remaining-phases.md): B1 tương ứng Phase 19 và phần state ở 17–18; B2 tương ứng 15–17; B3 tương ứng 20; B4 tương ứng 18–19; phần nghiệm thu Backend của B5 tương ứng 21. Hardware/UI acceptance của B5 vẫn ngoài plan Backend. Đây là phase đề xuất, chưa triển khai; hoàn tất lưu nguồn không đồng nghĩa hoàn tất B1–B5.
+Theo yêu cầu tiếp theo của người dùng, các gap Backend đã được chia thành [Phase 15–21](backend-remaining-phases.md): Phase 15–19 đã triển khai và có checkpoint/test; B3/Phase 20 và nghiệm thu B5/Phase 21 còn mở. Hardware/UI/AI acceptance vẫn ngoài plan Backend. Hoàn tất một phase Backend không đồng nghĩa tự động hoàn tất mọi đầu việc liên đội trong B1–B5.
