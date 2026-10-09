@@ -16,15 +16,19 @@ import java.util.*;
 @Service @RequiredArgsConstructor @Transactional
 public class JobExecutionServiceImpl implements JobExecutionService {
     private static final Set<JobStatus> ACTIVE=EnumSet.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
+    private static final Set<ServiceRequestType> ROBOT_PINNED=EnumSet.of(ServiceRequestType.CROWD_MONITORING,
+            ServiceRequestType.FALL_DETECTION_RESPONSE,ServiceRequestType.RESTRICTED_AREA_MONITORING,
+            ServiceRequestType.AUTO_CHARGING,ServiceRequestType.NAVIGATION_RECOVERY,ServiceRequestType.ROBOT_STARTUP_STANDBY);
     private final WorkflowRepository workflowRepository; private final TaskRepository taskRepository;
     private final StepRepository stepRepository; private final JobRepository jobRepository;
     private final JobTaskRepository jobTaskRepository; private final JobStepRepository jobStepRepository;
     private final JobEventRepository eventRepository; private final RobotRepository robotRepository;
     private final NavigationRequestRepository navigationRepository; private final EscortRequestRepository escortRepository;
     private final DeliveryRequestRepository deliveryRepository;
+    private final FacilityMapRepository mapRepository;
     private final ObjectMapper objectMapper; private final Clock clock;
 
-    @Override public Job createForRequest(ServiceRequest request){Workflow workflow=workflowFor(request.getRequestType());FacilityMap map=mapFor(request);Robot robot=selectRobot(request.getRequestedRobot(),map);JsonNode input=merge(workflow.getDefaultInputsJson(),request.getRequestDataJson());return create(workflow,request,null,robot,map,request.getPriority(),input,null,null);}
+    @Override public Job createForRequest(ServiceRequest request){Workflow workflow=workflowFor(request.getRequestType());FacilityMap map=mapFor(request);Robot robot=ROBOT_PINNED.contains(request.getRequestType())?selectPinnedRobot(request.getRequestedRobot()):selectRobot(request.getRequestedRobot(),map);JsonNode input=merge(workflow.getDefaultInputsJson(),request.getRequestDataJson());Job job=create(workflow,request,null,robot,map,request.getPriority(),input,null,null);job.setRecoveryOfJob(recoverySource(request));return job;}
     @Override public Job createForSchedule(Schedule schedule,Instant fireAt,JsonNode input){if(jobRepository.existsByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(schedule.getScheduleId(),fireAt,"DEFAULT"))return jobRepository.findAll().stream().filter(j->j.getSchedule()!=null&&j.getSchedule().getScheduleId().equals(schedule.getScheduleId())&&fireAt.equals(j.getScheduleFireAt())).findFirst().orElseThrow();Workflow w=schedule.getWorkflow();if(w.getStatus()!=WorkflowStatus.PUBLISHED||!w.isAcceptsNewJobs())throw new BusinessRuleException("Schedule workflow does not accept new jobs");Robot robot=selectRobot(schedule.getRobot(),null);return create(w,null,schedule,robot,robot==null?null:robot.getCurrentMap(),schedule.getPriority(),merge(w.getDefaultInputsJson(),input),fireAt,"DEFAULT");}
 
     private Job create(Workflow workflow,ServiceRequest request,Schedule schedule,Robot robot,FacilityMap map,int priority,JsonNode input,Instant fireAt,String itemKey){
@@ -33,10 +37,28 @@ public class JobExecutionServiceImpl implements JobExecutionService {
         long seq=0;for(Step step:stepRepository.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId())){if(!step.isEnabled())continue;jobStepRepository.save(JobStep.builder().jobTask(runtimeTasks.get(step.getTask().getTaskId())).step(step).visitNo(1).executionSequenceNo(++seq).stepCodeSnapshot(step.getStepCode()).stepTypeSnapshot(step.getStepType().getStepTypeCode()).resolvedInputsJson(objectMapper.createObjectNode()).status(JobStepStatus.PENDING).attemptNo(1).operationKey(job.getJobId()+":"+step.getStepCode()+":1").timeoutSecSnapshot(step.getTimeoutSec()).build());}
         event(job,"JOB_QUEUED",null,JobStatus.QUEUED.name(),objectMapper.createObjectNode());return job;
     }
-    private Workflow workflowFor(ServiceRequestType type){String serviceType=switch(type){case INFORMATION->"INFORMATION";case NAVIGATION->"NAVIGATION";case ESCORT->"ESCORT";case DELIVERY->"DELIVERY";case EMERGENCY_SOS->"EMERGENCY";};return workflowRepository.findFirstByServiceTypeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(serviceType,WorkflowStatus.PUBLISHED).orElseThrow(()->new BusinessRuleException("No published workflow accepts request type "+type));}
+    private Workflow workflowFor(ServiceRequestType type){String serviceType=switch(type){case INFORMATION->"INFORMATION";case NAVIGATION->"NAVIGATION";case ESCORT->"ESCORT";case DELIVERY->"DELIVERY";case EMERGENCY_SOS->"EMERGENCY";case CROWD_MONITORING->"CROWD_MONITORING";case FALL_DETECTION_RESPONSE->"FALL_DETECTION_RESPONSE";case RESTRICTED_AREA_MONITORING->"RESTRICTED_AREA_MONITORING";case AUTO_CHARGING->"AUTO_CHARGING";case NAVIGATION_RECOVERY->"NAVIGATION_RECOVERY";case ROBOT_STARTUP_STANDBY->"ROBOT_STARTUP_STANDBY";};return workflowRepository.findFirstByServiceTypeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(serviceType,WorkflowStatus.PUBLISHED).orElseThrow(()->new BusinessRuleException("No published workflow accepts request type "+type));}
     private Robot selectRobot(Robot preferred,FacilityMap map){if(preferred!=null){Robot locked=robotRepository.findByIdForUpdate(preferred.getRobotId()).orElseThrow(()->new ResourceNotFoundException("Robot not found: "+preferred.getRobotId()));if(locked.getStatus()==RobotStatus.IDLE&&jobRepository.findByRobotRobotIdAndStatusIn(locked.getRobotId(),ACTIVE).isEmpty())return locked;}List<Robot> candidates=map==null?robotRepository.findByStatusOrderByRobotCodeAsc(RobotStatus.IDLE):robotRepository.findByStatusAndCurrentMapMapIdOrderByRobotCodeAsc(RobotStatus.IDLE,map.getMapId());return candidates.stream().filter(r->jobRepository.findByRobotRobotIdAndStatusIn(r.getRobotId(),ACTIVE).isEmpty()).findFirst().orElse(null);}
+    private Robot selectPinnedRobot(Robot requested){
+        if(requested==null)throw new BusinessRuleException("Operational request requires a robot");
+        Robot locked=robotRepository.findByIdForUpdate(requested.getRobotId()).orElseThrow(()->new ResourceNotFoundException("Robot not found: "+requested.getRobotId()));
+        if(locked.getStatus()!=RobotStatus.IDLE)throw new BusinessRuleException("Operational request requires the selected robot to be IDLE");
+        ensureNoActive(locked);return locked;
+    }
     private void ensureNoActive(Robot robot){if(!jobRepository.findByRobotRobotIdAndStatusIn(robot.getRobotId(),ACTIVE).isEmpty())throw new ConflictException("Robot already has an active or unreconciled Job");}
-    private FacilityMap mapFor(ServiceRequest r){return switch(r.getRequestType()){case NAVIGATION->navigationRepository.findById(r.getServiceRequestId()).map(NavigationRequest::getMap).orElse(null);case ESCORT->escortRepository.findById(r.getServiceRequestId()).map(EscortRequest::getMap).orElse(null);case DELIVERY->deliveryRepository.findById(r.getServiceRequestId()).map(DeliveryRequest::getMap).orElse(null);case EMERGENCY_SOS->null;case INFORMATION->null;};}
+    private FacilityMap mapFor(ServiceRequest r){return switch(r.getRequestType()){case NAVIGATION->navigationRepository.findById(r.getServiceRequestId()).map(NavigationRequest::getMap).orElse(null);case ESCORT->escortRepository.findById(r.getServiceRequestId()).map(EscortRequest::getMap).orElse(null);case DELIVERY->deliveryRepository.findById(r.getServiceRequestId()).map(DeliveryRequest::getMap).orElse(null);case CROWD_MONITORING,RESTRICTED_AREA_MONITORING,NAVIGATION_RECOVERY->mapFromData(r.getRequestDataJson());case EMERGENCY_SOS,INFORMATION,FALL_DETECTION_RESPONSE,AUTO_CHARGING,ROBOT_STARTUP_STANDBY->null;};}
+    private FacilityMap mapFromData(JsonNode data){
+        if(data==null||!data.path("map_id").isTextual())return null;
+        try{return mapRepository.findById(UUID.fromString(data.path("map_id").asText())).orElseThrow(()->new ResourceNotFoundException("Map not found"));}
+        catch(IllegalArgumentException ex){throw new BusinessRuleException("map_id must be a UUID");}
+    }
+    private Job recoverySource(ServiceRequest request){
+        if(request.getRequestType()!=ServiceRequestType.NAVIGATION_RECOVERY)return null;
+        JsonNode value=request.getRequestDataJson()==null?null:request.getRequestDataJson().get("recovery_of_job_id");
+        if(value==null||!value.isTextual())throw new BusinessRuleException("recovery_of_job_id is required");
+        try{return jobRepository.findById(UUID.fromString(value.asText())).orElseThrow(()->new ResourceNotFoundException("Recovery source Job not found"));}
+        catch(IllegalArgumentException ex){throw new BusinessRuleException("recovery_of_job_id must be a UUID");}
+    }
     private JsonNode merge(JsonNode defaults,JsonNode runtime){ObjectNode result=objectMapper.createObjectNode();if(defaults!=null&&defaults.isObject())result.setAll((ObjectNode)defaults.deepCopy());if(runtime!=null&&runtime.isObject())result.setAll((ObjectNode)runtime);return result;}
     private JsonNode copy(JsonNode n){return n==null?objectMapper.createObjectNode():n.deepCopy();}
     private void event(Job job,String type,String previous,String next,JsonNode data){Instant now=Instant.now(clock);eventRepository.save(JobEvent.builder().jobEventId(UUID.randomUUID()).job(job).robot(job.getRobot()).producerType(JobEventProducerType.SERVER).producerSessionId(UUID.randomUUID()).sequenceNo(1).eventType(type).previousStatus(previous).newStatus(next).statusScope("JOB").eventDataJson(data).occurredAt(now).receivedAt(now).persistedAt(now).build());}

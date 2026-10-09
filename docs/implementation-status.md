@@ -21,7 +21,7 @@ Cập nhật: 2026-10-09
 | 14 | DONE | Analytics Job/Request/Robot/Delivery/Emergency/Monitoring, time bucket + breakdown, drill-down và CSV giới hạn có audit |
 
 ## Database
-V1–V12 DEV baselines đã điều chỉnh theo quyết định mới. V4 không còn StepType table; V5 seed tám Workflow DRAFT; V8 thêm nghiệp vụ Phase 7; V9 seed operations/retention metadata; V10 thêm Shift/Slot; V11 thêm Detection/Crowd/Heatmap; V12 thêm VoiceInteraction/VoiceCommand; V13 harden contract Team Pi; V14 thêm `ShedLock`/`RetentionArchive`; V15 thêm analytics indexes; V16 thêm event consumption, QR challenge và physical delivery confirmation; V17 thêm kho nội dung bệnh viện được duyệt `HospitalInformationArticle` theo migration tiến tới. Priority>=1; Account không approval/PATIENT.
+V1–V12 DEV baselines đã điều chỉnh theo quyết định mới. V4 không còn StepType table; V5 seed tám Workflow DRAFT; V8 thêm nghiệp vụ Phase 7; V9 seed operations/retention metadata; V10 thêm Shift/Slot; V11 thêm Detection/Crowd/Heatmap; V12 thêm VoiceInteraction/VoiceCommand; V13 harden contract Team Pi; V14 thêm `ShedLock`/`RetentionArchive`; V15 thêm analytics indexes; V16 thêm event consumption, QR challenge và physical delivery confirmation; V17 thêm kho nội dung bệnh viện được duyệt `HospitalInformationArticle`; V18 bổ sung catalog Workflow canonical Phase 20 dưới dạng version DRAFT mới, không sửa lịch sử. Priority>=1; Account không approval/PATIENT.
 ERD Draw.io không sửa. Không xóa database/volume hiện có. DB dev đã apply baseline cũ cần backup/recreate có chủ đích hoặc migration upgrade nếu phải giữ dữ liệu; không tự flyway repair.
 Hiện có 44 bảng domain/security (bao gồm `QrChallenge` và `HospitalInformationArticle`) và 2 bảng vận hành `ShedLock`, `RetentionArchive`; không tạo Patient hoặc StepType table. `HospitalInformationArticle` là delta đã được duyệt, không thay thế hồ sơ `HospitalInformation`.
 
@@ -51,8 +51,8 @@ Kế hoạch tiếp nối riêng Backend: [backend-remaining-phases.md](backend-
 | 17 | Context, WAIT/event, NOTIFY/ACK | DONE — durable early event, duration deadline, ACK ANY/ALL, row-lock race safety |
 | 18 | Delivery đầy đủ, QR, recovery, SOS | DONE — cargo/stage/physical confirmation, hashed single-use QR, recovery, false-alarm |
 | 19 | Schema và dịch vụ thông tin bệnh viện | DONE — V17, article approval/query/fallback; 110/110 regression |
-| 20 | Catalog Workflow và entry point nghiệp vụ | PLANNED — chờ danh mục canonical |
-| 21 | Nghiệm thu riêng Backend bằng API/simulator | PLANNED |
+| 20 | Catalog Workflow và entry point nghiệp vụ | DONE — 10 Workflow canonical, V18 DRAFT-safe, operational request→Job |
+| 21 | Nghiệm thu riêng Backend bằng API/simulator | DONE — regression/fresh DB/load/backup-restore có bằng chứng |
 
 Các phase này không bao gồm triển khai Pi, frontend, driver hoặc model AI; nghiệm thu hardware vẫn tách riêng.
 
@@ -94,9 +94,17 @@ Các phase này không bao gồm triển khai Pi, frontend, driver hoặc model 
 - `QUERY_HOSPITAL_INFORMATION` trả `found`, `answer`, `source`, `fallback_code`; giữ `items/count` tương thích workflow schema 2. Tra cứu deterministic, không giả lập AI/STT/TTS và không trả danh sách profile làm câu trả lời.
 - Fresh MySQL Flyway V1–V17 + Hibernate validate thành công. Clean full regression Java 21/MySQL 8.4 Testcontainers: **110 tests / 25 suites, 0 failure, 0 error, 0 skipped**. Chi tiết: [phase19-hospital-information.md](phase19-hospital-information.md).
 
-Ưu tiên review 2026-10-07: [backend-completeness-review.md](backend-completeness-review.md) ghi nhận các gap bằng chứng từ code. Phase 15–19 đã đóng các gap quyền/executor/grant/scope operationKey, contract 11 StepType, ACK/context, delivery recovery và nguồn nội dung bệnh viện được duyệt. Phase 20–21 vẫn còn theo kế hoạch riêng.
+Ưu tiên review 2026-10-07: [backend-completeness-review.md](backend-completeness-review.md) ghi nhận các gap bằng chứng từ code. Phase 15–21 đã đóng các gap Backend trong phạm vi được duyệt; nghiệm thu Pi/hardware/UI/model AI vẫn tách riêng.
 
-0. Bộ nguồn mới được đọc và lưu ngày 2026-10-07: xem [source-baseline.md](source-baseline.md) và [source-alignment-plan.md](source-alignment-plan.md). Có khác biệt thực tế về schema tổng quan, contract StepType, tên workflow, state và transport. Kết quả Phase 1–14 bên trên thuộc baseline cũ; chưa chứng minh tương thích trọn bộ nguồn mới. Lượt lưu nguồn chỉ bổ sung tài liệu; Phase 15 sau đó đã sửa code và kiểm thử như checkpoint phía trên.
+### Phase 20–21 — checkpoint 2026-10-09
+
+- Chốt 10 mã Workflow canonical; V18 tạo version DRAFT mới và giữ nguyên alias/lịch sử cũ. Ma trận nguồn và entry point: [workflow-source-matrix.md](workflow-source-matrix.md).
+- Thêm API `POST /api/v1/operational-requests` cho crowd, fall, restricted-area, manual charging, navigation recovery và startup readiness. Server kiểm tra map/zone/checkpoint, DetectionEvent đúng robot, nguồn Job đã reconcile, quyền Admin và idempotency trước khi tạo Job atomically.
+- Fresh MySQL Flyway V1–V18 + Hibernate validate thành công. Full regression: **115 test được phát hiện / 114 chạy đạt / 1 skip rõ ràng do local không có Docker, 0 failure, 0 error**.
+- Load smoke: 500 request, concurrency 25, 500 thành công, 0 lỗi, 624.3 req/s trên máy kiểm thử; đây không phải SLA. Backup/restore: 47/47 table, 17/17 Workflow row, Flyway version 18.
+- Kết luận và lệnh tái hiện: [backend-acceptance-final.md](backend-acceptance-final.md). Hardware/Pi/ROS/Nav2 không nằm trong kết luận DONE này.
+
+0. Bộ nguồn mới được đọc và lưu ngày 2026-10-07: xem [source-baseline.md](source-baseline.md) và [source-alignment-plan.md](source-alignment-plan.md). Các khác biệt về schema, contract StepType, tên workflow, state và transport đã được xử lý dần trong Phase 15–20; bằng chứng nghiệm thu Backend tổng hợp ở Phase 21. Những phần Pi/hardware/UI/model AI vẫn giữ trạng thái riêng.
 
 1. Tám Workflow đã được Admin validate/publish trong database demo và Swagger acceptance đã hoàn tất; xem `backend-demo-acceptance.md`. Team Pi vẫn cần chạy bảng hardware acceptance `pi-contract-and-hardware-acceptance.md` trên thiết bị thật và review bốn message type Voice trước deploy.
 2. Trước khi bật retention destructive, Admin phải cấu hình mode/ngày giữ dữ liệu và bật `retention.execution_enabled`; mặc định hệ thống chỉ dry-run/disabled.

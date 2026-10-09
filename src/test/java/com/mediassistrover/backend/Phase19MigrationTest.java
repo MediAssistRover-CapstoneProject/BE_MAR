@@ -11,7 +11,7 @@ import java.sql.DriverManager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@Testcontainers
+@Testcontainers(disabledWithoutDocker = true)
 class Phase19MigrationTest {
     @Container
     static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4")
@@ -44,6 +44,7 @@ class Phase19MigrationTest {
         Flyway latest = Flyway.configure()
                 .dataSource(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword())
                 .locations("classpath:db/migration")
+                .target(MigrationVersion.fromVersion("17"))
                 .cleanDisabled(true)
                 .load();
         assertThat(latest.migrate().targetSchemaVersion).isEqualTo("17");

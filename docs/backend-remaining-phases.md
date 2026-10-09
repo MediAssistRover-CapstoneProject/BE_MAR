@@ -1,10 +1,10 @@
 # Kế hoạch hoàn thiện riêng Backend — Phase 15–21
 
-Cập nhật: 2026-10-09. **Phase 15–19 DONE**; full regression sau Phase 19 đạt 110/110 test. Phase 20–21 vẫn là kế hoạch, chưa tự bắt đầu. Xem [checkpoint Phase 15](phase15-runtime-authorization.md), [ma trận contract Phase 16](step-contract-matrix.md), [checkpoint Phase 17–18](phase17-18-runtime-delivery.md), [checkpoint Phase 19](phase19-hospital-information.md) và [implementation-status](implementation-status.md).
+Cập nhật: 2026-10-09. **Phase 15–21 DONE trong phạm vi Backend**. Full regression cuối phát hiện 115 test: 114 chạy đạt, 1 test Docker-only skip rõ ràng tại máy local; fresh MySQL V1–V18 đạt. Xem [workflow-source-matrix](workflow-source-matrix.md), [backend acceptance](backend-acceptance-final.md) và [implementation-status](implementation-status.md).
 
 ## 1. Kết luận và phạm vi
 
-Riêng Backend **chưa đủ toàn bộ nghiệp vụ đã yêu cầu**. Đã có các module chính và bộ test baseline 62/62 đạt trong lượt review trước, nhưng còn lỗ hổng kiểm soát runtime, quyền cấp xác thực, ACK nghiệp vụ, context, giao nhận và độ tương thích contract.
+Riêng Backend đã hoàn tất phạm vi nghiệp vụ được duyệt qua Phase 21. Các lỗ hổng từng ghi nhận về runtime, quyền cấp xác thực, ACK, context, giao nhận, catalog và entry point đã được đóng bằng code, migration và test; nghiệm thu UI/Pi/hardware/model AI vẫn ở ngoài phạm vi.
 
 Kế hoạch này tiếp nối Phase 1–14; không viết lại project. Căn cứ là [báo cáo review code](backend-completeness-review.md), [nguồn đã lưu](source-baseline.md) và [kế hoạch đối chiếu](source-alignment-plan.md). Các phát hiện review cần được tái hiện bằng test trước khi sửa; không coi mọi nguy cơ là lỗi đã có test tái hiện.
 
@@ -21,8 +21,8 @@ Phân loại: **REVISE** = phần có code nhưng chưa đủ; **NEW** = xử l�
 | 17 | Runtime context, WAIT/event, NOTIFY/ACK và chống race | DONE | 106/106 regression; event consume/ACK transaction đã khóa |
 | 18 | Giao nhận đầy đủ, QR/Staff confirmation, recovery và SOS | DONE | QR hash/single-use; cargo/stage/recovery/SOS lifecycle đã kiểm thử |
 | 19 | Đối chiếu schema, thông tin bệnh viện và API hỏi đáp | DONE | Profile giữ nguyên; content tách `HospitalInformationArticle`; 110/110 regression |
-| 20 | Hoàn thiện catalog Workflow và các đường tạo Job còn thiếu | REVISE + NEW có điều kiện | 16–19; chốt bộ Workflow cần hỗ trợ |
-| 21 | Nghiệm thu Backend bằng API, regression, tải và restore | NEW verification + sửa lỗi phát hiện | 15–20 hoàn tất phạm vi được duyệt |
+| 20 | Hoàn thiện catalog Workflow và các đường tạo Job còn thiếu | DONE | 10 mã canonical; V18 DRAFT-safe; operational request→Job |
+| 21 | Nghiệm thu Backend bằng API, regression, tải và restore | DONE | Regression, fresh DB, bounded load smoke và restore đạt |
 
 Không đưa Shift/Slot, Detection/Crowd/Heatmap, Voice log, ShedLock, retention và analytics vào danh sách module chưa có: chúng đã có implementation/test baseline. Chỉ sửa các phần này khi kiểm tra chỉ ra gap cụ thể.
 
@@ -121,6 +121,8 @@ Không đưa Shift/Slot, Detection/Crowd/Heatmap, Voice log, ShedLock, retention
 
 ## 8. Phase 20 — Hoàn thiện bộ Workflow Backend
 
+**DONE — 2026-10-09.** Đã chốt 10 Workflow canonical, bổ sung V18 với version DRAFT mới, hoàn thiện entry point Server-owned cho sáu luồng operational và kiểm thử catalog/graph/idempotency/authorization/source ownership. Chi tiết: [workflow-source-matrix.md](workflow-source-matrix.md).
+
 **Mục tiêu:** sửa phần catalog P2-03 bằng danh sách nghiệp vụ đã duyệt, không tự thêm hành vi robot.
 
 - DECISION: giữ tám seed hay nhận bộ mười S4; WF_FALL_RESPONSE/WF_RESTRICTED_MONITORING khác code S4; WF_NAVIGATION vẫn có chức năng riêng. Không thể chỉ thêm hai seed là xong.
@@ -137,6 +139,8 @@ Không đưa Shift/Slot, Detection/Crowd/Heatmap, Voice log, ShedLock, retention
 - Dependency: Phase 16–19 và danh mục canonical; các template không liên quan schema information có thể triển khai khi dependency của riêng chúng đã đủ.
 
 ## 9. Phase 21 — Nghiệm thu riêng Backend
+
+**DONE — 2026-10-09.** Fresh MySQL V1–V18, full regression, bounded load smoke và backup/restore cô lập đều đạt theo bằng chứng tại [backend-acceptance-final.md](backend-acceptance-final.md). Kết luận chỉ áp dụng cho Backend; hardware/UI/model AI vẫn tách riêng.
 
 **Mục tiêu:** chứng minh yêu cầu phía Server bằng API/data thật, không dựa vào số Entity hoặc dòng DONE.
 
@@ -157,8 +161,8 @@ Không đưa Shift/Slot, Detection/Crowd/Heatmap, Voice log, ShedLock, retention
 1. Phase 15 đã hoàn tất kiểm soát quyền runtime.
 2. Phase 16 đã khóa và kiểm thử contract 11 StepType.
 3. Phase 17–18 đã hoàn tất runtime event/ACK và nghiệp vụ giao nhận/recovery.
-4. Phase 19 đã hoàn tất delta thông tin bệnh viện được duyệt; bước kế tiếp là Phase 20 sau khi chốt danh mục Workflow canonical.
-5. Phase 21 nghiệm thu riêng Backend và cập nhật trạng thái có bằng chứng.
+4. Phase 19 đã hoàn tất delta thông tin bệnh viện được duyệt.
+5. Phase 20–21 đã hoàn tất catalog/entry point và nghiệm thu Backend có bằng chứng.
 
 Bảy phase là cách chia công việc đề xuất, không phải bảy module còn trống. Phase 15/17/18 chủ yếu sửa phần đã có; Phase 16/19/20 có quyết định nguồn cần chốt. Không tự thêm ngày hoàn thành, không hứa thời điểm hết token; kết thúc mỗi phase cần checkpoint file/class/test/gap còn lại.
 

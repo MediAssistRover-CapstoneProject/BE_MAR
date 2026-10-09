@@ -12,6 +12,7 @@ public interface ServiceRequestService {
     ServiceRequestResponse createInformation(InformationCreateRequest request,String idempotencyKey,AccountPrincipal actor,RequestMetadata metadata);
     NavigationResponse createNavigation(NavigationCreateRequest request,String idempotencyKey,AccountPrincipal actor,RequestMetadata metadata);
     EscortResponse createEscort(EscortCreateRequest request,String idempotencyKey,AccountPrincipal actor,RequestMetadata metadata);
+    ServiceRequestResponse createOperational(OperationalCreateRequest request,String idempotencyKey,AccountPrincipal actor,RequestMetadata metadata);
     ServiceRequestResponse get(UUID id,AccountPrincipal actor);
     Page<ServiceRequestResponse> list(ServiceRequestStatus status,AccountPrincipal actor,Pageable pageable);
     ServiceRequestResponse submit(UUID id,AccountPrincipal actor,RequestMetadata metadata);

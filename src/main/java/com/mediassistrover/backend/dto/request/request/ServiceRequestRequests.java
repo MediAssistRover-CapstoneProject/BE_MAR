@@ -19,5 +19,7 @@ public final class ServiceRequestRequests {
             @NotNull @DecimalMin("0.100") @DecimalMax("3.000") BigDecimal walkingSpeedMps,
             @Min(1) @Max(3600) int confirmationTimeoutSec,@Size(max=4000) String escortNote,
             @Min(0) @Max(100) int priority,@Size(max=4000) String note,JsonNode data) {}
+    public record OperationalCreateRequest(@NotNull ServiceRequestType requestType,@NotNull UUID robotId,
+            @Min(0) @Max(100) int priority,@Size(max=4000) String note,@NotNull JsonNode data) {}
     public record CancelRequest(@NotBlank @Size(max=1000) String reason) {}
 }
