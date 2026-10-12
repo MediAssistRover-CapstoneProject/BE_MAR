@@ -90,10 +90,11 @@ final class MqttTestFixture {
     }
     static void cleanup(EntityManager em,MqttTestFixture f) {
         em.createNativeQuery("DELETE FROM MqttOperationRecoveryReceipt WHERE job_step_id IN (SELECT s.job_step_id FROM JobStep s JOIN JobTask t ON s.job_task_id=t.job_task_id WHERE t.job_id=:id)").setParameter("id",f.jobId).executeUpdate();
+        em.createNativeQuery("DELETE FROM JobNavigationSelection WHERE selector_job_step_id IN (SELECT s.job_step_id FROM JobStep s JOIN JobTask t ON t.job_task_id=s.job_task_id WHERE t.job_id=:id)").setParameter("id",f.jobId).executeUpdate();
         em.createNativeQuery("DELETE FROM AuditLog WHERE entity_id=:id").setParameter("id",f.jobId).executeUpdate();
         for (String sql:List.of("UPDATE Job SET selected_job_step_id=NULL WHERE job_id=:id","DELETE FROM RobotCommandOutbox WHERE job_id=:id","DELETE FROM JobEvent WHERE job_id=:id","DELETE FROM WorkflowOrchestrationWork WHERE job_id=:id",
                 "DELETE FROM JobStep WHERE job_task_id IN (SELECT job_task_id FROM JobTask WHERE job_id=:id)","DELETE FROM JobTask WHERE job_id=:id","DELETE FROM Job WHERE job_id=:id")) em.createNativeQuery(sql).setParameter("id",f.jobId).executeUpdate();
-        for (String table:List.of("RobotMqttInbox","RobotMqttSession","RobotLocationHistory","RobotStatusHistory")) em.createNativeQuery("DELETE FROM "+table+" WHERE robot_id=:id").setParameter("id",f.robotId).executeUpdate();
+        for (String table:List.of("RobotNavigationProfile","RobotMqttInbox","RobotMqttSession","RobotLocationHistory","RobotStatusHistory")) em.createNativeQuery("DELETE FROM "+table+" WHERE robot_id=:id").setParameter("id",f.robotId).executeUpdate();
         em.createNativeQuery("DELETE FROM Robot WHERE robot_id=:id").setParameter("id",f.robotId).executeUpdate();
         em.createNativeQuery("UPDATE Workflow SET start_step_id=NULL WHERE workflow_id=:id").setParameter("id",f.workflowId).executeUpdate();
         for (String table:List.of("StepTransition","Step","Task","Workflow")) em.createNativeQuery("DELETE FROM "+table+" WHERE workflow_id=:id").setParameter("id",f.workflowId).executeUpdate();

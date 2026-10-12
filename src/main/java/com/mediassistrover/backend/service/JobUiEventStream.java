@@ -37,6 +37,15 @@ public class JobUiEventStream {
     public void changed(RuntimeChanged event) {
         for (Subscription subscription:subscribers.getOrDefault(event.jobId(),new CopyOnWriteArrayList<>())) send(event.jobId(),subscription);
     }
+    @org.springframework.context.event.EventListener
+    public void preview(com.mediassistrover.backend.mapping.MappingPreviewService.Changed event) {
+        for(Subscription subscription:subscribers.getOrDefault(event.jobId(),new CopyOnWriteArrayList<>()))synchronized(subscription) {
+            try {
+                snapshots.snapshot(event.jobId(),subscription.actor());
+                subscription.emitter().send(SseEmitter.event().name("mapping-preview").data(event.preview()));
+            } catch(Exception ex) {subscription.emitter().complete();subscribers.computeIfPresent(event.jobId(),(id,list)->{list.remove(subscription);return list.isEmpty()?null:list;});}
+        }
+    }
     public void heartbeat() {
         subscribers.forEach((jobId,list)->list.forEach(subscription->send(jobId,subscription)));
     }

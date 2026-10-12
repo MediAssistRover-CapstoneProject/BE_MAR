@@ -26,7 +26,7 @@ class DataServiceStepHandlerTest {
         DetectionEventRepository detections=mock(DetectionEventRepository.class);
         EmergencyIncidentRepository incidents=mock(EmergencyIncidentRepository.class);
         ObjectMapper json=new ObjectMapper();
-        DataServiceStepHandler handler=new DataServiceStepHandler(hospital,endpoints,members,detections,incidents,json,Clock.systemUTC());
+        DataServiceStepHandler handler=new DataServiceStepHandler(hospital,endpoints,members,detections,incidents,json,Clock.systemUTC(),mock(com.mediassistrover.backend.service.NavigationTargetService.class));
 
         UUID robotId=UUID.randomUUID(),detectionId=UUID.randomUUID(),incidentId=UUID.randomUUID();
         Robot robot=Robot.builder().robotId(robotId).build();

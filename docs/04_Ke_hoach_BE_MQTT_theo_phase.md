@@ -2,8 +2,8 @@
 
 **Ngày đối chiếu:** 12/10/2026.  
 **Baseline:** code hiện tại trong `BE_MAR` và năm tài liệu được cung cấp.  
-**Trạng thái bàn giao:** Phase 0–7 đã có phần BE; Phase 8–9 bổ sung timeout/CANCEL_STEP/recovery theo operation và NOTIFY/WAIT ACK riêng. Broker local/simulator đã kiểm execute và cancel. Phase 10–14 chưa triển khai. Pi/hardware/UI/AI và broker sản xuất chưa nghiệm thu.  
-**Phạm vi:** phần BE, kèm contract/checklist Pi/UI/AI. Xem [Phase 1–2](phase1-2-implementation.md), [Phase 3–4](phase3-4-implementation.md), [Phase 5–7](phase5-7-implementation.md) và [Phase 8–9](phase8-9-implementation.md). Schema 2 giữ cách chạy cũ. Schema 3 chỉ publish/tạo Job với subset đã tích hợp và cấu hình MQTT phù hợp; UNLOCK, AI/MAPPING, artifact và SPEAK vẫn bị chặn theo dependency. MQTT/dispatch mặc định tắt.
+**Trạng thái bàn giao:** Phase 0–9 đã có phần BE và kiểm broker local/simulator execute/cancel. Phase 10 bổ sung binding quyền mở và mốc delivery tại BE; chưa nghiệm thu toàn phase vì Pi thiếu STAFF_VERIFIED. Phase 11 có chọn endpoint group, profile ACK và zone config tại BE; client Pi/AI và navigation thật chưa nghiệm thu. Phase 12 có phiên mapping, upload/commit artifact, preview và STOP cleanup tại BE; SLAM/upload Pi và UI chưa nghiệm thu. Phase 13–14 chưa triển khai. Pi/hardware/UI/AI và broker sản xuất chưa nghiệm thu.
+**Phạm vi:** phần BE, kèm contract/checklist Pi/UI/AI. Xem [Phase 1–2](phase1-2-implementation.md), [Phase 3–4](phase3-4-implementation.md), [Phase 5–7](phase5-7-implementation.md), [Phase 8–9](phase8-9-implementation.md), [Phase 10](phase10-implementation.md), [Phase 11](phase11-implementation.md) và [Phase 12](phase12-implementation.md). Schema 2 giữ cách chạy cũ. Schema 3 chỉ publish/tạo Job với subset đã tích hợp và cấu hình MQTT phù hợp; MOVE cần profile ACK theo phiên. UNLOCK, AI và SPEAK còn gate dependency; MAPPING/artifact mở qua cấu hình và capability Pi theo Phase 12. MQTT/dispatch/mapping mặc định tắt.
 
 ## 1. Mục tiêu và hiện trạng
 
@@ -52,8 +52,8 @@ Tài liệu được dùng làm nguồn yêu cầu và contract. Các câu mô t
 | CHECK_CONDITION | [condition handler](../src/main/java/com/mediassistrover/backend/service/impl/CheckConditionStepHandler.java) chạy SERVER schema 3; schema 2 giữ executor cũ | Safe evaluator đã nối, không chạy mã động |
 | SET_CONTEXT | [handler](../src/main/java/com/mediassistrover/backend/service/impl/SetContextStepHandler.java) chạy SERVER schema 3 qua orchestrator | Schema 2 giữ output/executor cũ |
 | WAIT/EVENT | [WorkflowEventServiceImpl](../src/main/java/com/mediassistrover/backend/service/impl/WorkflowEventServiceImpl.java) consume/completion và wake-up đã nối | Alert ACK riêng thuộc Phase 9 |
-| Xác thực | [staff](../src/main/java/com/mediassistrover/backend/service/impl/AuthVerificationServiceImpl.java) và [QR](../src/main/java/com/mediassistrover/backend/service/impl/QrVerificationServiceImpl.java) hoàn tất và resume BE Job | Quyền mở actuator thật thuộc Phase 10 |
-| Xác nhận hàng | [callback](../src/main/java/com/mediassistrover/backend/service/JobStepResponseService.java) tách cargo/đóng/kiểm khóa schema 3 | Milestone delivery và UNLOCK thuộc Phase 10 |
+| Xác thực | [staff](../src/main/java/com/mediassistrover/backend/service/impl/AuthVerificationServiceImpl.java) và [QR](../src/main/java/com/mediassistrover/backend/service/impl/QrVerificationServiceImpl.java) hoàn tất và resume BE Job; Phase 10 có binding quyền mở tại BE | Pi chưa kiểm quyền mở actuator thật |
+| Xác nhận hàng | [callback](../src/main/java/com/mediassistrover/backend/service/JobStepResponseService.java) tách cargo/đóng/kiểm khóa schema 3; Phase 10 nối mốc delivery sau VERIFY | Nghiệm thu delivery MQTT/UNLOCK còn chờ Pi |
 | NOTIFY | [handler](../src/main/java/com/mediassistrover/backend/service/impl/NotifyStepHandler.java) schema 3 hoàn tất khi lưu Alert; [AlertService](../src/main/java/com/mediassistrover/backend/service/impl/AlertServiceImpl.java) phát event khi đủ ANY/ALL | WAIT/EVENT riêng chờ ACK; schema 2 giữ chờ delivered/acked |
 | MQTT | [Paho transport](../src/main/java/com/mediassistrover/backend/mqtt/PahoMqttTransport.java), session và inbox/outbox đã có; mặc định tắt | Cấu hình broker/Pi thật và nghiệm thu sau Phase 8 |
 | Output | [validator](../src/main/java/com/mediassistrover/backend/validation/StepResultContractValidator.java) schema 2/3 và MQTT completion đã nối; V19 giữ DRAFT | Xác nhận output worker thật; mapping/AI cần tích hợp riêng |
@@ -123,7 +123,7 @@ Envelope dùng camelCase; params/output dùng đúng tên field của contract, 
 
 ## 3. Các phase triển khai
 
-**Trạng thái chung:** Phase 0–9 đã có phần BE và bằng chứng ở các tài liệu bàn giao. Phase 10–14 còn là kế hoạch; xác nhận contract/code Pi và nghiệm thu robot thật vẫn chờ bên tích hợp. Không suy ra hoàn thành phần cứng từ test BE/broker/simulator.
+**Trạng thái chung:** Phase 0–9 đã có phần BE và bằng chứng ở các tài liệu bàn giao. Phase 10 thêm binding/callback/milestone BE, còn chờ contract và thực thi quyền mở Pi. Phase 11 có group/profile/zone BE, còn chờ client Pi/AI và nghiệm thu navigation. Phase 12 có phần BE mapping/artifact, xem [bàn giao](phase12-implementation.md); còn chờ Pi/UI/robot thật. Phase 13–14 còn là kế hoạch. Không suy ra hoàn thành phần cứng từ test BE/broker/simulator.
 
 ### Phase 0 — Chốt baseline và contract
 
@@ -336,7 +336,7 @@ Envelope dùng camelCase; params/output dùng đúng tên field của contract, 
 
 ### Phase 10 — Xác thực thật và delivery đầy đủ
 
-**Hiện trạng:** BE có staff/QR verification; confirm hàng hiện đòi đã đóng/khóa ngay tại HANDLE_PAYLOAD. Theo tài liệu, worker Pi chưa thực thi STAFF_VERIFIED.
+**Trạng thái BE:** đã có [V23](../src/main/resources/db/migration/V23__delivery_operation_authorization.sql), [operation authorization](../src/main/java/com/mediassistrover/backend/service/OperationAuthorizationService.java), [handover milestones](../src/main/java/com/mediassistrover/backend/service/DeliveryHandoverService.java) và [integration tests](../src/test/java/com/mediassistrover/backend/DeliveryOperationAuthorizationIntegrationTest.java). Callback schema 3 ghi mốc hàng riêng, mốc pickup/delivery sau VERIFY; API cũ chặn bypass schema 3. Theo contract hiện tại, Pi chưa thực thi STAFF_VERIFIED nên UNLOCK chính thức và workflow delivery vẫn bị chặn. Chi tiết và giới hạn test tại [bàn giao Phase 10](phase10-implementation.md).
 
 **Việc BE cần làm**
 
@@ -355,7 +355,7 @@ Envelope dùng camelCase; params/output dùng đúng tên field của contract, 
 
 ### Phase 11 — Endpoint group và đồng bộ catalog
 
-**Hiện trạng:** DATA_SERVICE có RESOLVE_TARGETS/SELECT_TARGET/CHECK_TARGET; Pi theo tài liệu chỉ MOVE một endpoint, chưa tự MQTT sync catalog.
+**Trạng thái BE:** đã nối [NavigationTargetService](../src/main/java/com/mediassistrover/backend/service/NavigationTargetService.java) vào DATA_SERVICE/resolver/MOVE result, lưu selection và giới hạn fallback theo PATH_UNAVAILABLE/stop. [NavigationProfileService](../src/main/java/com/mediassistrover/backend/service/NavigationProfileService.java) cấp REST profile/ACK theo phiên MQTT và zone/map/frame; MOVE bị chặn khi chưa có ACK phù hợp. [V24](../src/main/resources/db/migration/V24__navigation_profile_and_group_selection.sql)/[V25](../src/main/resources/db/migration/V25__schema3_delivery_group_routing.sql) thêm persistence và graph group cho draft navigation/delivery. Client Pi/AI, asset thật và navigation robot chưa xác nhận. Chi tiết/test: [bàn giao Phase 11](phase11-implementation.md).
 
 **Việc BE cần làm**
 
@@ -373,7 +373,7 @@ Envelope dùng camelCase; params/output dùng đúng tên field của contract, 
 
 ### Phase 12 — Mapping và artifact
 
-**Hiện trạng:** tài liệu Pi có START/SAVE/STOP, preview và upload client; BE chưa có MappingSession/MapArtifact, upload endpoint hoặc COMMIT_MAP_ARTIFACT.
+**Trạng thái BE:** đã thêm MappingSession/MapArtifact, cấp UUID tại orchestrator, dispatch START/SAVE/STOP riêng, upload gzip có kiểm hash/file/scope, COMMIT tạo Map DRAFT, preview RAM/SSE và STOP cleanup khi hủy hoặc timeout lúc phiên mở. V26/V27 thêm persistence và template WF_MAPPING DRAFT. Mapping/MQTT mặc định tắt; Pi SLAM/upload, UI và robot thật chưa nghiệm thu. Xem [bàn giao Phase 12](phase12-implementation.md).
 
 **Việc BE cần làm**
 
@@ -389,7 +389,7 @@ Envelope dùng camelCase; params/output dùng đúng tên field của contract, 
 
 **Tiêu chí đạt:** START → preview → SAVE/upload → COMMIT → STOP; sai hash/session bị chặn; duplicate không tạo Map hai lần.
 
-**Code/test liên quan:** [DataServiceStepHandler](../src/main/java/com/mediassistrover/backend/service/impl/DataServiceStepHandler.java), [FacilityIntegrationTest](../src/test/java/com/mediassistrover/backend/FacilityIntegrationTest.java); bổ sung mapping lifecycle/upload/hash tests.
+**Code/test liên quan:** [MappingLifecycleService](../src/main/java/com/mediassistrover/backend/mapping/MappingLifecycleService.java), [MappingArtifactService](../src/main/java/com/mediassistrover/backend/mapping/MappingArtifactService.java), [MappingRuntimeIntegrationTest](../src/test/java/com/mediassistrover/backend/MappingRuntimeIntegrationTest.java), [MappingArchiveReaderTest](../src/test/java/com/mediassistrover/backend/MappingArchiveReaderTest.java), [migration test](../src/test/java/com/mediassistrover/backend/Phase26MappingMigrationIntegrationTest.java).
 
 ### Phase 13 — AI, emergency, heatmap và các workflow còn lại
 
@@ -474,4 +474,4 @@ Mỗi phase ghi: commit/code thay đổi, test đã chạy, kết quả, depende
 - File kế hoạch UTF-8: `docs/04_Ke_hoach_BE_MQTT_theo_phase.md`; giữ nguyên năm tài liệu nguồn. Artifact Phase 0 bổ sung trong `docs/phase0-contract-baseline.md` và `docs/schemas/`.
 - Mỗi phase có hiện trạng, việc BE cần làm, checklist ngoài repo và tiêu chí đạt; liên kết tới code/test hiện có.
 - Contract schema 3 và MQTT đã được nối vào runtime BE theo subset/gate trong các tài liệu bàn giao; schema Pi vẫn dựng từ tài liệu, chưa xác nhận code gốc.
-- Phase 10–14 vẫn cần triển khai/kiểm thử. Phase 5–9 kiểm BE/broker local không đồng nghĩa nghiệm thu robot hoặc chuyển hoàn toàn khỏi REST.
+- Phase 10 cần hoàn thiện contract/implementation Pi và kiểm delivery qua MQTT/robot thật. Phase 11 cần Pi áp dụng/ACK profile, AI nhận zone config và nghiệm thu navigation thật. Phase 12 cần Pi SLAM/upload, UI và commissioning Map; phần BE ở [bàn giao Phase 12](phase12-implementation.md). Phase 13–14 vẫn cần triển khai. Test BE/broker local không đồng nghĩa nghiệm thu robot hoặc chuyển hoàn toàn khỏi REST.

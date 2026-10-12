@@ -28,12 +28,14 @@ public class MqttOperationControlService {
     private final OrchestrationWorkService wakeups;
     private final org.springframework.context.ApplicationEventPublisher updates;
     private final Clock clock;
+    private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     private static final Set<JobStepStatus> TERMINAL=EnumSet.of(JobStepStatus.SUCCEEDED,JobStepStatus.FAILED,JobStepStatus.TIMED_OUT,JobStepStatus.CANCELLED);
     public boolean hasUnresolvedPiWork(List<JobStep> visits) {
         for(JobStep step:visits)if(!StepExecutionPolicy.isServer(step,step.getResolvedInputsJson())) {
             var command=commands.findByJobStepId(step.getJobStepId()).orElse(null);
             if(command!=null && command.getSendAttempts()>0 && !Boolean.TRUE.equals(command.getPhysicalStopConfirmed())
-                    && (!TERMINAL.contains(step.getStatus()) || Set.of("MOVE","CONTROL_HARDWARE").contains(step.getStepTypeSnapshot())))return true;
+                    && (!TERMINAL.contains(step.getStatus()) || Set.of("MOVE","CONTROL_HARDWARE").contains(step.getStepTypeSnapshot())
+                    || com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step)))return true;
         }
         return false;
     }
@@ -47,8 +49,8 @@ public class MqttOperationControlService {
         boolean jobExpired=job.getStartedAt()!=null && !job.getStartedAt().plusSeconds(job.getWorkflow().getMaxDurationSec()).isAfter(now);
         String reason=step.getInterruptionReason();
         if(reason==null) {
-            if(job.getCancelRequestedAt()!=null)reason="JOB_CANCEL";
-            else if(jobExpired)reason="WORKFLOW_TIMEOUT";
+            if(job.getCancelRequestedAt()!=null && !step.isMappingCleanup())reason="JOB_CANCEL";
+            else if(jobExpired && !step.isMappingCleanup())reason="WORKFLOW_TIMEOUT";
             else if(!TERMINAL.contains(step.getStatus()) && (step.getStartedAt()!=null && !step.getStartedAt().plusSeconds(step.getTimeoutSecSnapshot()).isAfter(now)
                     || execute!=null && "ACKNOWLEDGED".equals(execute.getState()) && !execute.getExpiresAt().isAfter(now)))reason="STEP_TIMEOUT";
             else return false;
@@ -92,6 +94,7 @@ public class MqttOperationControlService {
         // An existing recovery decision is never silently undone by late ACK/result.
         if(job.getStatus()==JobStatus.RECOVERY_REQUIRED)return;
         if("JOB_CANCEL".equals(reason) || "WORKFLOW_TIMEOUT".equals(reason)) {
+            if(mapping.open(job.getJobId())) {mapping.deferTerminal(job,"JOB_CANCEL".equals(reason)?TerminalStatus.CANCELLED:TerminalStatus.FAILED);updates.publishEvent(new RuntimeChanged(job.getJobId()));return;}
             Instant now=Instant.now(clock);JobStatus status="JOB_CANCEL".equals(reason)?JobStatus.CANCELLED:JobStatus.FAILED;
             job.setStatus(status);job.setEndedAt(now);job.setErrorCode("JOB_CANCEL".equals(reason)?null:"WORKFLOW_DURATION_EXCEEDED");
             if(job.getServiceRequest()!=null){job.getServiceRequest().setStatus(ServiceRequestStatus.valueOf(status.name()));

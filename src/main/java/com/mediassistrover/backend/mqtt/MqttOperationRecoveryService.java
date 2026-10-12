@@ -34,6 +34,7 @@ public class MqttOperationRecoveryService {
     private final OrchestrationWorkService wakeups;
     private final org.springframework.context.ApplicationEventPublisher updates;
     private final Clock clock;
+    private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager em;
 
     @Transactional(readOnly=true)
@@ -74,7 +75,8 @@ public class MqttOperationRecoveryService {
                 || session.getLastHeartbeatAt().isBefore(session.getHelloReceivedAt()))throw new BusinessRuleException("Recovery requires current HELLO and fresh heartbeat after HELLO");
         JsonNode heartbeat=session.getHeartbeatJson();
         if(heartbeat==null || !"IDLE".equals(heartbeat.path("status").asText()) || !heartbeat.path("activeJobStepId").isNull()
-                || !heartbeat.path("mappingSession").isNull() || !session.getHelloJson().path("mappingSession").isNull())
+                || com.mediassistrover.backend.mapping.MappingLifecycleService.reportsOpen(heartbeat.path("mappingSession"))
+                || com.mediassistrover.backend.mapping.MappingLifecycleService.reportsOpen(session.getHelloJson().path("mappingSession")))
             throw new BusinessRuleException("Pi still reports an active operation/mapping or error");
         JsonNode journal=null;for(JsonNode entry:session.getHelloJson().path("states")) {
             if(Set.of("ACCEPTED","RUNNING","RECOVERY_REQUIRED").contains(entry.path("status").asText()))
@@ -100,7 +102,7 @@ public class MqttOperationRecoveryService {
         if(Set.of(JobStepStatus.PENDING,JobStepStatus.RUNNING,JobStepStatus.RECOVERY_REQUIRED).contains(step.getStatus())) {
             step.setStatus(status==JobStatus.CANCELLED?JobStepStatus.CANCELLED:JobStepStatus.FAILED);step.setEndedAt(now);
         }
-        job.setStatus(status);job.setEndedAt(now);job.setReconciledByAccount(actor);job.setReconciledAt(now);job.setReconciliationNote(request.note());
+        mapping.reconciled(job);job.setStatus(status);job.setEndedAt(now);job.setReconciledByAccount(actor);job.setReconciledAt(now);job.setReconciliationNote(request.note());
         if(job.getServiceRequest()!=null){job.getServiceRequest().setStatus(ServiceRequestStatus.valueOf(status.name()));if(status==JobStatus.CANCELLED)job.getServiceRequest().setCancelledAt(now);else job.getServiceRequest().setCompletedAt(now);}
         for(JobTask task:tasks.findByJobJobIdOrderBySequenceNoAsc(jobId))if(task.getStartedAt()!=null && task.getEndedAt()==null){task.setStatus(status==JobStatus.CANCELLED?JobTaskStatus.CANCELLED:JobTaskStatus.FAILED);task.setEndedAt(now);}
         for(var command:commands.findByJobIdOrderByCreatedAt(jobId))if(command.getJobStepId().equals(stepId))command.setState("RESOLVED_BY_STAFF");

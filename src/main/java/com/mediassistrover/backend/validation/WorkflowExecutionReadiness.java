@@ -13,6 +13,7 @@ public class WorkflowExecutionReadiness {
     private final StepRepository steps;
     private final com.mediassistrover.backend.mqtt.MqttStepDispatchService mqttDispatch;
     private final com.mediassistrover.backend.mqtt.MqttProperties mqttProperties;
+    private final com.mediassistrover.backend.mapping.MappingProperties mappingProperties;
     public boolean acceptsRobot(Workflow workflow, Robot robot) {
         if (workflow.getSchemaVersion()==2) return !mqttProperties.manages(robot.getRobotId());
         boolean pi=steps.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId()).stream()
@@ -34,7 +35,7 @@ public class WorkflowExecutionReadiness {
                 case NOTIFY -> { } // Alert persistence and recipient ACK are integrated; explicit WAIT/EVENT waits for ACK.
                 case WAIT -> { if (!"EVENT".equals(params.path("wait_type").asText()) || mapping.has("wait_type")) mqttDispatch.requireActionSupported(step); }
                 case INTERACT -> { if ("SPEAK".equals(params.path("action").asText()) || mapping.has("action")) blocked(step,"audio completion / dynamic executor contract"); }
-                case DATA_SERVICE -> { if ("COMMIT_MAP_ARTIFACT".equals(params.path("service_key").asText()) || mapping.has("service_key")) blocked(step,"artifact integration / dynamic service contract"); }
+                case DATA_SERVICE -> { if ("COMMIT_MAP_ARTIFACT".equals(params.path("service_key").asText()) && !mappingProperties.isEnabled() || mapping.has("service_key")) blocked(step,"artifact integration / dynamic service contract"); }
                 default -> { }
             }
         }

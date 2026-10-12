@@ -31,6 +31,18 @@ public class JobExecutionServiceImpl implements JobExecutionService {
     private final RequestJobInputSnapshotFactory inputSnapshots;
     private final com.mediassistrover.backend.validation.WorkflowExecutionReadiness readiness;
     private final com.mediassistrover.backend.service.OrchestrationWorkService wakeups;
+    private final FloorRepository floors;
+    private final MappingSessionRepository mappingSessions;
+    @Override public Job createForMapping(UUID workflowId,UUID robotId,UUID floorId,String mapName) {
+        Workflow workflow=workflowRepository.findById(workflowId).orElseThrow(()->new ResourceNotFoundException("Workflow not found"));
+        if(workflow.getSchemaVersion()!=3 || !"MAPPING".equals(workflow.getServiceType()) || workflow.getStatus()!=WorkflowStatus.PUBLISHED
+                || !workflow.isAcceptsNewJobs() || workflow.getDefinitionHash()==null)throw new BusinessRuleException("Mapping requires a published schema 3 MAPPING workflow");
+        if(mapName==null || mapName.isBlank() || mapName.length()>160 || floorId==null)throw new BusinessRuleException("Mapping requires floor_id and map_name (1-160 characters)");
+        if(!floors.findById(floorId).map(Floor::isActive).orElse(false))throw new BusinessRuleException("Mapping requires an active floor");
+        Robot robot=selectPinnedRobot(robotRepository.findById(robotId).orElseThrow(()->new ResourceNotFoundException("Robot not found")));
+        if(!mappingSessions.findByRobotIdAndPotentiallyOpenTrue(robotId).isEmpty())throw new BusinessRuleException("Robot holds an open mapping session");
+        return create(workflow,null,null,robot,null,1,objectMapper.createObjectNode().put("floor_id",floorId.toString()).put("map_name",mapName),null,null);
+    }
 
     @Override public Job createForRequest(ServiceRequest request){Workflow workflow=workflowFor(request.getRequestType());FacilityMap map=mapFor(request);Robot robot=ROBOT_PINNED.contains(request.getRequestType())?selectPinnedRobot(request.getRequestedRobot()):selectRobot(request.getRequestedRobot(),map,workflow);JsonNode input=inputSnapshots.forRequest(workflow,request);Job job=create(workflow,request,null,robot,map,request.getPriority(),input,null,null);job.setRecoveryOfJob(recoverySource(request));return job;}
     @Override public Job createForSchedule(Schedule schedule,Instant fireAt,JsonNode input){if(jobRepository.existsByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(schedule.getScheduleId(),fireAt,"DEFAULT"))return jobRepository.findAll().stream().filter(j->j.getSchedule()!=null&&j.getSchedule().getScheduleId().equals(schedule.getScheduleId())&&fireAt.equals(j.getScheduleFireAt())).findFirst().orElseThrow();Workflow w=schedule.getWorkflow();if(w.getStatus()!=WorkflowStatus.PUBLISHED||!w.isAcceptsNewJobs())throw new BusinessRuleException("Schedule workflow does not accept new jobs");Robot robot=selectRobot(schedule.getRobot(),null,w);return create(w,null,schedule,robot,robot==null?null:robot.getCurrentMap(),schedule.getPriority(),merge(w.getDefaultInputsJson(),input),fireAt,"DEFAULT");}

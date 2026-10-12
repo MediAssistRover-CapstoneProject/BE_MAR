@@ -16,6 +16,7 @@ public final class DeliveryResponses {
                                    TargetMode targetMode,String recipientName,String recipientContact,
                                    boolean requiresConfirmation,String temperatureRequirement,Instant deliveryDeadline,
                                    Instant pickedUpAt,Instant deliveredAt,Instant pickupCompartmentConfirmedAt,
-                                   Instant deliveryCompartmentConfirmedAt,String deliveryNote,long rowVersion,
+                                   Instant deliveryCompartmentConfirmedAt,Instant pickupPayloadConfirmedAt,
+                                   Instant deliveryPayloadConfirmedAt,String deliveryNote,long rowVersion,
                                    List<ItemResponse> items) { }
 }

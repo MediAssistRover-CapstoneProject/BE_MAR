@@ -31,7 +31,7 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class DataServiceStepHandler implements ServerStepHandler {
     public static final Set<String> SUPPORTED_SERVICE_KEYS=Set.of(
-            "QUERY_HOSPITAL_INFORMATION","RESOLVE_TARGETS","SELECT_TARGET","CHECK_TARGET","CREATE_FALL_INCIDENT");
+            "QUERY_HOSPITAL_INFORMATION","RESOLVE_TARGETS","SELECT_TARGET","CHECK_TARGET","CREATE_FALL_INCIDENT","COMMIT_MAP_ARTIFACT");
     private final HospitalInformationQueryService informationQueryService;
     private final EndpointRepository endpointRepository;
     private final EndpointGroupMemberRepository groupMemberRepository;
@@ -39,8 +39,10 @@ public class DataServiceStepHandler implements ServerStepHandler {
     private final EmergencyIncidentRepository incidentRepository;
     private final ObjectMapper objectMapper;
     private final Clock clock;
+    private final com.mediassistrover.backend.service.NavigationTargetService navigation;
 
-    @Override public boolean supports(JobStep step){return step.getStep().getStepType()==StepType.DATA_SERVICE;}
+    @Override public boolean supports(JobStep step){return step.getStep().getStepType()==StepType.DATA_SERVICE
+            && !"COMMIT_MAP_ARTIFACT".equals(step.getResolvedInputsJson().path("service_key").asText());}
 
     @Override public ServerStepExecution execute(JobStep step,JsonNode inputs){
         String key=inputs.path("service_key").asText(step.getStepCodeSnapshot().equals("QUERY")?"QUERY_HOSPITAL_INFORMATION":step.getStepCodeSnapshot());
@@ -71,13 +73,22 @@ public class DataServiceStepHandler implements ServerStepHandler {
                 data.put("count",items.size());
             }
             case "RESOLVE_TARGETS" -> {
+                if(step.getJobTask().getJob().isBeOrchestrated() && step.getJobTask().getJob().getSchemaVersion()==3) {
+                    data.set("targets",navigation.resolve(step,uuid(inputs,"endpoint_group_id")));break;
+                }
                 UUID groupId=uuid(inputs,"endpoint_group_id");ArrayNode targets=data.putArray("targets");
                 groupMemberRepository.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(groupId).stream().filter(m->m.isActive()&&m.getEndpoint().isActive()).forEach(m->targets.add(endpoint(m.getEndpoint())));
             }
             case "SELECT_TARGET" -> {
+                if(step.getJobTask().getJob().isBeOrchestrated() && step.getJobTask().getJob().getSchemaVersion()==3) {
+                    data.setAll(navigation.select(step,inputs.path("targets"),inputs.path("index").asInt(0)));break;
+                }
                 JsonNode targets=inputs.path("targets");int index=inputs.path("index").asInt(0);boolean valid=targets.isArray()&&index>=0&&index<targets.size();data.put("has_target",valid);if(valid)data.set("target",targets.get(index).deepCopy());if(valid&&targets.get(index).has("endpoint_id"))data.set("endpoint_id",targets.get(index).get("endpoint_id"));
             }
             case "CHECK_TARGET" -> {
+                if(step.getJobTask().getJob().isBeOrchestrated() && step.getJobTask().getJob().getSchemaVersion()==3) {
+                    data.setAll(navigation.check(step,uuid(inputs,"endpoint_id")));break;
+                }
                 UUID endpointId=uuid(inputs,"endpoint_id");Endpoint endpoint=endpointRepository.findById(endpointId).orElse(null);boolean valid=endpoint!=null&&endpoint.isActive()&&endpoint.isAccessible();data.put("is_valid",valid);if(valid)data.set("endpoint",endpoint(endpoint));
             }
             case "CREATE_FALL_INCIDENT" -> {

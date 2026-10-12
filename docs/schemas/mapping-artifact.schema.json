@@ -2,9 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mediassistrover.invalid/contracts/phase0/mapping-artifact.schema.json",
   "title": "Artifact manifest and HTTP upload receipt",
-  "$comment": "BE schema 3 design, not enabled in runtime. Derived from Markdown 11/10/2026 plus explicit Phase 0 decisions.",
+  "$comment": "Phase 12 BE validates manifests using bundled common/artifact and returns a typed HTTP receipt. Mapping is opt-in; Pi upload/SLAM code remains unverified.",
   "x-provenance": {
-    "status": "PLANNED_BE_SCHEMA_3",
+    "status": "IMPLEMENTED_BE_SCHEMA_3_ARTIFACT",
     "sources": [
       "../02_Input_Output_11_Step_Type.md",
       "../phase0-contract-baseline.md"

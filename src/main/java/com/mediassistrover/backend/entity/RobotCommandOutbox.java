@@ -25,4 +25,5 @@ public class RobotCommandOutbox {
     @Column(name="created_at",nullable=false) private Instant createdAt;
     @Column(name="last_publish_at") private Instant lastPublishAt;
     @Column(name="acknowledged_at") private Instant acknowledgedAt;
+    @Column(name="navigation_profile_hash",length=64,columnDefinition="CHAR(64)") private String navigationProfileHash;
 }

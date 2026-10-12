@@ -25,6 +25,8 @@ public class MqttRuntimeEvents {
     private final org.springframework.context.ApplicationEventPublisher updates;
     private final MqttOperationControlService control;
     private final MqttWire wire;
+    private final com.mediassistrover.backend.service.NavigationTargetService navigationTargets;
+    private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
 
     public void apply(Job job,MqttWire.Envelope e) {
         if (job==null || !job.isBeOrchestrated() || job.getSchemaVersion()!=3 || job.getRobot()==null || !job.getRobot().getRobotId().equals(e.robotId()))
@@ -68,7 +70,7 @@ public class MqttRuntimeEvents {
                 }
             }
             case "STEP_STARTED" -> {
-                if(step.getInterruptionReason()!=null || job.getCancelRequestedAt()!=null)throw new BusinessRuleException("STEP_STARTED after cancellation intent");
+                if(step.getInterruptionReason()!=null || job.getCancelRequestedAt()!=null && !step.isMappingCleanup())throw new BusinessRuleException("STEP_STARTED after cancellation intent");
                 if (job.getStatus()!=JobStatus.RUNNING || step.getStatus()!=JobStepStatus.PENDING || !"ACKNOWLEDGED".equals(command.getState())) throw new BusinessRuleException("STEP_STARTED requires accepted command and PENDING selected step");
                 if (!step.getStepTypeSnapshot().equals(p.path("stepType").asText()) || !command.getPayloadJson().path("step").path("params").equals(p.path("resolvedInputs")))
                     throw new BusinessRuleException("STEP_STARTED differs from frozen command params");
@@ -96,7 +98,10 @@ public class MqttRuntimeEvents {
         outputs.validate(step,p.path("result"),reportedAt);
         step.setResultJson(p.path("result").deepCopy());step.setStatus(JobStepStatus.SUCCEEDED);step.setEndedAt(Instant.now(clock));command.setState("COMPLETED");
         command.setPhysicalStopConfirmed(p.path("physicalStopConfirmed").isBoolean()?p.path("physicalStopConfirmed").asBoolean():null);
+        if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step) && p.path("physicalStopConfirmed").asBoolean())mapping.completed(step,p.path("result"),true);
         if (physical(step) && !p.path("physicalStopConfirmed").asBoolean()) safety.recovery(job,"Successful physical action has no confirmed stop");
+        if("MOVE".equals(step.getStepTypeSnapshot()) && job.getStatus()==JobStatus.RUNNING && step.getInterruptionReason()==null
+                && p.path("physicalStopConfirmed").asBoolean() && step.getResultJson().path("reached").asBoolean()) navigationTargets.reached(step);
         finishInterrupted(job,step,command,p);
     }
     private void error(Job job,JobStep step,RobotCommandOutbox command,JsonNode p,String status) {
@@ -117,6 +122,7 @@ public class MqttRuntimeEvents {
         if (next==JobStepStatus.RECOVERY_REQUIRED || physical(step) && !p.path("physicalStopConfirmed").asBoolean()) safety.recovery(job,"Pi error/restart lacks confirmed physical stop");
         else if(step.getInterruptionReason()!=null)finishInterrupted(job,step,command,p);
         else if (next==JobStepStatus.CANCELLED && job.getStatus()==JobStatus.RUNNING) {
+            if(mapping.open(job.getJobId())) {job.setCancelRequestedAt(Instant.now(clock));wakeups.request(job);return;}
             Instant now=Instant.now(clock);job.setStatus(JobStatus.CANCELLED);job.setEndedAt(now);
             if (job.getServiceRequest()!=null) {job.getServiceRequest().setStatus(ServiceRequestStatus.CANCELLED);job.getServiceRequest().setCompletedAt(now);}
             if (job.getRobot().getStatus()==RobotStatus.BUSY) job.getRobot().setStatus(RobotStatus.IDLE);
@@ -147,7 +153,7 @@ public class MqttRuntimeEvents {
                     if(step.getStatus()!=JobStepStatus.RUNNING || !"STARTED".equals(execute.getState())) {safety.recovery(job,"Succeeded cancel journal lacks committed STEP_STARTED");return;}
                     JsonNode output=p.path("result").path("result");
                     if(!output.isObject()) {safety.recovery(job,"Cancel journal succeeded but successful output is missing");return;}
-                    outputs.validate(step,output,e.time());step.setResultJson(output.deepCopy());
+                    outputs.validate(step,output,e.time());mapping.completed(step,output,true);step.setResultJson(output.deepCopy());
                 }
                 step.setStatus(JobStepStatus.valueOf(status));step.setEndedAt(Instant.now(clock));
                 step.setErrorCode("BE_"+step.getInterruptionReason());step.setErrorDetailsJson(p.deepCopy());
@@ -162,5 +168,5 @@ public class MqttRuntimeEvents {
     private JsonNode wireNode(MqttWire.Envelope e) {
         return wire.tree(e);
     }
-    private boolean physical(JobStep step) {return Set.of("MOVE","CONTROL_HARDWARE").contains(step.getStepTypeSnapshot());}
+    private boolean physical(JobStep step) {return Set.of("MOVE","CONTROL_HARDWARE").contains(step.getStepTypeSnapshot()) || com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step);}
 }

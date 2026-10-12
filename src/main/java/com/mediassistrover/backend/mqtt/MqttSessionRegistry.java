@@ -30,7 +30,9 @@ public class MqttSessionRegistry {
     private final MqttConnectionState connection;
     private final MqttProperties properties;
     private final Clock clock;
-    private final Map<UUID,JsonNode> previews=new ConcurrentHashMap<>();
+    private final RobotNavigationProfileRepository navigationProfiles;
+    private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
+    private final com.mediassistrover.backend.mapping.MappingPreviewService mappingPreviews;
     private static final List<JobStatus> OCCUPIED=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
 
     public boolean owned(RobotMqttSession session) {
@@ -52,6 +54,7 @@ public class MqttSessionRegistry {
         if (!connection.connected()) throw new MqttSessionUnavailableException("MQTT subscription is not ready");
         Robot robot=robots.findByIdForUpdate(e.robotId()).orElseThrow(()->new BusinessRuleException("Unknown MQTT robot"));
         RobotMqttSession prior=sessions.lock(e.robotId()).orElse(null);
+        boolean mappingProcessChanged=prior!=null && !prior.getProducerSessionId().equals(e.producerSessionId());
         boolean sameTransport=prior!=null && owned(prior) && prior.getTransportSessionId().equals(e.transportSessionId());
         if (sameTransport && !prior.getProducerSessionId().equals(e.producerSessionId())) throw new BusinessRuleException("New Pi process requires a new transport session");
         RobotMqttSession session=prior==null?new RobotMqttSession():prior;
@@ -83,9 +86,14 @@ public class MqttSessionRegistry {
         session.setRobotId(e.robotId());session.setTransportSessionId(e.transportSessionId());session.setProducerSessionId(e.producerSessionId());
         session.setOwnerInstanceId(connection.instanceId());session.setConnectionId(connection.connectionId());
         session.setHandshakeAccepted(true);session.setHandshakeAcked(sameTransport && session.isHandshakeAcked());session.setClosed(false);
-        session.setDispatchReady(reconciled && hello.path("mappingSession").isNull());session.setFailureReason(reason);
+        if(!mapping.telemetryMatches(e.robotId(),hello.path("mappingSession"))
+                || active.stream().anyMatch(j->mapping.open(j.getJobId())) && (!hello.path("mappingEnabled").asBoolean()
+                || mappingProcessChanged)) {
+            reconciled=false;reason="Unknown or foreign open mapping session";active.forEach(j->safety.recovery(j,"Unknown or foreign open mapping session"));robot.setStatus(RobotStatus.ERROR);
+        }
+        session.setDispatchReady(reconciled);session.setFailureReason(reason);
         session.setHelloJson(hello.deepCopy());session.setHelloReceivedAt(Instant.now(clock));
-        if (!sameTransport) {session.setLastHeartbeatAt(null);session.setHeartbeatJson(null);previews.remove(e.robotId());}
+        if (!sameTransport) {session.setLastHeartbeatAt(null);session.setHeartbeatJson(null);}
         robot.setRuntimeVersion(hello.path("runtimeVersion").asText());robot.setProtocolVersion(1);robot.setCapabilitiesJson(hello.path("capabilities").deepCopy());
         sessions.save(session);
         return session;
@@ -101,8 +109,18 @@ public class MqttSessionRegistry {
         if (e.time().isAfter(now.plusSeconds(5)) || e.time().isBefore(now.minusSeconds(15))) throw new BusinessRuleException("Stale/future MQTT heartbeat");
         if (session.getHeartbeatJson()!=null && session.getLastHeartbeatAt()!=null && e.time().isBefore(Instant.parse(session.getHeartbeatJson().path("occurredAt").asText()))) return;
         UUID mapId=p.path("currentMapId").isNull()?null:UUID.fromString(p.path("currentMapId").asText());
-        FacilityMap map=mapId==null?null:maps.findById(mapId).orElseThrow(()->new BusinessRuleException("Heartbeat map does not exist"));
-        if (active.stream().anyMatch(j->j.getMap()!=null && (map==null || !j.getMap().getMapId().equals(map.getMapId())))) {
+        boolean mappingOpen=com.mediassistrover.backend.mapping.MappingLifecycleService.reportsOpen(p.path("mappingSession"));
+        if(!mapping.telemetryMatches(e.robotId(),p.path("mappingSession")) || mappingOpen && (mapId!=null || !p.path("mapAssetHash").isNull())) {
+            session.setDispatchReady(false);session.setFailureReason("Mapping heartbeat scope/map identity mismatch");active.forEach(j->safety.recovery(j,session.getFailureReason()));
+        }
+        FacilityMap map=mapId==null || mappingOpen?null:maps.findById(mapId).orElseThrow(()->new BusinessRuleException("Heartbeat map does not exist"));
+        RobotNavigationProfile deployed=navigationProfiles.findById(e.robotId()).orElse(null);
+        boolean incompatibleMove=commands.findByRobotIdAndStateIn(e.robotId(),List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED")).stream()
+                .filter(c->c.getSendAttempts()>0 && "MOVE".equals(c.getPayloadJson().path("step").path("stepType").asText()))
+                .anyMatch(c->deployed==null || c.getNavigationProfileHash()==null || !c.getNavigationProfileHash().equals(deployed.getProfileHash())
+                        || !deployed.getMapAssetHash().equalsIgnoreCase(p.path("mapAssetHash").asText()));
+        if(incompatibleMove) {session.setDispatchReady(false);session.setFailureReason("Navigation profile/map hash changed during MOVE");active.forEach(j->safety.recovery(j,session.getFailureReason()));}
+        if (active.stream().anyMatch(j->j.getMap()!=null && !mapping.open(j.getJobId()) && (map==null || !j.getMap().getMapId().equals(map.getMapId())))) {
             session.setDispatchReady(false);session.setFailureReason("Heartbeat map differs from held Job");active.forEach(j->safety.recovery(j,session.getFailureReason()));
         }
         if (!p.path("activeJobStepId").isNull()) {
@@ -117,9 +135,9 @@ public class MqttSessionRegistry {
         boolean held=active.stream().anyMatch(j->Set.of(JobStatus.RUNNING,JobStatus.ACCEPTED).contains(j.getStatus()));
         boolean recovery=active.stream().anyMatch(j->j.getStatus()==JobStatus.RECOVERY_REQUIRED);
         RobotStatus next=recovery || "ERROR".equals(p.path("status").asText())?RobotStatus.ERROR:
-                held || "BUSY".equals(p.path("status").asText()) || !p.path("mappingSession").isNull()?RobotStatus.BUSY:RobotStatus.IDLE;
+                held || "BUSY".equals(p.path("status").asText()) || mappingOpen?RobotStatus.BUSY:RobotStatus.IDLE;
         robot.setStatus(next);robot.setLastHeartbeatAt(now);robot.setRuntimeVersion(p.path("runtimeVersion").asText());robot.setCurrentMap(map);
-        robot.setMapAssetHash(p.path("mapAssetHash").isNull()?null:p.path("mapAssetHash").asText().toLowerCase(Locale.ROOT));robot.setCapabilitiesJson(p.path("capabilities").deepCopy());
+        robot.setMapAssetHash(mappingOpen || p.path("mapAssetHash").isNull()?null:p.path("mapAssetHash").asText().toLowerCase(Locale.ROOT));robot.setCapabilitiesJson(p.path("capabilities").deepCopy());
         JsonNode telemetry=p.path("telemetry"),battery=telemetry.path("battery");
         if (battery.has("value") && !battery.path("value").isNull() && battery.path("age_sec").asDouble()<=15) {
             robot.setBatteryRaw(battery.path("value").asInt());robot.setBatteryUnit(BatteryUnit.UNKNOWN);
@@ -128,7 +146,7 @@ public class MqttSessionRegistry {
         if (previous!=next && !histories.existsById(e.messageId())) histories.save(RobotStatusHistory.builder().robotStatusHistoryId(e.messageId()).robot(robot)
                 .previousStatus(previous).newStatus(next).reason("MQTT_HEARTBEAT").recordedAt(now).build());
         JsonNode pose=telemetry.path("map_pose");
-        if (map!=null && pose.path("fresh").asBoolean() && pose.path("age_sec").isNumber() && pose.path("age_sec").asDouble()>=0 && pose.path("age_sec").asDouble()<=1
+        if (map!=null && !mappingOpen && active.stream().noneMatch(j->mapping.open(j.getJobId())) && pose.path("fresh").asBoolean() && pose.path("age_sec").isNumber() && pose.path("age_sec").asDouble()>=0 && pose.path("age_sec").asDouble()<=1
                 && pose.path("value").path("map_id").asText().equals(map.getMapId().toString()) && !locations.existsById(e.messageId())) {
             JsonNode value=pose.path("value");locations.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map)
                     .xM(value.path("x_m").decimalValue()).yM(value.path("y_m").decimalValue()).yawRad(value.path("yaw_rad").decimalValue()).fresh(true)
@@ -157,12 +175,12 @@ public class MqttSessionRegistry {
     }
     private void close(RobotMqttSession session,List<Job> active) {
         session.setClosed(true);session.setDispatchReady(false);session.setFailureReason("MQTT session offline");
-        for (Job job:active) if (commands.findByRobotIdAndStateIn(session.getRobotId(),List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED")).stream().anyMatch(c->c.getJobId().equals(job.getJobId())))
+        for (Job job:active) if (mapping.open(job.getJobId()) || commands.findByRobotIdAndStateIn(session.getRobotId(),List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED")).stream().anyMatch(c->c.getJobId().equals(job.getJobId())))
             safety.recovery(job,"MQTT disconnected with an in-flight operation");
     }
     public void preview(UUID robotId,UUID transport,JsonNode payload) {
         RobotMqttSession session=sessions.findById(robotId).orElse(null);
-        if (!owned(session) || !transport.equals(session.getTransportSessionId()) || !session.getHelloJson().path("mappingEnabled").asBoolean()) return;
-        previews.put(robotId,payload.deepCopy());
+        if (!fresh(session) || !transport.equals(session.getTransportSessionId()) || !session.getHelloJson().path("mappingEnabled").asBoolean()) return;
+        mappingPreviews.accept(robotId,payload);
     }
 }

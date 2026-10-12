@@ -33,6 +33,7 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired com.mediassistrover.backend.validation.WorkflowExecutionReadiness readiness;
     @Autowired jakarta.persistence.EntityManager entityManager;
+    @Autowired NavigationProfileService profiles;
     @MockitoBean PahoMqttTransport transport;
     private TransactionTemplate tx;
     private MqttTestFixture fixture;
@@ -56,7 +57,8 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
     private void receive(ObjectNode raw) {router.route(MqttTopics.topic(fixture.robotId,"events"),wire.bytes(raw),1,false);}
     private void hello() {receive(fixture.hello(json));}
     private void heartbeat() {router.route(MqttTopics.topic(fixture.robotId,"heartbeat"),wire.bytes(fixture.heartbeat(json)),0,false);}
-    private RobotCommandOutbox dispatch() {hello();heartbeat();orchestrator.advance(fixture.jobId);RobotCommandOutbox c=commands.findByJobStepId(fixture.piStepId).orElseThrow();fixture.commandId=c.getCommandId();publisher.command(c.getCommandId());return commands.findById(c.getCommandId()).orElseThrow();}
+    private RobotCommandOutbox dispatch() {hello();heartbeat();confirmProfile();orchestrator.advance(fixture.jobId);RobotCommandOutbox c=commands.findByJobStepId(fixture.piStepId).orElseThrow();fixture.commandId=c.getCommandId();publisher.command(c.getCommandId());return commands.findById(c.getCommandId()).orElseThrow();}
+    private void confirmProfile() {if(fixture.type!=StepType.MOVE)return;var robot=robots.findById(fixture.robotId).orElseThrow();var device=new com.mediassistrover.backend.security.DevicePrincipal(robot.getRobotId(),robot.getRobotCode(),robot.getDeviceTokenVersion(),"test",Instant.now().plusSeconds(300));var manifest=profiles.manifest(device);profiles.confirm(new NavigationProfileService.Confirm(fixture.transportId,fixture.producerId,fixture.mapId,manifest.profile().path("map_asset_sha256").asText(),manifest.profileHash()),device);}
     private ObjectNode ack(boolean accepted) {return fixture.event(json,"COMMAND_ACK",json.createObjectNode().put("commandId",fixture.commandId.toString()).put("commandType","EXECUTE_STEP").put("accepted",accepted).put("status","ACCEPTED"));}
     private ObjectNode start() {return fixture.event(json,"STEP_STARTED",json.createObjectNode().put("attemptNo",1).put("stepType",fixture.type.name()).set("resolvedInputs",commands.findById(fixture.commandId).orElseThrow().getPayloadJson().path("step").path("params")));}
     private ObjectNode result(boolean stopped) {var p=json.createObjectNode().put("status","SUCCEEDED").put("retryable",false).put("physicalStopConfirmed",stopped);p.putNull("errorCode");p.putNull("details");p.set("result",fixture.output(json));return fixture.event(json,"STEP_RESULT",p);}

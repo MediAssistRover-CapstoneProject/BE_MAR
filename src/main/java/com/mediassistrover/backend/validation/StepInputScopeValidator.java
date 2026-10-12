@@ -72,7 +72,7 @@ public class StepInputScopeValidator {
             if (canonical == null || !canonical.equals(inputs.get("items"))) fail(step, "items", "must match the Job delivery snapshot");
         }
         if (job != null && inputs.has("authorization"))
-            fail(step, "authorization", "requires the BE-issued operation authorization integration (Phase 10)");
+            fail(step, "authorization", "must be issued and bound by BE; untrusted authorization is forbidden");
     }
 
     private void endpoint(Step step, UUID id, UUID mapId, boolean mustBeUsable) {

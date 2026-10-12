@@ -34,6 +34,7 @@ public class WorkflowOrchestratorService {
     private final ApplicationEventPublisher updates;
     private final ObjectMapper json;
     private final Clock clock;
+    private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
 
     @Transactional
     public void advance(UUID jobId) {
@@ -59,6 +60,12 @@ public class WorkflowOrchestratorService {
         }
         if (job.getStatus()!=JobStatus.RUNNING) return;
         if(mqttControl.handle(job,job.getSelectedJobStep()))return;
+        JobStep cleanup=job.getSelectedJobStep();
+        if(cleanup!=null && cleanup.isMappingCleanup()) {
+            if(cleanup.getStatus()==JobStepStatus.PENDING)mqttDispatch.dispatch(cleanup);
+            else if(cleanup.getStatus()!=JobStepStatus.RUNNING)finish(job,mapping.cleanupOutcome(cleanup));
+            updates.publishEvent(new RuntimeChanged(jobId));return;
+        }
         List<JobStep> visits=steps.findByJobId(jobId);
         if (visits.stream().anyMatch(s->s.getStatus()==JobStepStatus.RECOVERY_REQUIRED)) { finish(job,TerminalStatus.RECOVERY_REQUIRED); return; }
         if (job.getCancelRequestedAt()!=null) {
@@ -98,7 +105,9 @@ public class WorkflowOrchestratorService {
             throw new BusinessRuleException("Selected graph target is invalid");
         long total=visits.stream().filter(s->s.getSelectedAt()!=null).count();
         long count=visits.stream().filter(s->s.getSelectedAt()!=null && s.getStep().getStepId().equals(target.getStepId())).count();
-        if (total>=job.getWorkflow().getMaxTotalVisits() || count>=target.getMaxVisits()) {
+        boolean targetIsStop=target.getStepType()==StepType.EXECUTE_SENSING && "MAPPING".equals(target.getParamsJson().path("sensing_type").asText()) && "STOP".equals(target.getParamsJson().path("action").asText());
+        int totalLimit=job.getWorkflow().getMaxTotalVisits()-(mapping.open(jobId) && !targetIsStop?1:0);
+        if (total>=totalLimit || count>=target.getMaxVisits()) {
             job.setErrorCode("WORKFLOW_VISIT_LIMIT");
             finish(job,mqttControl.hasUnresolvedPiWork(visits)?TerminalStatus.RECOVERY_REQUIRED:TerminalStatus.FAILED); return;
         }
@@ -115,6 +124,7 @@ public class WorkflowOrchestratorService {
                     .resolvedInputsJson(json.createObjectNode()).operationKey(jobId+":"+target.getStepCode()+":"+visit).build());
         } else next.setExecutionSequenceNo(visits.stream().mapToLong(JobStep::getExecutionSequenceNo).max().orElse(0)+1);
         guard.requireStartAllowed(next);
+        mapping.prepareSelection(job,target);
         job.setSelectedJobStep(next);
         next.setSelectedAt(now);
         next.setResolvedInputsJson(resolver.resolve(next).deepCopy());
@@ -145,6 +155,10 @@ public class WorkflowOrchestratorService {
                 && !StepExecutionPolicy.isServer(s,s.getResolvedInputsJson()));
     }
     private void finish(Job job,TerminalStatus terminal) {
+        JobStep finishingStep=job.getSelectedJobStep();
+        if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(finishingStep) && "STOP".equals(finishingStep.getResolvedInputsJson().path("action").asText())
+                && finishingStep.getStatus()!=JobStepStatus.SUCCEEDED && mapping.open(job.getJobId()))terminal=TerminalStatus.RECOVERY_REQUIRED;
+        if(mapping.deferTerminal(job,terminal)) {updates.publishEvent(new RuntimeChanged(job.getJobId()));return;}
         Instant now=Instant.now(clock); job.setStatus(JobStatus.valueOf(terminal.name()));
         if (terminal!=TerminalStatus.RECOVERY_REQUIRED) job.setEndedAt(now);
         List<JobStep> all=steps.findByJobId(job.getJobId());

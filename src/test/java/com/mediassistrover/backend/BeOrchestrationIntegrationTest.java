@@ -215,7 +215,7 @@ class BeOrchestrationIntegrationTest extends MySqlIntegrationTest {
         assertThat(job.getStatus()).isEqualTo(JobStatus.RECOVERY_REQUIRED); assertThat(job.getRobot().getStatus()).isEqualTo(RobotStatus.ERROR);
     }
 
-    @Test void verificationResumesPayloadWhileCargoCloseAndLockCheckStaySeparate() {
+    @Test void verificationResumesPayloadButCannotReplaceAuthorizedHardwareHandover() {
         Fixture f=fixture(); ServiceRequest request=deliveryRequest(f);
         Step authenticate=define(f,"AUTH",StepType.AUTHENTICATE,1,json.createObjectNode().put("purpose","DELIVERY_SENDER").put("service_request_id",request.getServiceRequestId().toString()));
         var items=json.createArrayNode().add(json.createObjectNode().put("item_code","MED-1").put("quantity",2));
@@ -231,12 +231,10 @@ class BeOrchestrationIntegrationTest extends MySqlIntegrationTest {
         assertThat(job.getSelectedJobStep().getStepCodeSnapshot()).isEqualTo("LOAD");
         var wrong=json.createArrayNode().add(json.createObjectNode().put("item_code","MED-1").put("quantity",1));
         assertThatThrownBy(()->responses.respond(job.getSelectedJobStep().getJobStepId(),"wrong-cargo",body("PAYLOAD_CONFIRMED",json.createObjectNode().put("confirmed",true).set("items",wrong)),f.actor)).hasMessageContaining("cargo snapshot");
-        responses.respond(job.getSelectedJobStep().getJobStepId(),"cargo",body("PAYLOAD_CONFIRMED",json.createObjectNode().put("confirmed",true).set("items",items)),f.actor);drain(job,4);
-        assertThat(job.getSelectedJobStep().getStepCodeSnapshot()).isEqualTo("CLOSE");
-        responses.respond(job.getSelectedJobStep().getJobStepId(),"closed",body("DOOR_CLOSED",json.createObjectNode().put("closed",true)),f.actor);drain(job,4);
-        var check=responses.respond(job.getSelectedJobStep().getJobStepId(),"locked",body("LOCK_CHECKED",json.createObjectNode().put("locked",true)),f.actor);
-        assertThat(check.result().path("source").asText()).isEqualTo("STAFF_MANUAL");assertThat(check.result().has("verified")).isFalse();drain(job,4);
-        assertThat(job.getStatus()).isEqualTo(JobStatus.SUCCEEDED);
+        assertThatThrownBy(()->responses.respond(job.getSelectedJobStep().getJobStepId(),"cargo",body("PAYLOAD_CONFIRMED",json.createObjectNode().put("confirmed",true).set("items",items)),f.actor))
+                .hasMessageContaining("DeliveryRequest");
+        assertThat(job.getSelectedJobStep().getStatus()).isEqualTo(JobStepStatus.RUNNING);
+        assertThat(step(job,"CLOSE").getSelectedAt()).isNull();
     }
 
     @Test void qrProofCompletesSchema3AuthenticationAndResumesTheJob() {

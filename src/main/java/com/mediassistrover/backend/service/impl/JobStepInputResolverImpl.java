@@ -27,6 +27,8 @@ public class JobStepInputResolverImpl implements JobStepInputResolver {
     private final ObjectMapper objectMapper;
     private final StepInputContractValidator inputValidator;
     private final StepInputScopeValidator scopeValidator;
+    private final com.mediassistrover.backend.service.OperationAuthorizationService operationAuthorization;
+    private final com.mediassistrover.backend.service.NavigationTargetService navigation;
     private final WorkflowJsonValidator references = new WorkflowJsonValidator();
 
     @Override
@@ -54,7 +56,13 @@ public class JobStepInputResolverImpl implements JobStepInputResolver {
             if("UNLOCK".equals(resolved.path("action").asText())) resolved.put("action","UNLOCK_COMPARTMENT");
         }
         inputValidator.validateResolved(current.getStep(), resolved);
-        scopeValidator.validate(current.getStep(), resolved, job);
+        if(job.getSchemaVersion()==3 && current.getStep().getStepType()==StepType.CONTROL_HARDWARE
+                && "UNLOCK_COMPARTMENT".equals(resolved.path("action").asText())) {
+            ObjectNode business=resolved.deepCopy(); business.remove("authorization");
+            scopeValidator.validate(current.getStep(),business,job);
+            resolved.set("authorization",operationAuthorization.bind(current,resolved.get("authorization")));
+        } else scopeValidator.validate(current.getStep(), resolved, job);
+        if(current.getStep().getStepType()==StepType.MOVE) navigation.bindMove(current,resolved);
         return resolved;
     }
 

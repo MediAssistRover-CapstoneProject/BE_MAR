@@ -33,7 +33,7 @@ class Schema3MigrationIntegrationTest extends MySqlIntegrationTest {
     @Autowired com.mediassistrover.backend.validation.WorkflowExecutionReadiness readiness;
 
     @Test void clonesCompileWithNewIdsAndContractsWhileLegacyDefinitionsRemainIntact() {
-        var drafts = workflows.findAll().stream().filter(w -> w.getSchemaVersion() == 3).toList();
+        var drafts = workflows.findAll().stream().filter(w -> w.getSchemaVersion() == 3 && !"WF_MAPPING".equals(w.getWorkflowCode())).toList();
         assertThat(drafts).hasSize(11);
         for (Workflow draft : drafts) {
             Workflow legacy = workflows.findAll().stream().filter(w -> w.getWorkflowCode().equals(draft.getWorkflowCode()) && w.getSchemaVersion() == 2)
@@ -42,7 +42,9 @@ class Schema3MigrationIntegrationTest extends MySqlIntegrationTest {
             assertThat(draft.getWorkflowId()).isNotEqualTo(legacy.getWorkflowId());
             assertThat(draft.isAcceptsNewJobs()).isFalse();
             assertThat(draft.getStartStep().getStepCode()).isEqualTo(legacy.getStartStep().getStepCode());
-            var modern = definitions.findByWorkflowWorkflowIdOrderBySequenceNoAsc(draft.getWorkflowId());
+            var allModern = definitions.findByWorkflowWorkflowIdOrderBySequenceNoAsc(draft.getWorkflowId());
+            var modern = allModern.stream().filter(s->!s.getStepCode().startsWith("GROUP_")).toList();
+            if("WF_SECURE_MEDICAL_DELIVERY".equals(draft.getWorkflowCode())) assertThat(allModern.size()-modern.size()).isEqualTo(7);
             var old = definitions.findByWorkflowWorkflowIdOrderBySequenceNoAsc(legacy.getWorkflowId());
             assertThat(modern).hasSize(old.size());
             for (int i = 0; i < modern.size(); i++) {
@@ -50,6 +52,13 @@ class Schema3MigrationIntegrationTest extends MySqlIntegrationTest {
                 assertThat(modern.get(i).getStepType()).isEqualTo(old.get(i).getStepType());
                 if (modern.get(i).getStepType() == StepType.INTERACT || modern.get(i).getStepType() == StepType.NOTIFY)
                     assertThat(modern.get(i).getInputMappingJson().has("data")).isTrue();
+                if(modern.get(i).getStepCode().startsWith("UNLOCK_") && "WF_SECURE_MEDICAL_DELIVERY".equals(draft.getWorkflowCode())) {
+                    String auth=modern.get(i).getStepCode().endsWith("SENDER")?"AUTH_SENDER":"AUTH_RECEIVER";
+                    assertThat(modern.get(i).getInputMappingJson().path("authorization").path("verification_id").path("$ref").asText())
+                            .isEqualTo("/outputs/"+auth+"/verification_id");
+                    assertThat(old.get(i).getInputMappingJson().has("authorization")).isFalse();
+                    assertThat(modern.get(i).getMaxAttempts()).isEqualTo(1);
+                }
             }
             draft.setStatus(WorkflowStatus.DRAFT); draft.setCompiledDefinitionJson(null);
             draft.setDescription("[MAR-STEP-2 DRAFT] Migration compilation test");

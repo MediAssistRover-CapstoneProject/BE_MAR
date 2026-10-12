@@ -24,6 +24,9 @@ public class MqttStepDispatchService {
     private final MqttContractValidator contracts;
     private final MqttWire wire;
     private final Clock clock;
+    private final com.mediassistrover.backend.service.OperationAuthorizationService operationAuthorization;
+    private final com.mediassistrover.backend.service.NavigationProfileService navigationProfiles;
+    private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
 
     public void requireActionSupported(Step step) {
         if (!properties.isEnabled() || !properties.isDispatchEnabled() || properties.getRobotIds().isEmpty()
@@ -31,8 +34,9 @@ public class MqttStepDispatchService {
             throw new BusinessRuleException("Step "+step.getStepCode()+" awaits configured MQTT dispatch; keep workflow DRAFT");
         ObjectNode params=((ObjectNode)step.getParamsJson()).deepCopy();params.setAll((ObjectNode)step.getInputMappingJson());
         if (step.getStepType()==StepType.CONTROL_HARDWARE && !Set.of("LOCK_COMPARTMENT","LOCK").contains(params.path("action").asText()))
-            throw new BusinessRuleException("UNLOCK requires operation authorization integration in Phase 10; keep workflow DRAFT");
-        if (step.getStepType()==StepType.EXECUTE_SENSING && !Set.of("ROBOT_HEALTH","SIDE_CLEARANCE").contains(params.path("sensing_type").asText()))
+            throw new BusinessRuleException("Official UNLOCK awaits Pi STAFF_VERIFIED enforcement and a confirmed HELLO/output contract; keep workflow DRAFT");
+        if (step.getStepType()==StepType.EXECUTE_SENSING && "MAPPING".equals(params.path("sensing_type").asText()))mapping.requireSupported(step);
+        if (step.getStepType()==StepType.EXECUTE_SENSING && !Set.of("ROBOT_HEALTH","SIDE_CLEARANCE","MAPPING").contains(params.path("sensing_type").asText()))
             throw new BusinessRuleException("AI/mapping sensing awaits later integration; keep workflow DRAFT");
         if (step.getStepType()==StepType.WAIT && !"DURATION".equals(params.path("wait_type").asText()))
             throw new BusinessRuleException("Only WAIT/DURATION is executed by Pi");
@@ -40,20 +44,30 @@ public class MqttStepDispatchService {
 
     @Transactional
     public void dispatch(JobStep step) {
-        if (!properties.isEnabled() || !properties.isDispatchEnabled()) return;
+        if (!properties.isEnabled() || !properties.isDispatchEnabled() && !step.isMappingCleanup()) return;
         Job job=step.getJobTask().getJob();
         if (!job.isBeOrchestrated() || job.getStatus()!=JobStatus.RUNNING || job.getSelectedJobStep()==null
                 || !job.getSelectedJobStep().getJobStepId().equals(step.getJobStepId()) || step.getStatus()!=JobStepStatus.PENDING
                 || StepExecutionPolicy.isServer(step,step.getResolvedInputsJson())) throw new BusinessRuleException("Dispatch requires selected PENDING Pi step");
-        if(step.getInterruptionReason()!=null || job.getCancelRequestedAt()!=null)return;
+        if(step.getInterruptionReason()!=null || job.getCancelRequestedAt()!=null && !step.isMappingCleanup())return;
         // Configuration/catalog changes after commit must not reinterpret an existing operation.
         if (commands.findByJobStepId(step.getJobStepId()).isPresent()) return;
-        requireActionSupported(step.getStep());
-        scope.validate(step.getStep(),step.getResolvedInputsJson(),job);
+        if(mapping.open(job.getJobId()) && !com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step))
+            throw new BusinessRuleException("Open mapping permits only MAPPING/SAVE or STOP Pi actions");
+        boolean unlock="CONTROL_HARDWARE".equals(step.getStepTypeSnapshot())
+                && "UNLOCK_COMPARTMENT".equals(step.getResolvedInputsJson().path("action").asText());
+        if(unlock) operationAuthorization.requireBound(step,step.getResolvedInputsJson().path("authorization"));
+        if(!step.isMappingCleanup())requireActionSupported(step.getStep());
+        if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step))mapping.requireBound(step);
+        ObjectNode business=((ObjectNode)step.getResolvedInputsJson()).deepCopy();
+        if(unlock) business.remove("authorization");
+        scope.validate(step.getStep(),business,job);
         if (job.getRobot()==null || !properties.manages(job.getRobot().getRobotId())) throw new BusinessRuleException("Robot is not enrolled for MQTT");
         robots.findByIdForUpdate(job.getRobot().getRobotId()).orElseThrow();
         RobotMqttSession session=sessions.lock(job.getRobot().getRobotId()).orElse(null);
         if (!registry.fresh(session)) return;
+        if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step) && !session.getHelloJson().path("mappingEnabled").asBoolean())
+            throw new BusinessRuleException("Pi does not enable mapping");
         if (session.getHelloJson().path("simulation").asBoolean() && !properties.isAllowSimulation()) throw new BusinessRuleException("Simulation dispatch is disabled");
         boolean enabled=false;for (var type:session.getHelloJson().path("enabledStepTypes")) if (step.getStepTypeSnapshot().equals(type.asText())) enabled=true;
         if (!enabled) throw new BusinessRuleException("Pi does not enable selected StepType");
@@ -61,6 +75,11 @@ public class MqttStepDispatchService {
                 || !job.getMap().getMapId().equals(job.getRobot().getCurrentMap().getMapId()) || job.getMap().getAssetHash()==null
                 || !job.getMap().getAssetHash().equalsIgnoreCase(Objects.toString(job.getRobot().getMapAssetHash(),""))))
             throw new BusinessRuleException("MOVE requires matching map UUID and asset hash");
+        String profileHash=null;
+        if("MOVE".equals(step.getStepTypeSnapshot())) {
+            profileHash=navigationProfiles.ready(job.getRobot(),session,step.getResolvedInputsJson());
+            if(profileHash==null) return;
+        }
         if (!commands.findByRobotIdAndStateIn(session.getRobotId(),List.of("PENDING","PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED","RECOVERY_REQUIRED")).isEmpty())
             throw new BusinessRuleException("Robot already has an unresolved Pi command");
         ObjectNode params=((ObjectNode)step.getResolvedInputsJson()).deepCopy();
@@ -78,6 +97,6 @@ public class MqttStepDispatchService {
                 .put("visitNo",step.getVisitNo()).put("operationKey",step.getOperationKey()).put("timeoutSec",step.getTimeoutSecSnapshot());action.set("params",params);
         contracts.command(command);
         commands.save(RobotCommandOutbox.builder().commandId(commandId).robotId(session.getRobotId()).jobId(job.getJobId()).jobStepId(step.getJobStepId())
-                .operationKey(step.getOperationKey()).payloadJson(command).expiresAt(now.plusSeconds(properties.getCommandTtlSec())).state("PENDING").createdAt(now).build());
+                .operationKey(step.getOperationKey()).navigationProfileHash(profileHash).payloadJson(command).expiresAt(now.plusSeconds(properties.getCommandTtlSec())).state("PENDING").createdAt(now).build());
     }
 }

@@ -61,10 +61,12 @@ def main():
     for filename, schema in schemas.items():
         Draft202012Validator.check_schema(schema)
         assert schema["x-provenance"]["status"] in {
-            "RECONSTRUCTED_UNVERIFIED_PI", "PLANNED_BE_SCHEMA_3", "IMPLEMENTED_BE_SCHEMA_3_CALLBACK"
+            "RECONSTRUCTED_UNVERIFIED_PI", "PLANNED_BE_SCHEMA_3", "IMPLEMENTED_BE_SCHEMA_3_CALLBACK", "IMPLEMENTED_BE_SCHEMA_3_ARTIFACT"
         }
         if schema["x-provenance"]["status"] == "IMPLEMENTED_BE_SCHEMA_3_CALLBACK":
             assert filename == "staff-step-response.schema.json", "Only the BE callback is implemented in Phase 4"
+        if schema["x-provenance"]["status"] == "IMPLEMENTED_BE_SCHEMA_3_ARTIFACT":
+            assert filename == "mapping-artifact.schema.json", "Phase 12 artifact/receipt BE implementation"
         check_refs(schema, schema["$id"], by_id)
 
     # All resources are registered locally. Unknown references fail, never fetch over HTTP.

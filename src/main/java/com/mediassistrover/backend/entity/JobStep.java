@@ -26,6 +26,7 @@ public class JobStep {
     @Column(name="operation_key",nullable=false,length=150,unique=true) private String operationKey;
     @Column(name="timeout_sec_snapshot",nullable=false) private int timeoutSecSnapshot;
     @Column(name="selected_at") private Instant selectedAt;
+    @Column(name="mapping_cleanup",nullable=false) private boolean mappingCleanup;
     @Column(name="interruption_reason",length=32) private String interruptionReason;
     @Column(name="interruption_requested_at") private Instant interruptionRequestedAt;
     @Column(name="started_at") private Instant startedAt;

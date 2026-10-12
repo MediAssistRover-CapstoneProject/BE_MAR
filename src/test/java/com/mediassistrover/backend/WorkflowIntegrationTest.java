@@ -36,7 +36,12 @@ class WorkflowIntegrationTest extends MySqlIntegrationTest {
         assertThat(Arrays.stream(StepType.values()).map(Enum::name)).doesNotContain("CALL_WORKFLOW");
         assertThat(workflowRepository.findAll()).extracting(Workflow::getWorkflowCode).contains("WF_PATIENT_ESCORT","WF_INFORMATION_ASSISTANCE","WF_SECURE_MEDICAL_DELIVERY","WF_EMERGENCY_SOS_RESPONSE");
         Map<String,Integer> expectedSteps=Map.of("WF_PATIENT_ESCORT",5,"WF_INFORMATION_ASSISTANCE",3,"WF_SECURE_MEDICAL_DELIVERY",25,"WF_EMERGENCY_SOS_RESPONSE",7);
-        for(Workflow workflow:workflowRepository.findAll().stream().filter(w->expectedSteps.containsKey(w.getWorkflowCode())).toList())mockMvc.perform(post("/api/v1/admin/workflows/{id}/validate",workflow.getWorkflowId()).header("Authorization",bearer(adminToken))).andExpect(status().isOk()).andExpect(jsonPath("$.stepCount").value(expectedSteps.get(workflow.getWorkflowCode())));
+        for(Workflow workflow:workflowRepository.findAll().stream().filter(w->expectedSteps.containsKey(w.getWorkflowCode())).toList()) {
+            int count=expectedSteps.get(workflow.getWorkflowCode());
+            if(workflow.getSchemaVersion()==3 && "WF_SECURE_MEDICAL_DELIVERY".equals(workflow.getWorkflowCode())) count+=7; // V25 group subgraph; schema 2 retains its 25 steps.
+            mockMvc.perform(post("/api/v1/admin/workflows/{id}/validate",workflow.getWorkflowId()).header("Authorization",bearer(adminToken)))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.stepCount").value(count));
+        }
         mockMvc.perform(get("/api/v1/admin/workflows/step-types").header("Authorization",bearer(staffToken))).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(11));
         mockMvc.perform(patch("/api/v1/admin/workflows/step-types/MOVE/enabled").header("Authorization",bearer(adminToken)).contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":false}")).andExpect(status().isNotFound());
     }

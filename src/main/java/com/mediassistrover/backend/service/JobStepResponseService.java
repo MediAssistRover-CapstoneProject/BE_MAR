@@ -24,6 +24,7 @@ public class JobStepResponseService {
     private final JobStepResponseRepository responses;
     private final AccountRepository accounts;
     private final RuntimeStepCompletionService completion;
+    private final DeliveryHandoverService handover;
     private final StaffStepResponseValidator validator;
     private final ObjectMapper json;
     private final Clock clock;
@@ -84,6 +85,7 @@ public class JobStepResponseService {
             }
             default -> throw new BusinessRuleException("This step cannot be completed by a UI response; AUTHENTICATE uses verification APIs");
         }
+        handover.record(step,result,account,responseType);
         require(completion.complete(step,result,account,actor.role()==Role.ADMIN?JobEventProducerType.ADMIN:JobEventProducerType.STAFF,"UI_RESPONSE_ACCEPTED",null),"Step already completed");
         return receipt(responses.saveAndFlush(StaffStepResponseRecord.builder().jobStep(step).actorAccount(account).idempotencyKey(key)
                 .requestJson(body.deepCopy()).resultJson(result.deepCopy()).createdAt(now).build()),false);

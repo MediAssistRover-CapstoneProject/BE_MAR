@@ -24,12 +24,16 @@ class JobStepInputResolverTest {
     private final JobStepRepository repository = mock(JobStepRepository.class);
     private final JobStepInputResolverImpl resolver = new JobStepInputResolverImpl(repository, json,
             mock(com.mediassistrover.backend.validation.StepInputContractValidator.class),
-            mock(com.mediassistrover.backend.validation.StepInputScopeValidator.class));
+            mock(com.mediassistrover.backend.validation.StepInputScopeValidator.class),
+            mock(com.mediassistrover.backend.service.OperationAuthorizationService.class),
+            mock(com.mediassistrover.backend.service.NavigationTargetService.class));
 
     @Test void rejectsInvalidResolvedValuesAndNestedReferenceInjection() {
         var checked = new JobStepInputResolverImpl(repository, json,
                 new com.mediassistrover.backend.validation.StepInputContractValidator(new com.mediassistrover.backend.validation.WorkflowJsonValidator()),
-                mock(com.mediassistrover.backend.validation.StepInputScopeValidator.class));
+                mock(com.mediassistrover.backend.validation.StepInputScopeValidator.class),
+                mock(com.mediassistrover.backend.service.OperationAuthorizationService.class),
+            mock(com.mediassistrover.backend.service.NavigationTargetService.class));
         Job job=Job.builder().jobId(UUID.randomUUID()).inputJson(json.createObjectNode().put("duration",0))
                 .contextJson(json.createObjectNode()).build();
         Step definition=Step.builder().stepCode("PAUSE").stepType(com.mediassistrover.backend.enums.StepType.WAIT)

@@ -22,6 +22,29 @@ class StepInputContractValidatorTest {
     private final StepInputContractValidator validator = new StepInputContractValidator(new WorkflowJsonValidator());
     private static final String ID = "11111111-1111-1111-1111-111111111111";
 
+    @Test void mappingRequiresActionTimeoutAndCannotRetry() throws Exception {
+        for(var action:java.util.Map.of("START",55,"SAVE",60,"STOP",15).entrySet()) {
+            Step s=step(StepType.EXECUTE_SENSING,"{\"sensing_type\":\"MAPPING\",\"action\":\""+action.getKey()+"\",\"mapping_session_id\":\""+ID+"\""+(action.getKey().equals("SAVE")?",\"artifact_id\":\""+ID+"\"":"")+"}");
+            s.setWorkflow(Workflow.builder().schemaVersion(3).build());s.setTimeoutSec(action.getValue());assertThatCode(()->validator.validateTemplate(s)).doesNotThrowAnyException();
+            s.setTimeoutSec(action.getValue()-1);assertThatThrownBy(()->validator.validateTemplate(s)).hasMessageContaining("timeoutSec");s.setTimeoutSec(action.getValue());s.setMaxAttempts(2);assertThatThrownBy(()->validator.validateTemplate(s)).hasMessageContaining("maxAttempts");
+        }
+    }
+    @Test void commitArtifactRequiresAllIdsAndSchema3() throws Exception {
+        Step s=step(StepType.DATA_SERVICE,"{\"service_key\":\"COMMIT_MAP_ARTIFACT\",\"mapping_session_id\":\""+ID+"\",\"artifact_id\":\""+ID+"\",\"floor_id\":\""+ID+"\",\"map_name\":\"Map\"}");
+        s.setWorkflow(Workflow.builder().schemaVersion(3).build());assertThatCode(()->validator.validateTemplate(s)).doesNotThrowAnyException();
+        ((ObjectNode)s.getParamsJson()).put("floor_id","bad");assertThatThrownBy(()->validator.validateTemplate(s)).hasMessageContaining("floor_id");((ObjectNode)s.getParamsJson()).put("floor_id",ID);s.setWorkflow(Workflow.builder().schemaVersion(2).build());assertThatThrownBy(()->validator.validateTemplate(s)).hasMessageContaining("schema 3");
+    }
+
+    @Test void schema3UnlockRequiresAnAuthorizationMappingWithAFixedPurpose() throws Exception {
+        Step s=step(StepType.CONTROL_HARDWARE,"{\"action\":\"UNLOCK_COMPARTMENT\",\"compartment_id\":\"CART_MAIN\"}");
+        s.setWorkflow(Workflow.builder().schemaVersion(3).build());
+        assertThatThrownBy(()->validator.validateTemplate(s)).hasMessageContaining("authorization");
+        ((ObjectNode)s.getParamsJson()).set("authorization",json.readTree("{\"mode\":\"STAFF_VERIFIED\",\"verification_id\":{\"$ref\":\"/outputs/AUTH/verification_id\"},\"actor_account_id\":{\"$ref\":\"/outputs/AUTH/actor_account_id\"},\"purpose\":\"DELIVERY_SENDER\",\"valid_until\":{\"$ref\":\"/outputs/AUTH/valid_until\"}}"));
+        assertThatCode(()->validator.validateTemplate(s)).doesNotThrowAnyException();
+        ((ObjectNode)s.getParamsJson().path("authorization")).set("purpose",json.readTree("{\"$ref\":\"/inputs/purpose\"}"));
+        assertThatThrownBy(()->validator.validateTemplate(s)).hasMessageContaining("purpose");
+    }
+
     static Stream<Arguments> validInputs() {
         return Stream.of(
                 Arguments.of(StepType.MOVE, "{\"map_id\":\"" + ID + "\",\"endpoint_id\":\"" + ID + "\",\"max_speed_mps\":0.05}"),

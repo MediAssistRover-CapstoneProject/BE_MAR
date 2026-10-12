@@ -20,7 +20,7 @@ public class StepInputContractValidator {
     private final WorkflowJsonValidator jsonValidator;
     private static final Set<String> UUID_FIELDS = Set.of("map_id", "endpoint_id", "zone_id",
             "endpoint_group_id", "service_request_id", "detection_event_id", "incident_id",
-            "mapping_session_id", "artifact_id", "verification_id", "actor_account_id");
+            "mapping_session_id", "artifact_id", "floor_id", "verification_id", "actor_account_id");
 
     public void validateTemplate(Step step) {
         object(step, step.getParamsJson(), "paramsJson");
@@ -36,6 +36,12 @@ public class StepInputContractValidator {
             text(step, step.getParamsJson(), "purpose", true, false);
             if (!step.getParamsJson().path("purpose").equals(merged.path("purpose")))
                 fail(step, "purpose", "cannot override the configured authorization purpose");
+        }
+        if(step.getWorkflow()!=null && step.getWorkflow().getSchemaVersion()==3 && step.getStepType()==StepType.CONTROL_HARDWARE
+                && Set.of("UNLOCK","UNLOCK_COMPARTMENT").contains(merged.path("action").asText())) {
+            if(!merged.has("authorization")) fail(step,"authorization","UNLOCK requires a BE verification mapping");
+            enumeration(step,merged.path("authorization"),"purpose",Set.of("DELIVERY_SENDER","DELIVERY_RECEIVER"),true,false);
+            if(step.getInputMappingJson().has("action")) fail(step,"action","authorized UNLOCK must be fixed in paramsJson");
         }
     }
 
@@ -107,7 +113,7 @@ public class StepInputContractValidator {
             }
             case DATA_SERVICE -> {
                 fields(s, n, Set.of("service_key", "operation", "question", "language_code", "map_id", "endpoint_id",
-                        "endpoint_group_id", "targets", "index", "detection_event_id"));
+                        "endpoint_group_id", "targets", "index", "detection_event_id", "mapping_session_id", "artifact_id", "floor_id", "map_name"));
                 String key = n.path("service_key").asText("QUERY".equals(s.getStepCode()) ? "QUERY_HOSPITAL_INFORMATION" : "");
                 enumeration(s, n, "service_key", DataServiceStepHandler.SUPPORTED_SERVICE_KEYS, required && !"QUERY".equals(s.getStepCode()), template);
                 enumeration(s, n, "operation", Set.of("QUERY", "CREATE", "UPDATE"), false, template);
@@ -116,6 +122,13 @@ public class StepInputContractValidator {
                 uuid(s, n, "endpoint_group_id", required && "RESOLVE_TARGETS".equals(key), template);
                 uuid(s, n, "endpoint_id", required && "CHECK_TARGET".equals(key), template);
                 uuid(s, n, "detection_event_id", required && "CREATE_FALL_INCIDENT".equals(key), template);
+                if("COMMIT_MAP_ARTIFACT".equals(key)) {
+                    if(!modern)fail(s,"service_key","COMMIT_MAP_ARTIFACT requires schema 3");
+                    for(String f:Set.of("mapping_session_id","artifact_id","floor_id"))uuid(s,n,f,required,template);
+                    text(s,n,"map_name",required,template);
+                    if(literal(n.get("map_name"),template) && n.path("map_name").asText().length()>160)fail(s,"map_name","maximum length is 160");
+                    fields(s,n,Set.of("service_key","mapping_session_id","artifact_id","floor_id","map_name"));
+                }
                 arrayField(s, n, "targets", required && "SELECT_TARGET".equals(key), template);
                 if (literal(n.get("index"), template) && (!n.get("index").isIntegralNumber() || !n.get("index").canConvertToInt() || n.get("index").intValue() < 0))
                     fail(s, "index", "must be a non-negative integer");
@@ -195,6 +208,9 @@ public class StepInputContractValidator {
                 uuid(s, n, "mapping_session_id", required, template);
                 uuid(s, n, "artifact_id", required && "SAVE".equals(n.path("action").asText()), template);
                 number(s, n, "preview_rate_hz", .2, 1, false, false, template);
+                int min=switch(n.path("action").asText()){case "START"->55;case "SAVE"->60;case "STOP"->15;default->0;};
+                if(s.getTimeoutSec()<min)fail(s,"timeoutSec","MAPPING action requires at least "+min+" seconds");
+                if(s.getMaxAttempts()!=1)fail(s,"maxAttempts","mapping cannot retry physical actions automatically");
                 if (literal(n.get("action"), template)) fields(s, n, "START".equals(n.path("action").asText())
                         ? Set.of("sensing_type", "action", "mapping_session_id", "preview_rate_hz")
                         : "SAVE".equals(n.path("action").asText()) ? Set.of("sensing_type", "action", "mapping_session_id", "artifact_id")

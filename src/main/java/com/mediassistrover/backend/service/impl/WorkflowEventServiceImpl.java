@@ -23,9 +23,15 @@ public class WorkflowEventServiceImpl implements WorkflowEventService {
     private final ObjectMapper objectMapper; private final Clock clock;
     private final OrchestrationWorkService wakeups;
     private final org.springframework.context.ApplicationEventPublisher updates;
+    private final MappingSessionRepository mappingSessions;
     @Override @Transactional public WorkflowEventResponse publish(UUID jobId,WorkflowEventRequest r,AccountPrincipal actor,RequestMetadata md){
         Job job=jobRepository.lockById(jobId).orElseThrow(()->new ResourceNotFoundException("Job not found: "+jobId));RuntimeAuthorizationPolicy.requireJobScope(job,actor);
         if(job.isBeOrchestrated() && "ALERT_ACKNOWLEDGED".equals(r.eventType()))throw new BusinessRuleException("ALERT_ACKNOWLEDGED is generated only by recipient ACK policy");
+        if("MAPPING_SAVE_REQUESTED".equals(r.eventType())) {
+            var session=mappingSessions.findByJobId(jobId).orElseThrow(()->new BusinessRuleException("Job has no BE mapping session"));
+            if(!session.getSessionId().toString().equals(r.correlationKey()) || !session.isPotentiallyOpen()
+                    || !"MAPPING".equals(session.getState()) || job.getCancelRequestedAt()!=null)throw new BusinessRuleException("Mapping SAVE event requires the active session and correct correlation key");
+        }
         JobEvent duplicate=eventRepository.findById(r.eventId()).orElse(null);if(duplicate!=null){if(!duplicate.getJob().getJobId().equals(jobId))throw new ConflictException("eventId belongs to another Job");return response(duplicate,true);}RuntimeAuthorizationPolicy.requireRunning(job);
         Instant now=Instant.now(clock);if(r.occurredAt().isAfter(now.plusSeconds(300)))throw new BusinessRuleException("occurredAt is too far in the future");if(job.getStartedAt()!=null&&r.occurredAt().isBefore(job.getStartedAt()))throw new BusinessRuleException("Event predates this Job run");Account account=accountRepository.findById(actor.accountId()).orElseThrow();
         JobEvent event=eventRepository.saveAndFlush(JobEvent.builder().jobEventId(r.eventId()).job(job).robot(job.getRobot()).actorAccount(account).producerType(actor.role()==Role.ADMIN?JobEventProducerType.ADMIN:JobEventProducerType.STAFF).producerSessionId(r.eventId()).sequenceNo(1).eventType(r.eventType()).correlationKey(r.correlationKey()).statusScope("WORKFLOW_EVENT").eventDataJson(r.data()==null?objectMapper.createObjectNode():r.data().deepCopy()).occurredAt(r.occurredAt()).receivedAt(now).persistedAt(now).build());

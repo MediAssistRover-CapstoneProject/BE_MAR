@@ -5,5 +5,6 @@ target/
 *.log
 .env
 secrets/
+data/map-artifacts/
 .DS_Store
 Thumbs.db

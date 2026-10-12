@@ -33,6 +33,7 @@ class MqttCancellationRecoveryIntegrationTest extends MySqlIntegrationTest {
     @Autowired MqttOperationRecoveryReceiptRepository receipts; @Autowired JobEventRepository events;
     @Autowired org.springframework.test.web.servlet.MockMvc mvc; @Autowired com.mediassistrover.backend.security.JwtTokenService jwt;
     @Autowired PlatformTransactionManager manager; @Autowired jakarta.persistence.EntityManager em;
+    @Autowired NavigationProfileService profiles;
     @MockitoBean PahoMqttTransport transport;
     TransactionTemplate tx;MqttTestFixture f;AccountPrincipal admin;
     final List<JsonNode> published=new java.util.concurrent.CopyOnWriteArrayList<>();
@@ -47,9 +48,10 @@ class MqttCancellationRecoveryIntegrationTest extends MySqlIntegrationTest {
     void receive(ObjectNode event){router.route(MqttTopics.topic(f.robotId,"events"),wire.bytes(event),1,false);}
     void heartbeat(){router.route(MqttTopics.topic(f.robotId,"heartbeat"),wire.bytes(f.heartbeat(json)),0,false);}
     void hello(String state){ObjectNode hello=f.hello(json);if(state!=null)((ArrayNode)hello.path("payload").path("states")).addObject().put("jobId",f.jobId.toString()).put("jobStepId",f.piStepId.toString()).put("operationKey",f.operationKey).put("status",state);receive(hello);heartbeat();}
-    void dispatch(boolean started){hello(null);orchestrator.advance(f.jobId);var execute=commands.findByJobStepId(f.piStepId).orElseThrow();f.commandId=execute.getCommandId();publisher.command(f.commandId);
+    void dispatch(boolean started){hello(null);confirmProfile();orchestrator.advance(f.jobId);var execute=commands.findByJobStepId(f.piStepId).orElseThrow();f.commandId=execute.getCommandId();publisher.command(f.commandId);
         if(started){receive(f.event(json,"COMMAND_ACK",json.createObjectNode().put("commandId",f.commandId.toString()).put("commandType","EXECUTE_STEP").put("accepted",true)));
             receive(f.event(json,"STEP_STARTED",json.createObjectNode().put("attemptNo",1).put("stepType",f.type.name()).set("resolvedInputs",execute.getPayloadJson().path("step").path("params"))));}}
+    void confirmProfile(){if(f.type!=StepType.MOVE)return;var robot=robots.findById(f.robotId).orElseThrow();var device=new com.mediassistrover.backend.security.DevicePrincipal(robot.getRobotId(),robot.getRobotCode(),robot.getDeviceTokenVersion(),"test",Instant.now().plusSeconds(300));var manifest=profiles.manifest(device);profiles.confirm(new NavigationProfileService.Confirm(f.transportId,f.producerId,f.mapId,manifest.profile().path("map_asset_sha256").asText(),manifest.profileHash()),device);}
     RobotCommandOutbox cancel(){return commands.findByJobStepIdAndCommandType(f.piStepId,"CANCEL_STEP").orElseThrow();}
     void requestCancel(){tx.executeWithoutResult(s->{var job=jobs.findById(f.jobId).orElseThrow();job.setCancelRequestedAt(Instant.now());work.request(job);});orchestrator.advance(f.jobId);}
     void expireStep(){tx.executeWithoutResult(s->{steps.findById(f.piStepId).orElseThrow().setStartedAt(Instant.now().minusSeconds(61));work.request(jobs.findById(f.jobId).orElseThrow());});orchestrator.advance(f.jobId);}
