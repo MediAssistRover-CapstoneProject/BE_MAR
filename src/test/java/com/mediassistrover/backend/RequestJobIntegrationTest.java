@@ -38,6 +38,20 @@ class RequestJobIntegrationTest extends MySqlIntegrationTest {
     @BeforeEach void setup(){clean();actor=accountRepository.save(Account.builder().accountCode("PAT-P6").username("phase6.patient").fullName("Phase 6 Patient").email("phase6.patient@example.test").role(Role.STAFF).authProvider(AuthProvider.LOCAL).passwordHash("unused").status(AccountStatus.ACTIVE).passwordChangedAt(Instant.now()).build());principal=AccountPrincipal.fromAccount(actor);producerSession=UUID.randomUUID();sequence=0;}
     @AfterEach void cleanup(){clean();}
 
+    @Test void jobErrorDoesNotReleaseRobotWhenAnyStepRequiresRecovery(){
+        publish("INFORMATION");robot=robot(null,"SCHEMA3-RECOVERY");device=device(robot);
+        var request=requestService.createInformation(new InformationCreateRequest(50,"Help",objectMapper.createObjectNode()),"schema3-recovery-guard",principal,metadata());
+        requestService.submit(request.serviceRequestId(),principal,metadata());
+        Job job=jobRepository.findByServiceRequestServiceRequestId(request.serviceRequestId()).getFirst();
+        var command=runtimeService.nextCommand(device).orElseThrow();
+        runtimeService.commandAck(command.commandId(),envelope(job,null,"recovery-ack","COMMAND_ACK",new CommandAckPayload(true,null)),device);
+        runtimeService.jobStarted(job.getJobId(),envelope(job,null,"recovery-start","JOB_STARTED",new JobStartedPayload(objectMapper.createObjectNode())),device);
+        JobStep step=stepRepository.findByJobId(job.getJobId()).getFirst();step.setStatus(JobStepStatus.RECOVERY_REQUIRED);stepRepository.saveAndFlush(step);
+        runtimeService.jobError(job.getJobId(),envelope(job,null,"recovery-error","JOB_ERROR",new JobErrorPayload("UNCERTAIN","Requires staff reconciliation",objectMapper.createObjectNode())),device);
+        assertThat(jobRepository.findById(job.getJobId()).orElseThrow().getStatus()).isEqualTo(JobStatus.RECOVERY_REQUIRED);
+        assertThat(robotRepository.findById(robot.getRobotId()).orElseThrow().getStatus()).isEqualTo(RobotStatus.ERROR);
+    }
+
     @Test void informationRequestRunsEndToEndAndPiEventsAreIdempotent(){publish("INFORMATION");robot=robot(null,"P6-INFO");device=device(robot);
         InformationCreateRequest body=new InformationCreateRequest(50,"Where is radiology?",objectMapper.createObjectNode().put("question","Where is radiology?"));
         ServiceRequestResponse created=requestService.createInformation(body,"info-idem-1",principal,metadata());
@@ -145,7 +159,7 @@ class RequestJobIntegrationTest extends MySqlIntegrationTest {
         };
     }
     private <T> PiEnvelope<T> envelope(Job job,JobStep step,String operation,String type,T payload,UUID messageId){return new PiEnvelope<>("1.0",messageId,operation,UUID.randomUUID(),robot.getRobotId(),job.getJobId(),step==null?null:step.getJobStepId(),type,Instant.now(),producerSession,++sequence,payload);}
-    private Workflow publish(String serviceType){Workflow w=workflowRepository.findAll().stream().filter(x->x.getServiceType().equals(serviceType)).findFirst().orElseThrow();w.setStatus(WorkflowStatus.PUBLISHED);w.setAcceptsNewJobs(true);w.setDefinitionHash("a".repeat(64));w.setCompiledDefinitionJson(objectMapper.createObjectNode().put("workflow",w.getWorkflowCode()));w.setPublishedAt(Instant.now());return workflowRepository.saveAndFlush(w);}
+    private Workflow publish(String serviceType){Workflow w=workflowRepository.findAll().stream().filter(x->x.getSchemaVersion()==2&&x.getServiceType().equals(serviceType)).findFirst().orElseThrow();w.setStatus(WorkflowStatus.PUBLISHED);w.setAcceptsNewJobs(true);w.setDefinitionHash("a".repeat(64));w.setCompiledDefinitionJson(objectMapper.createObjectNode().put("workflow",w.getWorkflowCode()));w.setPublishedAt(Instant.now());return workflowRepository.saveAndFlush(w);}
     private Robot robot(FacilityMap map,String code){return robotRepository.saveAndFlush(Robot.builder().currentMap(map).robotCode(code).robotName(code).model("Test").protocolVersion(1).capabilitiesJson(objectMapper.createArrayNode()).status(RobotStatus.IDLE).batteryUnit(BatteryUnit.UNKNOWN).deviceTokenVersion(0).build());}
     private DevicePrincipal device(Robot r){return new DevicePrincipal(r.getRobotId(),r.getRobotCode(),0,"test-device",Instant.now().plusSeconds(3600));}
     private FacilityMap facility(){HospitalInformation h=hospitalRepository.save(HospitalInformation.builder().updatedBy(actor).infoCategory("PROFILE").title("Hospital").content("Info").languageCode("vi-VN").keywordsJson(objectMapper.createArrayNode()).status(HospitalInformationStatus.PUBLISHED).publicVisible(true).build());Floor f=floorRepository.save(Floor.builder().hospitalInformation(h).floorCode("P6-F1").floorName("Floor 1").displayOrder(1).active(true).build());return mapRepository.save(FacilityMap.builder().floor(f).mapCode("P6-MAP").versionNo(1).mapName("Map").widthM(BigDecimal.TEN).heightM(BigDecimal.TEN).resolutionMPerPixel(new BigDecimal("0.05")).originXM(BigDecimal.ZERO).originYM(BigDecimal.ZERO).originYawRad(BigDecimal.ZERO).frameId("map").mapFileUri("https://example.test/map").assetHash("b".repeat(64)).status(MapStatus.ACTIVE).build());}

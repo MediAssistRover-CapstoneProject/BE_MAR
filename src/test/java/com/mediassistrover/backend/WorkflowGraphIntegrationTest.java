@@ -48,7 +48,7 @@ class WorkflowGraphIntegrationTest extends MySqlIntegrationTest {
 
     @Test void allEightSeedGraphsValidateWithoutStepTypeTable()throws Exception{
         String token=token();Set<String> codes=Set.of("WF_PATIENT_ESCORT","WF_INFORMATION_ASSISTANCE","WF_SECURE_MEDICAL_DELIVERY","WF_EMERGENCY_SOS_RESPONSE","WF_CROWD_MONITORING","WF_FALL_RESPONSE","WF_RESTRICTED_MONITORING","WF_NAVIGATION");
-        var seeded=workflows.findAll().stream().filter(w->codes.contains(w.getWorkflowCode())).toList();assertThat(seeded).hasSize(8);
+        var seeded=workflows.findAll().stream().filter(w->w.getSchemaVersion()==2&&codes.contains(w.getWorkflowCode())).toList();assertThat(seeded).hasSize(8);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='StepType'",Integer.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT data_type FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='Account' AND column_name='account_id'",String.class)).isEqualTo("binary");
         for(var workflow:seeded)response(post("/api/v1/admin/workflows/{id}/validate",workflow.getWorkflowId()).header("Authorization","Bearer "+token),200);

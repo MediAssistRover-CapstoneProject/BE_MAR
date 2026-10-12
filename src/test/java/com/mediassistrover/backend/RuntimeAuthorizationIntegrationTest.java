@@ -52,7 +52,7 @@ class RuntimeAuthorizationIntegrationTest extends MySqlIntegrationTest {
                     .batteryUnit(BatteryUnit.UNKNOWN).build());
             robotId=robot.getRobotId();
             device=new DevicePrincipal(robotId,"P15-ROBOT",0,"device",Instant.now().plusSeconds(3600));
-            Workflow workflow=workflows.findAll().stream().filter(w->w.getWorkflowCode().equals("WF_PATIENT_ESCORT")).findFirst().orElseThrow();
+            Workflow workflow=workflows.findAll().stream().filter(w->w.getSchemaVersion()==2&&w.getWorkflowCode().equals("WF_PATIENT_ESCORT")).findFirst().orElseThrow();
             Job job=jobs.save(Job.builder().workflow(workflow).robot(robot).assignedStaffAccount(owner)
                     .jobCode("P15-JOB").status(JobStatus.RUNNING).priority(1).inputJson(json.createObjectNode())
                     .contextJson(json.createObjectNode()).workflowHash("a".repeat(64)).protocolVersion(1).schemaVersion(2)

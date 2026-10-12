@@ -22,6 +22,9 @@ import com.mediassistrover.backend.dto.job.response.WorkflowEventResponse;
 @RestController @RequestMapping("/api/v1/jobs") @RequiredArgsConstructor @Validated
 @PreAuthorize("hasAnyRole('ADMIN','STAFF')") @Tag(name="Jobs")
 public class JobController {
+    private final com.mediassistrover.backend.service.JobUiEventStream uiEvents;
+    @GetMapping(value="/{id}/stream",produces=org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE)
+    public org.springframework.web.servlet.mvc.method.annotation.SseEmitter stream(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor){return uiEvents.subscribe(id,actor);}
     private final JobService service; private final com.mediassistrover.backend.service.WorkflowEventService workflowEventService;
     @GetMapping public PageResponse<JobResponse> list(@RequestParam(required=false)JobStatus status,@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size,@AuthenticationPrincipal AccountPrincipal a){return PageResponse.from(service.list(status,a,PageRequest.of(page,size,Sort.by(Sort.Direction.DESC,"queuedAt"))));}
     @GetMapping("/{id}") public JobDetailResponse get(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal a){return service.get(id,a);}

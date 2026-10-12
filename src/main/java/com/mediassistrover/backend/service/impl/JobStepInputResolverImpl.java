@@ -6,9 +6,13 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mediassistrover.backend.entity.Job;
 import com.mediassistrover.backend.entity.JobStep;
 import com.mediassistrover.backend.enums.JobStepStatus;
+import com.mediassistrover.backend.enums.StepType;
 import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.repository.JobStepRepository;
 import com.mediassistrover.backend.service.JobStepInputResolver;
+import com.mediassistrover.backend.validation.StepInputContractValidator;
+import com.mediassistrover.backend.validation.StepInputScopeValidator;
+import com.mediassistrover.backend.validation.WorkflowJsonValidator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -21,6 +25,9 @@ import java.util.Map;
 public class JobStepInputResolverImpl implements JobStepInputResolver {
     private final JobStepRepository jobStepRepository;
     private final ObjectMapper objectMapper;
+    private final StepInputContractValidator inputValidator;
+    private final StepInputScopeValidator scopeValidator;
+    private final WorkflowJsonValidator references = new WorkflowJsonValidator();
 
     @Override
     public JsonNode resolve(JobStep current) {
@@ -33,6 +40,21 @@ public class JobStepInputResolverImpl implements JobStepInputResolver {
         }
         ObjectNode resolved = ((ObjectNode) params).deepCopy();
         resolved.setAll((ObjectNode) mapping);
+        Job job = current.getJobTask().getJob();
+        if (current.getStep().getStepType() == StepType.MOVE && job.getSchemaVersion() == 2) {
+            // Explicit BE defaults for schema 2 workflows which predate speed configuration.
+            if (!resolved.has("mode")) resolved.put("mode", "NORMAL");
+            if (!resolved.has("max_speed_mps")) resolved.put("max_speed_mps", 0.05);
+        }
+        if (current.getStep().getStepType() == StepType.HANDLE_PAYLOAD
+                && !resolved.has("items") && job.getInputJson().has("items"))
+            resolved.set("items", job.getInputJson().get("items").deepCopy());
+        if(job.getSchemaVersion()==3 && current.getStep().getStepType()==StepType.CONTROL_HARDWARE) {
+            if("LOCK".equals(resolved.path("action").asText())) resolved.put("action","LOCK_COMPARTMENT");
+            if("UNLOCK".equals(resolved.path("action").asText())) resolved.put("action","UNLOCK_COMPARTMENT");
+        }
+        inputValidator.validateResolved(current.getStep(), resolved);
+        scopeValidator.validate(current.getStep(), resolved, job);
         return resolved;
     }
 
@@ -57,6 +79,7 @@ public class JobStepInputResolverImpl implements JobStepInputResolver {
         if (node == null || node.isNull()) return objectMapper.nullNode();
         if (node.isObject() && node.size() == 1 && node.has("$ref")) {
             String pointer = node.path("$ref").asText();
+            references.references(node);
             JsonNode value = root.at(pointer);
             if (value.isMissingNode()) {
                 throw new BusinessRuleException("Cannot resolve Step input reference: " + pointer);

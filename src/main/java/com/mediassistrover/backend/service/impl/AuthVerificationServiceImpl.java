@@ -26,6 +26,7 @@ public class AuthVerificationServiceImpl implements AuthVerificationService {
     private final JobEventRepository eventRepository; private final AuditService auditService;
     private final ObjectMapper objectMapper; private final Clock clock;
     private final StepResultContractValidator stepResultContractValidator;
+    private final OrchestrationWorkService wakeups;
 
     @Override @Transactional public AuthVerificationResponse create(UUID jobId,Create r,AccountPrincipal actor,RequestMetadata md){
         Job job=jobRepository.lockById(jobId).orElseThrow(()->new ResourceNotFoundException("Job not found: "+jobId));RuntimeAuthorizationPolicy.requireJobScope(job,actor);JobStep step=stepRepository.findById(r.authJobStepId()).orElseThrow(()->new ResourceNotFoundException("JobStep not found: "+r.authJobStepId()));
@@ -47,11 +48,17 @@ public class AuthVerificationServiceImpl implements AuthVerificationService {
         RuntimeAuthorizationPolicy.requireRunning(job);
         if(step.getStatus()!=JobStepStatus.RUNNING)throw new BusinessRuleException("AUTHENTICATE Step must be RUNNING");
         Instant now=Instant.now(clock);
+        if(job.isBeOrchestrated() && (job.getSelectedJobStep()==null || !job.getSelectedJobStep().getJobStepId().equals(step.getJobStepId())
+                || job.getCancelRequestedAt()!=null || !step.getStartedAt().plusSeconds(step.getTimeoutSecSnapshot()).isAfter(now)
+                || !job.getStartedAt().plusSeconds(job.getWorkflow().getMaxDurationSec()).isAfter(now)))
+            throw new BusinessRuleException("Verification requires the selected, unexpired JobStep");
         AuthVerification verification=repository.save(AuthVerification.builder().job(job).authJobStep(step).actorAccount(account).method(r.method()).purpose(r.purpose()).requiredPermission(permission).issuedAt(now).validUntil(now.plusSeconds(r.validForSeconds())).build());
         ObjectNode result=objectMapper.createObjectNode().put("authenticated",true).put("verified",true).put("verification_id",verification.getVerificationId().toString()).put("actor_user_id",account.getAccountId().toString()).put("purpose",r.purpose().name()).put("valid_until",verification.getValidUntil().toString());
+        if(job.getSchemaVersion()==3) result=objectMapper.createObjectNode().put("verified",true).put("verification_id",verification.getVerificationId().toString()).put("actor_account_id",account.getAccountId().toString()).put("purpose",r.purpose().name()).put("service_request_id",job.getServiceRequest().getServiceRequestId().toString()).put("verified_at",now.toString()).put("valid_until",verification.getValidUntil().toString());
         stepResultContractValidator.validate(step,result);
         step.setResultJson(result);step.setStatus(JobStepStatus.SUCCEEDED);step.setEndedAt(now);
         eventRepository.save(JobEvent.builder().jobEventId(UUID.randomUUID()).job(job).robot(job.getRobot()).jobTask(step.getJobTask()).jobStep(step).actorAccount(account).producerType(actor.role()==Role.ADMIN?JobEventProducerType.ADMIN:JobEventProducerType.STAFF).producerSessionId(UUID.randomUUID()).sequenceNo(1).eventType("AUTH_VERIFICATION_ISSUED").previousStatus(JobStepStatus.RUNNING.name()).newStatus(JobStepStatus.SUCCEEDED.name()).statusScope("JOB_STEP").eventDataJson(result).occurredAt(now).receivedAt(now).persistedAt(now).build());
+        wakeups.request(job);
         auditService.record(account,"AUTH_VERIFICATION_ISSUED","AuthVerification",verification.getVerificationId(),null,Map.of("jobId",jobId,"purpose",r.purpose().name()),md);return response(verification);
     }
     @Override public AuthVerificationResponse get(UUID id,AccountPrincipal actor){AuthVerification v=verification(id);if(actor.role()!=Role.ADMIN&&!v.getActorAccount().getAccountId().equals(actor.accountId()))throw new org.springframework.security.access.AccessDeniedException("Verification is outside your scope");return response(v);}

@@ -19,6 +19,7 @@ public interface RequestJobMapper {
     @Mapping(target="workflowId",source="workflow.workflowId") @Mapping(target="serviceRequestId",source="serviceRequest.serviceRequestId")
     @Mapping(target="scheduleId",source="schedule.scheduleId") @Mapping(target="robotId",source="robot.robotId")
     @Mapping(target="mapId",source="map.mapId") @Mapping(target="assignedStaffAccountId",source="assignedStaffAccount.accountId")
+    @Mapping(target="selectedJobStepId",source="selectedJobStep.jobStepId")
     JobResponse toResponse(Job value);
 
     @Mapping(target="jobId",source="job.jobId") @Mapping(target="taskId",source="task.taskId")

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mediassistrover.invalid/contracts/phase0/mqtt-be-response.schema.json",
+  "title": "HELLO_ACK EVENT_ACK SERVER_HEARTBEAT",
+  "$comment": "Reconstructed from BE handoff Markdown 11/10/2026; original Pi schemas/source NOT verified. Phase 0 reference artifacts only; not connected to runtime validators.",
+  "x-provenance": {
+    "status": "RECONSTRUCTED_UNVERIFIED_PI",
+    "sources": [
+      "../01_Giao_tiep_va_toan_bo_field.md",
+      "../02_Input_Output_11_Step_Type.md"
+    ],
+    "baselineDate": "2026-10-12"
+  },
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "messageType": {
+          "const": "HELLO_ACK"
+        },
+        "robotId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "transportSessionId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "contract": {
+          "const": "MAR-STEP-2"
+        },
+        "accepted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "messageType",
+        "robotId",
+        "transportSessionId",
+        "contract",
+        "accepted"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "messageType": {
+          "const": "EVENT_ACK"
+        },
+        "robotId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "transportSessionId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "messageId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "accepted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "messageType",
+        "robotId",
+        "transportSessionId",
+        "messageId",
+        "accepted"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "messageType": {
+          "const": "SERVER_HEARTBEAT"
+        },
+        "robotId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        },
+        "transportSessionId": {
+          "type": "string",
+          "format": "uuid",
+          "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+        }
+      },
+      "required": [
+        "messageType",
+        "robotId",
+        "transportSessionId"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

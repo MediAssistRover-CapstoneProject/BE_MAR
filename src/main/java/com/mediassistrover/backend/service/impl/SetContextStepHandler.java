@@ -23,6 +23,6 @@ public class SetContextStepHandler implements ServerStepHandler {
             else if("SET".equals(action))assigned=value==null?NullNode.instance:value.deepCopy();else throw new BusinessRuleException("Unsupported context operation: "+action);
             after.set(key,assigned);values.set(key,assigned.deepCopy());changed.add(key);
         }
-        job.setContextJson(after);ObjectNode result=objectMapper.createObjectNode();result.set("changed_keys",changed);result.set("values",values);return new ServerStepExecution(result,true);
+        job.setContextJson(after);ObjectNode result=objectMapper.createObjectNode();if(job.getSchemaVersion()==3) result.set("updated",values); else {result.set("changed_keys",changed);result.set("values",values);}return new ServerStepExecution(result,true);
     }
 }

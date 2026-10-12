@@ -22,7 +22,29 @@ import static org.mockito.Mockito.when;
 class JobStepInputResolverTest {
     private final ObjectMapper json = new ObjectMapper();
     private final JobStepRepository repository = mock(JobStepRepository.class);
-    private final JobStepInputResolverImpl resolver = new JobStepInputResolverImpl(repository, json);
+    private final JobStepInputResolverImpl resolver = new JobStepInputResolverImpl(repository, json,
+            mock(com.mediassistrover.backend.validation.StepInputContractValidator.class),
+            mock(com.mediassistrover.backend.validation.StepInputScopeValidator.class));
+
+    @Test void rejectsInvalidResolvedValuesAndNestedReferenceInjection() {
+        var checked = new JobStepInputResolverImpl(repository, json,
+                new com.mediassistrover.backend.validation.StepInputContractValidator(new com.mediassistrover.backend.validation.WorkflowJsonValidator()),
+                mock(com.mediassistrover.backend.validation.StepInputScopeValidator.class));
+        Job job=Job.builder().jobId(UUID.randomUUID()).inputJson(json.createObjectNode().put("duration",0))
+                .contextJson(json.createObjectNode()).build();
+        Step definition=Step.builder().stepCode("PAUSE").stepType(com.mediassistrover.backend.enums.StepType.WAIT)
+                .timeoutSec(5).maxAttempts(1).paramsJson(json.createObjectNode().put("wait_type","DURATION").put("duration_sec",2))
+                .inputMappingJson(json.createObjectNode().set("duration_sec",ref("/inputs/duration"))).build();
+        JobStep current=JobStep.builder().jobTask(JobTask.builder().job(job).build()).step(definition).build();
+        when(repository.findByJobId(job.getJobId())).thenReturn(List.of(current));
+        assertThatThrownBy(()->checked.resolve(current)).hasMessageContaining("PAUSE").hasMessageContaining("duration_sec");
+        ((ObjectNode)job.getInputJson()).set("duration",ref("/vars/value"));
+        assertThatThrownBy(()->checked.resolve(current)).hasMessageContaining("$ref");
+        ((ObjectNode)job.getInputJson()).put("duration",2);
+        var resolved=checked.resolve(current);
+        ((ObjectNode)job.getInputJson()).put("duration",3);
+        assertThat(resolved.path("duration_sec").asInt()).isEqualTo(2);
+    }
 
     @Test
     void resolvesInputsOutputsAndVarsWithMappingPrecedence() {

@@ -8,6 +8,7 @@ import org.springframework.data.repository.query.Param;
 import jakarta.persistence.LockModeType;
 import java.util.*;
 public interface AlertRepository extends JpaRepository<Alert,UUID> {
+    @Query("select a.jobStep.jobTask.job.jobId from Alert a where a.alertId=:id") Optional<UUID> findJobId(@Param("id") UUID id);
     Optional<Alert> findByOperationKey(String operationKey);
     Page<Alert> findByStatus(AlertStatus status,Pageable pageable);
     List<Alert> findByIncidentIncidentId(UUID incidentId);

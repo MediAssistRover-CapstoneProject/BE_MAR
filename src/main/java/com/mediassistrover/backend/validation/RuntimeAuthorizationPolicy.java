@@ -28,7 +28,7 @@ public final class RuntimeAuthorizationPolicy {
 
     public static void requireDeviceCallback(JobStep step) {
         StepType type = step.getStep().getStepType();
-        if (type.getExecutorKind() != StepExecutorKind.SERVER) return;
+        if (type.getExecutorKind(step.getJobTask().getJob().getSchemaVersion()) != StepExecutorKind.SERVER) return;
         // INTERACT is dispatched by Server but ordinary display/audio/patient input finishes on Device.
         if (type == StepType.INTERACT) {
             JsonNode input = step.getResolvedInputsJson();

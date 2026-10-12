@@ -32,6 +32,8 @@ public class Job {
     @Column(name="protocol_version",nullable=false) private int protocolVersion;
     @Column(name="schema_version",nullable=false) private int schemaVersion;
     @Column(name="graph_version",nullable=false) private int graphVersion;
+    @Column(name="be_orchestrated",nullable=false) private boolean beOrchestrated;
+    @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="selected_job_step_id") private JobStep selectedJobStep;
     @Column(name="schedule_fire_at") private Instant scheduleFireAt;
     @Column(name="schedule_item_key",length=150) private String scheduleItemKey;
     @Column(name="dispatch_command_id",columnDefinition="BINARY(16)") private UUID dispatchCommandId;

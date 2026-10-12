@@ -11,8 +11,8 @@ public enum StepType {
     EXECUTE_SENSING("Thu thập cảm biến", StepExecutorKind.MIXED),
     NOTIFY("Thông báo", StepExecutorKind.SERVER),
     WAIT("Chờ", StepExecutorKind.MIXED),
-    CHECK_CONDITION("Kiểm tra điều kiện", StepExecutorKind.PI),
-    SET_CONTEXT("Gán context", StepExecutorKind.PI);
+    CHECK_CONDITION("Kiểm tra điều kiện", StepExecutorKind.SERVER),
+    SET_CONTEXT("Gán context", StepExecutorKind.SERVER);
 
     private final String displayName;
     private final StepExecutorKind executorKind;
@@ -23,4 +23,8 @@ public enum StepType {
     public String getStepTypeCode() { return name(); }
     public String getDisplayName() { return displayName; }
     public StepExecutorKind getExecutorKind() { return executorKind; }
+    public StepExecutorKind getExecutorKind(int schemaVersion) {
+        if(schemaVersion==2 && (this==CHECK_CONDITION || this==SET_CONTEXT)) return StepExecutorKind.PI;
+        return executorKind;
+    }
 }

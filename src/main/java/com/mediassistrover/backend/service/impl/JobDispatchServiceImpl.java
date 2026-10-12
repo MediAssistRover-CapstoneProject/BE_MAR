@@ -27,6 +27,8 @@ public class JobDispatchServiceImpl implements JobDispatchService {
     private final JobRepository jobRepository;
     private final RobotRepository robotRepository;
     private final Clock clock;
+    private final com.mediassistrover.backend.service.OrchestrationWorkService wakeups;
+    private final com.mediassistrover.backend.validation.WorkflowExecutionReadiness readiness;
 
     @Override
     @Transactional
@@ -35,12 +37,14 @@ public class JobDispatchServiceImpl implements JobDispatchService {
         List<Job> queued = jobRepository.findByStatusAndRobotIsNullOrderByPriorityDescQueuedAtAsc(
                 JobStatus.QUEUED, PageRequest.of(0, limit));
         int assigned = 0;
-        for (Job job : queued) {
+        for (Job candidate : queued) {
+            Job job=jobRepository.lockById(candidate.getJobId()).orElseThrow();
+            if (job.getStatus()!=JobStatus.QUEUED || job.getRobot()!=null) continue;
             Robot robot = chooseRobot(job);
             if (robot == null) continue;
             job.setRobot(robot);
-            job.setDispatchCommandId(UUID.randomUUID());
-            job.setDispatchExpiresAt(Instant.now(clock).plusSeconds(60));
+            if (!job.isBeOrchestrated()) {job.setDispatchCommandId(UUID.randomUUID());job.setDispatchExpiresAt(Instant.now(clock).plusSeconds(60));}
+            wakeups.request(job);
             assigned++;
         }
         return assigned;
@@ -52,6 +56,9 @@ public class JobDispatchServiceImpl implements JobDispatchService {
                 ? robotRepository.findByStatusOrderByRobotCodeAsc(RobotStatus.IDLE)
                 : robotRepository.findByStatusAndCurrentMapMapIdOrderByRobotCodeAsc(RobotStatus.IDLE, map.getMapId());
         return candidates.stream()
+                .map(candidate -> robotRepository.findByIdForUpdate(candidate.getRobotId()).orElseThrow())
+                .filter(robot -> robot.getStatus()==RobotStatus.IDLE)
+                .filter(robot -> readiness.acceptsRobot(job.getWorkflow(),robot))
                 .filter(robot -> jobRepository.findByRobotRobotIdAndStatusIn(robot.getRobotId(), OCCUPYING).isEmpty())
                 .findFirst().orElse(null);
     }

@@ -7,10 +7,12 @@ import org.springframework.data.repository.query.Param;
 import java.time.Instant;
 import java.util.*;
 public interface JobStepRepository extends JpaRepository<JobStep,UUID> {
+    @Query("select s.jobTask.job.jobId from JobStep s where s.jobStepId=:id")
+    Optional<UUID> findJobId(@Param("id") UUID id);
     @Query("select s from JobStep s join fetch s.step where s.jobTask.job.jobId=:jobId order by s.executionSequenceNo")
     List<JobStep> findByJobId(@Param("jobId") UUID jobId);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select s from JobStep s where s.status='RUNNING' and s.startedAt is not null and s.startedAt <= :threshold")
+    @Query("select s from JobStep s where s.status='RUNNING' and s.jobTask.job.beOrchestrated=false and s.startedAt is not null and s.startedAt <= :threshold")
     List<JobStep> lockPotentialTimeouts(@Param("threshold") Instant threshold);
     Optional<JobStep> findByOperationKey(String operationKey);
     long countByJobTaskJobJobId(UUID jobId);

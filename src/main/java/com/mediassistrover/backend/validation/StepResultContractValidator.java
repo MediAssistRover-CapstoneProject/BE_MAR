@@ -9,20 +9,27 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 import java.util.*;
 
-/** Strict root schemas for STEP_RESULT schema version 2. Dynamic nested business objects remain type checked. */
+/** Versioned STEP_RESULT validator: legacy schema 2 and MAR-STEP-2 schema 3. */
 @Component
 public class StepResultContractValidator {
+    private final Schema3StepResultContractValidator schema3 = new Schema3StepResultContractValidator();
     public void validate(JobStep step, JsonNode result) {
+        validate(step, result, Instant.now());
+    }
+
+    public void validate(JobStep step, JsonNode result, Instant reportedAt) {
         var job = step.getJobTask().getJob();
         StepType type;
         try { type=StepType.valueOf(step.getStepTypeSnapshot()); }
         catch (RuntimeException ex) { throw new BusinessRuleException("Unsupported StepType snapshot: "+step.getStepTypeSnapshot()); }
         validate(job.getSchemaVersion(),job.getGraphVersion(),type,step.getResolvedInputsJson(),result);
+        if (job.getSchemaVersion() == 3) schema3.validateRuntimeScope(step, result, reportedAt);
     }
 
     public void validate(int schemaVersion,int graphVersion,StepType type,JsonNode input,JsonNode result) {
         StepContractVersions.requireJob(schemaVersion,graphVersion);
         object(result, type + " result");
+        if (schemaVersion == 3) { object(input, "resolved input"); schema3.validate(type, input, result); return; }
         switch (type) {
             case MOVE -> move(input,result);
             case INTERACT -> interact(input, result);

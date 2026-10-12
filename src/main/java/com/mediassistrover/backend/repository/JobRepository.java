@@ -14,6 +14,9 @@ public interface JobRepository extends JpaRepository<Job,UUID> {
     interface StatusCount { JobStatus getStatus(); long getTotal(); }
     boolean existsByWorkflowWorkflowId(UUID workflowId);
     Page<Job> findByStatus(JobStatus status,Pageable pageable);
+    Page<Job> findByBeOrchestratedTrueAndStatus(JobStatus status,Pageable pageable);
+    @Query("select j.jobId from Job j where j.beOrchestrated=true and j.status='QUEUED' and j.robot.status='IDLE' order by j.queuedAt")
+    List<UUID> findReadyBeJobIds(Pageable page);
     Page<Job> findByServiceRequestRequestedByAccountAccountId(UUID accountId,Pageable pageable);
     List<Job> findByServiceRequestServiceRequestId(UUID requestId);
     Page<Job> findByAssignedStaffAccountAccountIdOrServiceRequestRequestedByAccountAccountId(UUID assigned,UUID requester,Pageable pageable);

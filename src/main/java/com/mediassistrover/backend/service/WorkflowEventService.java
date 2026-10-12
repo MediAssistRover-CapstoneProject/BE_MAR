@@ -7,4 +7,5 @@ import java.util.UUID;
 public interface WorkflowEventService {
     WorkflowEventResponse publish(UUID jobId,WorkflowEventRequest request,AccountPrincipal actor,RequestMetadata metadata);
     boolean consumeAvailable(JobStep waitStep);
+    void publishAlertAcknowledged(com.mediassistrover.backend.entity.Alert alert,com.mediassistrover.backend.entity.Account actor,java.time.Instant occurredAt,long acknowledged,long total);
 }

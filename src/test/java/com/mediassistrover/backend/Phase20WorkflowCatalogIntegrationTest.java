@@ -55,7 +55,7 @@ class Phase20WorkflowCatalogIntegrationTest extends MySqlIntegrationTest {
     }
 
     @Test void manualChargingEntryPointCreatesOneServerJobAndIsIdempotent(){
-        Workflow charging=workflows.findTopByWorkflowCodeIgnoreCaseOrderByVersionNoDesc("WF_AUTO_CHARGING").orElseThrow();
+        Workflow charging=legacy("WF_AUTO_CHARGING");
         workflowService.validate(charging.getWorkflowId(),admin.getAccountId(),metadata());
         workflowService.publish(charging.getWorkflowId(),admin.getAccountId(),metadata());
         Robot robot=robots.save(Robot.builder().robotCode("P20-ROBOT").robotName("Phase 20 Robot").model("Test")
@@ -88,7 +88,7 @@ class Phase20WorkflowCatalogIntegrationTest extends MySqlIntegrationTest {
     }
 
     @Test void fallResponseRequiresARealSuspectedFallFromTheRequestedRobot(){
-        Workflow fall=workflows.findTopByWorkflowCodeIgnoreCaseOrderByVersionNoDesc("WF_FALL_DETECTION_RESPONSE").orElseThrow();
+        Workflow fall=legacy("WF_FALL_DETECTION_RESPONSE");
         workflowService.validate(fall.getWorkflowId(),admin.getAccountId(),metadata());
         workflowService.publish(fall.getWorkflowId(),admin.getAccountId(),metadata());
         HospitalInformation hospital=hospitals.save(HospitalInformation.builder().updatedBy(admin).infoCategory("PROFILE")
@@ -115,6 +115,8 @@ class Phase20WorkflowCatalogIntegrationTest extends MySqlIntegrationTest {
         assertThat(response.requestDataJson().path("confidence").decimalValue()).isEqualByComparingTo("0.9100");
         assertThat(jobs.findByServiceRequestServiceRequestId(response.serviceRequestId())).hasSize(1);
     }
+
+    private Workflow legacy(String code){return workflows.findAll().stream().filter(w->w.getSchemaVersion()==2&&w.getWorkflowCode().equals(code)).max(Comparator.comparingInt(Workflow::getVersionNo)).orElseThrow();}
 
     private Robot robot(String code,FacilityMap map){return Robot.builder().currentMap(map).robotCode(code).robotName(code).model("Test")
             .protocolVersion(1).capabilitiesJson(json.createArrayNode()).status(RobotStatus.IDLE)
