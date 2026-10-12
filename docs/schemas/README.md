@@ -56,3 +56,5 @@ Fixture ở [contract-cases.json](fixtures/contract-cases.json) dùng UUID/times
 Script kiểm schema bằng meta-schema, mọi local ref, duplicate key, format, coverage khớp enum StepType thực tế và fixture positive/negative; không kết nối broker/Pi hay xác nhận phần cứng thật.
 
 Phần BE mapping/upload/STOP cleanup: [bàn giao Phase 12](../phase12-implementation.md). Trạng thái IMPLEMENTED_BE_SCHEMA_3_ARTIFACT chỉ chứng minh phần BE đã có code/test, không xác nhận SLAM/upload hoặc schema gốc Pi.
+
+Phase 13 nối output CROWD_DENSITY/RESTRICTED_ZONE với monitoring và profile model/producer tại BE, gate AI mặc định tắt. Không đổi contract Pi hoặc thêm FALL_DETECTION. REST extension vị trí người/heatmap là contract BE riêng đang chờ producer ngoài repo, xem [bàn giao Phase 13](../phase13-implementation.md).

@@ -114,7 +114,7 @@ class Phase11IntegrationTest extends MySqlIntegrationTest {
     }
 
     @Test
-    void ingestsCrowdDensityIdempotentlyAndStoresHeatmapWithoutMutationApi() throws Exception {
+    void ingestsCrowdDensityIdempotentlyAndRejectsHeatmapWithoutPersonPositions() throws Exception {
         UUID messageId = UUID.randomUUID();
         CrowdDensityPayload payload = new CrowdDensityPayload(zone.getZoneId(), checkpoint.getEndpointId(),
                 12, CrowdDensityLevel.MEDIUM, new BigDecimal("0.8700"), "crowd-1",
@@ -127,14 +127,12 @@ class Phase11IntegrationTest extends MySqlIntegrationTest {
         assertThat(crowdRepository.count()).isEqualTo(1);
 
         HeatmapCreate request = heatmapRequest();
-        var heatmap = monitoringService.createHeatmap(request, admin.getAccountId(), metadata());
-        assertThat(heatmap.heatmapType()).isEqualTo("CROWD_DENSITY");
-        assertThat(heatmapRepository.count()).isEqualTo(1);
         assertThatThrownBy(() -> monitoringService.createHeatmap(request, admin.getAccountId(), metadata()))
-                .isInstanceOf(ConflictException.class).hasMessageContaining("already exists");
+                .isInstanceOf(BusinessRuleException.class).hasMessageContaining("person positions");
+        assertThat(heatmapRepository.count()).isZero();
 
         String adminToken = jwtTokenService.issueAccessToken(admin).value();
-        mockMvc.perform(delete("/api/v1/admin/monitoring/heatmaps/{id}", heatmap.heatmapRecordId())
+        mockMvc.perform(delete("/api/v1/admin/monitoring/heatmaps/{id}", UUID.randomUUID())
                         .header("Authorization", "Bearer " + adminToken))
                 .andExpect(status().isMethodNotAllowed());
     }
@@ -184,7 +182,7 @@ class Phase11IntegrationTest extends MySqlIntegrationTest {
 
     private void clean() {
         jdbc.execute("SET FOREIGN_KEY_CHECKS=0");
-        for (String table : new String[]{"HeatmapRecord", "CrowdDensityRecord", "DetectionEvent", "Robot",
+        for (String table : new String[]{"MonitoringIngestionReceipt","HeatmapRecord", "CrowdDensityRecord", "DetectionEvent", "Robot",
                 "Endpoint", "Zone", "Map", "Floor", "HospitalInformation", "AuditLog", "RevokedToken",
                 "RefreshToken", "StaffProfile", "Account"}) {
             jdbc.execute("TRUNCATE TABLE `" + table + "`");

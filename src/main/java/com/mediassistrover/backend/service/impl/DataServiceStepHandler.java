@@ -40,6 +40,7 @@ public class DataServiceStepHandler implements ServerStepHandler {
     private final ObjectMapper objectMapper;
     private final Clock clock;
     private final com.mediassistrover.backend.service.NavigationTargetService navigation;
+    private final com.mediassistrover.backend.service.StaffIncidentReviewPolicy incidentReview;
 
     @Override public boolean supports(JobStep step){return step.getStep().getStepType()==StepType.DATA_SERVICE
             && !"COMMIT_MAP_ARTIFACT".equals(step.getResolvedInputsJson().path("service_key").asText());}
@@ -93,6 +94,7 @@ public class DataServiceStepHandler implements ServerStepHandler {
             }
             case "CREATE_FALL_INCIDENT" -> {
                 UUID detectionId=uuid(inputs,"detection_event_id");
+                incidentReview.requireConfirmed(step,detectionId);
                 DetectionEvent detection=detectionEventRepository.findById(detectionId)
                         .orElseThrow(()->new BusinessRuleException("DetectionEvent not found: "+detectionId));
                 if(detection.getEventType()!=DetectionEventType.SUSPECTED_FALL)
@@ -104,7 +106,7 @@ public class DataServiceStepHandler implements ServerStepHandler {
                         incidentRepository.saveAndFlush(EmergencyIncident.builder().detectionEvent(detection)
                                 .robot(detection.getRobot()).map(detection.getMap()).incidentType("SUSPECTED_FALL")
                                 .severity(EmergencyIncidentSeverity.CRITICAL).status(EmergencyIncidentStatus.OPEN)
-                                .description("Suspected fall confirmed by staff review").xM(detection.getXM()).yM(detection.getYM())
+                                .description("Staff requested assistance after reviewing a suspected fall").xM(detection.getXM()).yM(detection.getYM())
                                 .occurredAt(detection.getDetectedAt()).build());
                 data.put("incident_id",incident.getIncidentId().toString());
                 data.put("created",existing==null);

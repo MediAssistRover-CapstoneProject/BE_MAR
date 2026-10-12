@@ -238,7 +238,7 @@ class DeliveryOperationAuthorizationIntegrationTest extends MySqlIntegrationTest
         fixture();JobStep unlock=unlock(authenticate(AuthVerificationPurpose.DELIVERY_SENDER));
         var settings=new com.mediassistrover.backend.mqtt.MqttProperties();settings.setEnabled(true);settings.setDispatchEnabled(true);
         settings.setEnabledStepTypes(Set.of("CONTROL_HARDWARE"));settings.setRobotIds(Set.of(job.getRobot().getRobotId()));
-        var gate=new MqttStepDispatchService(settings,null,null,null,null,null,null,null,null,Clock.systemUTC(),authorization,null,null);
+        var gate=new MqttStepDispatchService(settings,null,null,null,null,null,null,null,null,Clock.systemUTC(),authorization,null,null,null,null);
         assertThatThrownBy(()->gate.requireActionSupported(unlock.getStep())).hasMessageContaining("Pi STAFF_VERIFIED");
         physical(unlock,"STAFF_VERIFIED",true);
         assertThatThrownBy(()->outputs.validate(unlock,unlock.getResultJson())).isInstanceOf(BusinessRuleException.class);

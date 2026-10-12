@@ -37,6 +37,7 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
     @Autowired RobotCommandOutboxRepository commands;@Autowired RobotMqttInboxRepository inbox;
     @Autowired WorkflowRepository workflows;@Autowired WorkflowValidationService validation;
     @Autowired JobExecutionService execution;@Autowired JobService jobService;
+    @Autowired MqttRolloutService rollout;
     @Autowired org.springframework.test.web.servlet.MockMvc mvc;@Autowired DeviceJwtTokenService tokens;
     @Autowired PlatformTransactionManager tm;@Autowired jakarta.persistence.EntityManager em;
     @MockitoBean PahoMqttTransport transport;
@@ -105,6 +106,12 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
         var d=device();assertThatThrownBy(()->artifacts.upload(session().getSessionId(),session().getArtifactId(),manifest.path("asset_hash").asText(),MappingArchiveReader.hash(archive),new ByteArrayInputStream(archive),new DevicePrincipal(UUID.randomUUID(),d.robotCode(),d.tokenVersion(),d.jti(),d.expiresAt()))).hasMessageContaining("Current device");assertThat(artifactRows.findById(session().getArtifactId())).isEmpty();}
     @Test void savedLocallyIsNotACommittedMap(){waiting();saveRequested();issue();startIssued();receive(result("SAVE",false,true));advance();assertThat(selected().getStepTypeSnapshot()).isEqualTo("DATA_SERVICE");assertThatThrownBy(this::advance).hasMessageContaining("durable upload receipt");assertThat(artifactRows.findById(session().getArtifactId())).isEmpty();}
     @Test void claimedUploadWithoutReceiptEntersRecovery(){waiting();saveRequested();issue();startIssued();receive(result("SAVE",true,true));assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(session().isPotentiallyOpen()).isTrue();}
+    @Test void durableRolloutHaltStillDispatchesCleanupStopForAnOpenMappingSession(){waiting();var before=rollout.state();
+        try{rollout.change(new MqttRolloutService.Change(before.mode(),true,before.revision(),"Halt for mapping acceptance"),actor());
+            jobService.cancel(fixture.jobId,new JobRequests.CancelJobRequest("Stop during rollout halt"),actor(),new RequestMetadata(null,null,null));advance();
+            assertThat(selected().isMappingCleanup()).isTrue();complete("STOP");advance();assertThat(status()).isEqualTo(JobStatus.CANCELLED);assertThat(session().isPotentiallyOpen()).isFalse();
+            assertThat(commands.findByJobIdOrderByCreatedAt(fixture.jobId)).hasSize(2);
+        }finally{var now=rollout.state();rollout.change(new MqttRolloutService.Change(now.mode(),before.dispatchHalted(),now.revision(),"Restore halt after test"),actor());}}
     @Test void cancelDuringUiWaitCreatesStopAndHoldsRobotUntilResult(){waiting();jobService.cancel(fixture.jobId,new JobRequests.CancelJobRequest("Stop mapping"),actor(),new RequestMetadata("test","test","test"));advance();assertThat(selected().isMappingCleanup()).isTrue();assertThat(status()).isEqualTo(JobStatus.RUNNING);assertThat(robots.findById(fixture.robotId).orElseThrow().getStatus()).isEqualTo(RobotStatus.BUSY);
         mqtt.setDispatchEnabled(false);complete("STOP");advance();assertThat(status()).isEqualTo(JobStatus.CANCELLED);assertThat(session().isPotentiallyOpen()).isFalse();assertThat(robots.findById(fixture.robotId).orElseThrow().getStatus()).isEqualTo(RobotStatus.IDLE);assertThat(commands.findByJobIdOrderByCreatedAt(fixture.jobId)).hasSize(2);}
     @Test void failedCleanupStopHoldsRecoveryWithoutIssuingAnotherStop(){waiting();tx.executeWithoutResult(s->jobs.findById(fixture.jobId).orElseThrow().setCancelRequestedAt(Instant.now()));advance();issue();startIssued();receive(fixture.event(json,"STEP_ERROR",json.createObjectNode().put("status","FAILED").put("errorCode","MAPPING_STOP_FAILED").put("retryable",false).put("physicalStopConfirmed",true).putNull("details")));advance();advance();assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(session().isPotentiallyOpen()).isTrue();assertThat(commands.findByJobIdOrderByCreatedAt(fixture.jobId)).hasSize(2);}

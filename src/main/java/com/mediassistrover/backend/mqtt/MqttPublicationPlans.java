@@ -27,6 +27,8 @@ public class MqttPublicationPlans {
     private final jakarta.persistence.EntityManager entityManager;
     private final com.mediassistrover.backend.service.NavigationProfileService navigationProfiles;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
+    private final com.mediassistrover.backend.ai.AiSensingService ai;
+    private final MqttRolloutService rollout;
     public record Publication(UUID id,UUID robotId,UUID sessionId,JsonNode payload) { }
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public Publication command(UUID id) {
@@ -36,6 +38,7 @@ public class MqttPublicationPlans {
         entityManager.refresh(command,jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
         boolean cancel="CANCEL_STEP".equals(command.getCommandType());
         JobStep action=steps.findById(command.getJobStepId()).orElseThrow();boolean cleanup=action.isMappingCleanup();
+        if(!cancel && !cleanup && !rollout.dispatchAllowed())return null;
         if(!properties.manages(command.getRobotId()) || !cancel && !cleanup && (!properties.isDispatchEnabled()
                 || !properties.getEnabledStepTypes().contains(command.getPayloadJson().path("step").path("stepType").asText())))return null;
         if (!Set.of("PENDING","PUBLISHING","PUBLISHED").contains(command.getState())
@@ -51,6 +54,7 @@ public class MqttPublicationPlans {
         }
         if (!(cancel?registry.owned(session) && session.isHandshakeAcked() && session.getLastHeartbeatAt()!=null
                 && session.getLastHeartbeatAt().isAfter(now.minusSeconds(15)):registry.fresh(session))) return null;
+        if(!cancel && com.mediassistrover.backend.ai.AiSensingService.ai(action) && !ai.publicationReady(command))return null;
         if(!cancel && "MOVE".equals(command.getPayloadJson().path("step").path("stepType").asText())
                 && !navigationProfiles.publicationReady(job.getRobot(),session,command)) {
             if(command.getSendAttempts()>0) {command.setState("RECOVERY_REQUIRED");safety.recovery(job,"Pi navigation profile changed during a published MOVE");}

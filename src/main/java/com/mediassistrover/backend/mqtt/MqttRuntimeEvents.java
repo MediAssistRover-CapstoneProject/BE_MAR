@@ -27,6 +27,7 @@ public class MqttRuntimeEvents {
     private final MqttWire wire;
     private final com.mediassistrover.backend.service.NavigationTargetService navigationTargets;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
+    private final com.mediassistrover.backend.ai.AiSensingService ai;
 
     public void apply(Job job,MqttWire.Envelope e) {
         if (job==null || !job.isBeOrchestrated() || job.getSchemaVersion()!=3 || job.getRobot()==null || !job.getRobot().getRobotId().equals(e.robotId()))
@@ -96,6 +97,7 @@ public class MqttRuntimeEvents {
         if (step.getStatus()!=JobStepStatus.RUNNING || !"STARTED".equals(command.getState())) throw new BusinessRuleException("Result requires committed STEP_STARTED snapshot");
         if (!p.path("result").isObject()) throw new BusinessRuleException("Journal completion lacks step output");
         outputs.validate(step,p.path("result"),reportedAt);
+        ai.completed(step,command,p.path("result"),reportedAt);
         step.setResultJson(p.path("result").deepCopy());step.setStatus(JobStepStatus.SUCCEEDED);step.setEndedAt(Instant.now(clock));command.setState("COMPLETED");
         command.setPhysicalStopConfirmed(p.path("physicalStopConfirmed").isBoolean()?p.path("physicalStopConfirmed").asBoolean():null);
         if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step) && p.path("physicalStopConfirmed").asBoolean())mapping.completed(step,p.path("result"),true);
@@ -153,7 +155,7 @@ public class MqttRuntimeEvents {
                     if(step.getStatus()!=JobStepStatus.RUNNING || !"STARTED".equals(execute.getState())) {safety.recovery(job,"Succeeded cancel journal lacks committed STEP_STARTED");return;}
                     JsonNode output=p.path("result").path("result");
                     if(!output.isObject()) {safety.recovery(job,"Cancel journal succeeded but successful output is missing");return;}
-                    outputs.validate(step,output,e.time());mapping.completed(step,output,true);step.setResultJson(output.deepCopy());
+                    outputs.validate(step,output,e.time());ai.completed(step,execute,output,e.time());mapping.completed(step,output,true);step.setResultJson(output.deepCopy());
                 }
                 step.setStatus(JobStepStatus.valueOf(status));step.setEndedAt(Instant.now(clock));
                 step.setErrorCode("BE_"+step.getInterruptionReason());step.setErrorDetailsJson(p.deepCopy());

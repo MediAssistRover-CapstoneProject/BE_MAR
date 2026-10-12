@@ -27,6 +27,8 @@ public class MqttStepDispatchService {
     private final com.mediassistrover.backend.service.OperationAuthorizationService operationAuthorization;
     private final com.mediassistrover.backend.service.NavigationProfileService navigationProfiles;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
+    private final com.mediassistrover.backend.ai.AiSensingService ai;
+    private final MqttRolloutService rollout;
 
     public void requireActionSupported(Step step) {
         if (!properties.isEnabled() || !properties.isDispatchEnabled() || properties.getRobotIds().isEmpty()
@@ -36,14 +38,16 @@ public class MqttStepDispatchService {
         if (step.getStepType()==StepType.CONTROL_HARDWARE && !Set.of("LOCK_COMPARTMENT","LOCK").contains(params.path("action").asText()))
             throw new BusinessRuleException("Official UNLOCK awaits Pi STAFF_VERIFIED enforcement and a confirmed HELLO/output contract; keep workflow DRAFT");
         if (step.getStepType()==StepType.EXECUTE_SENSING && "MAPPING".equals(params.path("sensing_type").asText()))mapping.requireSupported(step);
-        if (step.getStepType()==StepType.EXECUTE_SENSING && !Set.of("ROBOT_HEALTH","SIDE_CLEARANCE","MAPPING").contains(params.path("sensing_type").asText()))
-            throw new BusinessRuleException("AI/mapping sensing awaits later integration; keep workflow DRAFT");
+        if(step.getStepType()==StepType.EXECUTE_SENSING && com.mediassistrover.backend.ai.AiSensingService.TYPES.contains(params.path("sensing_type").asText()))ai.requireEnabled();
+        if (step.getStepType()==StepType.EXECUTE_SENSING && !Set.of("ROBOT_HEALTH","SIDE_CLEARANCE","MAPPING","CROWD_DENSITY","RESTRICTED_ZONE").contains(params.path("sensing_type").asText()))
+            throw new BusinessRuleException("Sensing action is outside the integrated Pi contract; keep workflow DRAFT");
         if (step.getStepType()==StepType.WAIT && !"DURATION".equals(params.path("wait_type").asText()))
             throw new BusinessRuleException("Only WAIT/DURATION is executed by Pi");
     }
 
     @Transactional
     public void dispatch(JobStep step) {
+        if(!step.isMappingCleanup() && !rollout.dispatchAllowed())return;
         if (!properties.isEnabled() || !properties.isDispatchEnabled() && !step.isMappingCleanup()) return;
         Job job=step.getJobTask().getJob();
         if (!job.isBeOrchestrated() || job.getStatus()!=JobStatus.RUNNING || job.getSelectedJobStep()==null
@@ -76,6 +80,7 @@ public class MqttStepDispatchService {
                 || !job.getMap().getAssetHash().equalsIgnoreCase(Objects.toString(job.getRobot().getMapAssetHash(),""))))
             throw new BusinessRuleException("MOVE requires matching map UUID and asset hash");
         String profileHash=null;
+        com.fasterxml.jackson.databind.JsonNode aiProfile=com.mediassistrover.backend.ai.AiSensingService.ai(step)?ai.bind(step):null;
         if("MOVE".equals(step.getStepTypeSnapshot())) {
             profileHash=navigationProfiles.ready(job.getRobot(),session,step.getResolvedInputsJson());
             if(profileHash==null) return;
@@ -97,6 +102,6 @@ public class MqttStepDispatchService {
                 .put("visitNo",step.getVisitNo()).put("operationKey",step.getOperationKey()).put("timeoutSec",step.getTimeoutSecSnapshot());action.set("params",params);
         contracts.command(command);
         commands.save(RobotCommandOutbox.builder().commandId(commandId).robotId(session.getRobotId()).jobId(job.getJobId()).jobStepId(step.getJobStepId())
-                .operationKey(step.getOperationKey()).navigationProfileHash(profileHash).payloadJson(command).expiresAt(now.plusSeconds(properties.getCommandTtlSec())).state("PENDING").createdAt(now).build());
+                .operationKey(step.getOperationKey()).navigationProfileHash(profileHash).aiProfileSnapshotJson(aiProfile).payloadJson(command).expiresAt(now.plusSeconds(properties.getCommandTtlSec())).state("PENDING").createdAt(now).build());
     }
 }

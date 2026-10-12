@@ -43,6 +43,7 @@ public class RequestJobInputSnapshotFactory {
         } else if (request.getRequestType() == ServiceRequestType.ESCORT) {
             EscortRequest e = escorts.findById(request.getServiceRequestId()).orElseThrow(() -> new BusinessRuleException("Escort request detail is missing"));
             result.put("map_id", e.getMap().getMapId().toString()).put("target_mode", e.getTargetMode().name());
+            result.put("patient_reference",e.getPatientReference());
             result.remove(Set.of("endpoint_id", "endpoint_group_id", "origin_endpoint_id"));
             if (e.getOriginEndpoint() != null) result.put("origin_endpoint_id", e.getOriginEndpoint().getEndpointId().toString());
             if (e.getDestinationEndpoint() != null) result.put("endpoint_id", e.getDestinationEndpoint().getEndpointId().toString());

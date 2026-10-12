@@ -92,7 +92,8 @@ final class Schema3StepResultContractValidator {
         if (Set.of("CROWD_DENSITY", "RESTRICTED_ZONE").contains(type)) {
             same(input, n, "zone_id");
             if (input.has("map_id")) same(input, n, "map_id");
-            if (n.path("model_version").asText().isBlank()) invalid("model_version must not be blank");
+            if (n.path("model_version").asText().isBlank() || n.path("model_version").asText().length()>100) invalid("model_version requires 1-100 characters");
+            if("CROWD_DENSITY".equals(type) && !metrics.path("count").canConvertToInt())invalid("AI count exceeds integer range");
         } else if ("MAPPING".equals(type)) {
             same(input, n, "mapping_session_id");
             switch (input.path("action").asText()) {

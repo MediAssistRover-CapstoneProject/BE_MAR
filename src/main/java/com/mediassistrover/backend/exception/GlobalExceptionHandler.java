@@ -75,6 +75,11 @@ public class GlobalExceptionHandler {
         return response(HttpStatus.CONFLICT, "CONFLICT", exception.getMessage(), request, null);
     }
 
+    @ExceptionHandler(LegacyExecutionRetiredException.class)
+    ResponseEntity<ApiErrorResponse> handleLegacyRetired(LegacyExecutionRetiredException exception, HttpServletRequest request) {
+        return response(HttpStatus.GONE, "LEGACY_EXECUTION_RETIRED", exception.getMessage(), request, null);
+    }
+
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<ApiErrorResponse> handleDataIntegrity(
             DataIntegrityViolationException exception, HttpServletRequest request) {

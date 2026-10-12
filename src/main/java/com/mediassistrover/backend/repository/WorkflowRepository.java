@@ -12,5 +12,6 @@ public interface WorkflowRepository extends JpaRepository<Workflow,UUID> {
     List<Workflow> findByStatusAndAcceptsNewJobsTrueOrderByWorkflowCodeAscVersionNoDesc(WorkflowStatus status);
     Optional<Workflow> findFirstByWorkflowCodeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(String code,WorkflowStatus status);
     Optional<Workflow> findFirstByServiceTypeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(String serviceType,WorkflowStatus status);
+    Optional<Workflow> findFirstByServiceTypeIgnoreCaseAndStatusAndAcceptsNewJobsTrueAndSchemaVersionOrderByVersionNoDesc(String serviceType,WorkflowStatus status,int schemaVersion);
     @EntityGraph(attributePaths={"startStep","publishedByAccount"}) Optional<Workflow> findDetailedByWorkflowId(UUID id);
 }

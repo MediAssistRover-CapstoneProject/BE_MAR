@@ -51,7 +51,7 @@ class RuntimeAuthorizationTest {
         when(accounts.findById(owner.getAccountId())).thenReturn(Optional.of(owner));
         when(grants.save(any())).thenAnswer(invocation -> {AuthVerification v=invocation.getArgument(0);v.setVerificationId(UUID.randomUUID());return v;});
         when(steps.findByJobId(job.getJobId())).thenReturn(List.of(step));
-        runtime = new PiJobRuntimeServiceImpl(mock(com.mediassistrover.backend.mqtt.MqttProperties.class),jobs,tasks,steps,events,robots,json,clock,
+        runtime = new PiJobRuntimeServiceImpl(mock(com.mediassistrover.backend.mqtt.MqttProperties.class),mock(com.mediassistrover.backend.mqtt.MqttRolloutService.class),jobs,tasks,steps,events,robots,json,clock,
                 mock(JobStepInputResolver.class),transitions,guard,mock(com.mediassistrover.backend.validation.StepResultContractValidator.class));
         auth = new AuthVerificationServiceImpl(grants,jobs,steps,accounts,events,mock(AuditService.class),json,clock,mock(com.mediassistrover.backend.validation.StepResultContractValidator.class),mock(com.mediassistrover.backend.service.OrchestrationWorkService.class));
     }

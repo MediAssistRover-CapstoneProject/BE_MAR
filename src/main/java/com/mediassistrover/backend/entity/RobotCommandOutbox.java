@@ -26,4 +26,5 @@ public class RobotCommandOutbox {
     @Column(name="last_publish_at") private Instant lastPublishAt;
     @Column(name="acknowledged_at") private Instant acknowledgedAt;
     @Column(name="navigation_profile_hash",length=64,columnDefinition="CHAR(64)") private String navigationProfileHash;
+    @JdbcTypeCode(SqlTypes.JSON) @Column(name="ai_profile_snapshot_json",columnDefinition="JSON") private JsonNode aiProfileSnapshotJson;
 }
