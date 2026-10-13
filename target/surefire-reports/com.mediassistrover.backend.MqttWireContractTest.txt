@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.mediassistrover.backend.MqttWireContractTest
+-------------------------------------------------------------------------------
+Tests run: 52, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.102 s -- in com.mediassistrover.backend.MqttWireContractTest
