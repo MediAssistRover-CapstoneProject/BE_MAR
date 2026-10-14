@@ -46,17 +46,13 @@ Lưu hai dòng kết quả vào password manager. Hai giá trị phải khác nh
 ## 3. Chuẩn bị Aiven MySQL
 
 1. Đăng nhập Aiven Console và mở MySQL service hiện có.
-2. Vào **Connect > Databases**.
-3. Chọn **Create database**.
-4. Tạo database tên `backend_robot_v1`.
-5. Vào **Connect > Users** và tạo service user tên `mediassist_app`.
-6. Lưu password mới của user này.
-7. Trong **Overview/Quick connect**, ghi lại Host và Port.
+2. Giữ nguyên database mặc định `defaultdb` và user mặc định `avnadmin`.
+3. Trong **Overview/Quick connect**, ghi lại Host, Port và password của `avnadmin`.
 
 Chuỗi JDBC dùng trên Railway:
 
 ```text
-jdbc:mysql://AIVEN_HOST:AIVEN_PORT/backend_robot_v1?sslMode=REQUIRED&serverTimezone=UTC
+jdbc:mysql://AIVEN_HOST:AIVEN_PORT/defaultdb?sslMode=REQUIRED&serverTimezone=UTC
 ```
 
 Không tạo bảng bằng tay và không đổi `DDL_AUTO` thành `update`. Lần khởi động đầu tiên, Flyway sẽ tự chạy V1 đến V30. Nên dùng database trống để tránh lỗi `non-empty schema without schema history`.
@@ -417,7 +413,7 @@ Không bật mapping mà không có volume vì filesystem container Railway khô
 ## 15. Checklist hoàn tất
 
 - [ ] Đã rotate mật khẩu Aiven cũ.
-- [ ] Database `backend_robot_v1` trống được tạo trên Aiven.
+- [ ] Database mặc định `defaultdb` trên Aiven sẵn sàng cho Flyway.
 - [ ] Railway dùng profile `prod` và health check trả `UP`.
 - [ ] Flyway V1-V30 chạy thành công.
 - [ ] Admin đăng nhập được.
