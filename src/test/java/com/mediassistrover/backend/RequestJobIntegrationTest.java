@@ -66,6 +66,12 @@ class RequestJobIntegrationTest extends MySqlIntegrationTest {
         assertThat(requestRepository.findById(created.serviceRequestId()).orElseThrow().getStatus()).isEqualTo(ServiceRequestStatus.COMPLETED);
         assertThat(robotRepository.findById(robot.getRobotId()).orElseThrow().getStatus()).isEqualTo(RobotStatus.IDLE);
         assertThat(eventRepository.findByJobJobId(job.getJobId(),org.springframework.data.domain.Pageable.unpaged())).isNotEmpty();
+        assertThat(requestService.list(ServiceRequestStatus.COMPLETED,ServiceRequestType.INFORMATION,robot.getRobotId(),
+                created.requestedAt().minusSeconds(1),Instant.now().plusSeconds(1),principal,
+                org.springframework.data.domain.PageRequest.of(0,20)).getTotalElements()).isEqualTo(1);
+        assertThat(jobService.list(JobStatus.SUCCEEDED,job.getWorkflow().getWorkflowId(),created.serviceRequestId(),
+                robot.getRobotId(),job.getQueuedAt().minusSeconds(1),Instant.now().plusSeconds(1),principal,
+                org.springframework.data.domain.PageRequest.of(0,20)).getTotalElements()).isEqualTo(1);
     }
 
     @Test void invalidStepResultIsRejectedWithoutCompletingTheStep(){publish("INFORMATION");robot=robot(null,"P16-CONTRACT");device=device(robot);
@@ -89,6 +95,14 @@ class RequestJobIntegrationTest extends MySqlIntegrationTest {
     @Test void onceScheduleCreatesExactlyOneJobAndRetires(){Workflow workflow=publish("INFORMATION");robot=robot(null,"P6-SCHEDULE");Account admin=accountRepository.save(Account.builder().accountCode("ADM-P6").username("phase6.admin").fullName("Admin").email("phase6.admin@example.test").role(Role.ADMIN).authProvider(AuthProvider.LOCAL).passwordHash("unused").status(AccountStatus.ACTIVE).passwordChangedAt(Instant.now()).build());AccountPrincipal adminPrincipal=AccountPrincipal.fromAccount(admin);
         ScheduleResponse schedule=scheduleService.create(new ScheduleCreateRequest(workflow.getWorkflowId(),robot.getRobotId(),"ONCE-P6","One time",ScheduleType.ONCE,"Asia/Ho_Chi_Minh",Instant.now().minusSeconds(5),null,null,null,objectMapper.createObjectNode(),40,MisfirePolicy.FIRE_ONCE),adminPrincipal,metadata());
         scheduleService.activate(schedule.scheduleId(),adminPrincipal,metadata());assertThat(scheduleService.runDue(Instant.now().plusSeconds(1),10)).isEqualTo(1);assertThat(scheduleService.runDue(Instant.now().plusSeconds(2),10)).isZero();assertThat(scheduleRepository.findById(schedule.scheduleId()).orElseThrow().getStatus()).isEqualTo(ScheduleStatus.RETIRED);assertThat(jobRepository.count()).isEqualTo(1);
+    }
+
+    @Test void staffScheduleUsesServerRobotSelectionAndPauseIsIdempotent(){Workflow workflow=publish("INFORMATION");robot=robot(null,"P6-STAFF-SCHEDULE");
+        ScheduleCreateRequest pinned=new ScheduleCreateRequest(workflow.getWorkflowId(),robot.getRobotId(),"STAFF-PINNED","Pinned",ScheduleType.ONCE,"Asia/Ho_Chi_Minh",Instant.now().plusSeconds(60),null,null,null,objectMapper.createObjectNode(),40,MisfirePolicy.SKIP);
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->scheduleService.create(pinned,principal,metadata())).isInstanceOf(com.mediassistrover.backend.exception.BusinessRuleException.class).hasMessageContaining("server-side robot selection");
+        ScheduleCreateRequest automatic=new ScheduleCreateRequest(workflow.getWorkflowId(),null,"STAFF-AUTO","Automatic",ScheduleType.ONCE,"Asia/Ho_Chi_Minh",Instant.now().plusSeconds(60),null,null,null,objectMapper.createObjectNode(),40,MisfirePolicy.SKIP);
+        ScheduleResponse created=scheduleService.create(automatic,principal,metadata());assertThat(created.robotId()).isNull();
+        scheduleService.activate(created.scheduleId(),principal,metadata());assertThat(scheduleService.pause(created.scheduleId(),principal,metadata()).status()).isEqualTo(ScheduleStatus.PAUSED);assertThat(scheduleService.pause(created.scheduleId(),principal,metadata()).status()).isEqualTo(ScheduleStatus.PAUSED);
     }
 
     @Test void deviceInteractionCreatesAnonymousRequestAndOnlyOneServerJob() throws Exception {

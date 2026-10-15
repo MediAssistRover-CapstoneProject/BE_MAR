@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
@@ -30,6 +31,7 @@ public class StaffOperationalScopePolicy {
     private final NavigationRequestRepository navigationRequestRepository;
     private final EscortRequestRepository escortRequestRepository;
     private final DeliveryRequestRepository deliveryRequestRepository;
+    private final EndpointRepository endpointRepository;
     private final Clock clock;
 
     public Account requireCurrentStaffOrAdmin(AccountPrincipal principal) {
@@ -53,26 +55,47 @@ public class StaffOperationalScopePolicy {
 
     public void requireServiceRequestAccess(ServiceRequest request, AccountPrincipal principal) {
         Account account = requireCurrentStaffOrAdmin(principal);
-        if (account.getRole() != Role.ADMIN
-                && !isServiceRequestInScope(request, account.getAccountId(), Instant.now(clock))) {
+        if (account.getRole() != Role.ADMIN && !isServiceRequestInScope(request, account.getAccountId(), Instant.now(clock))) {
             throw new AccessDeniedException("ServiceRequest is outside this Staff operational scope");
         }
+    }
+
+    public boolean canAccessServiceRequest(ServiceRequest request, AccountPrincipal principal) {
+        Account account = requireCurrentStaffOrAdmin(principal);
+        return account.getRole() == Role.ADMIN
+                || isServiceRequestInScope(request, account.getAccountId(), Instant.now(clock));
     }
 
     public void requireJobAccess(Job job, AccountPrincipal principal) {
         Account account = requireCurrentStaffOrAdmin(principal);
         if (account.getRole() == Role.ADMIN) return;
-        UUID accountId = account.getAccountId();
+        if (!isJobInScope(job, account.getAccountId(), Instant.now(clock))) {
+            throw new AccessDeniedException("Job is outside this Staff operational scope");
+        }
+    }
+
+    public boolean canAccessJob(Job job, AccountPrincipal principal) {
+        Account account = requireCurrentStaffOrAdmin(principal);
+        return account.getRole() == Role.ADMIN || isJobInScope(job, account.getAccountId(), Instant.now(clock));
+    }
+
+    public void requireRobotRecoveryAccess(UUID robotId, AccountPrincipal principal) {
+        Account account = requireCurrentStaffOrAdmin(principal);
+        if (account.getRole() == Role.ADMIN) return;
+        boolean allowed = jobRepository.findByRobotRobotIdAndStatusIn(robotId, List.of(com.mediassistrover.backend.enums.JobStatus.RECOVERY_REQUIRED))
+                .stream().anyMatch(job -> isJobInScope(job, account.getAccountId(), Instant.now(clock)));
+        if (!allowed) throw new AccessDeniedException("Robot recovery is outside this Staff operational scope");
+    }
+
+    private boolean isJobInScope(Job job, UUID accountId, Instant now) {
         boolean assigned = job != null && job.getAssignedStaffAccount() != null
                 && Objects.equals(job.getAssignedStaffAccount().getAccountId(), accountId);
         boolean scheduleOwner = job != null && job.getSchedule() != null
                 && job.getSchedule().getCreatedByAccount() != null
                 && Objects.equals(job.getSchedule().getCreatedByAccount().getAccountId(), accountId);
         boolean requestScope = job != null && job.getServiceRequest() != null
-                && isServiceRequestInScope(job.getServiceRequest(), accountId, Instant.now(clock));
-        if (!assigned && !scheduleOwner && !requestScope) {
-            throw new AccessDeniedException("Job is outside this Staff operational scope");
-        }
+                && isServiceRequestInScope(job.getServiceRequest(), accountId, now);
+        return assigned || scheduleOwner || requestScope;
     }
 
     public void requireScheduleAccess(Schedule schedule, AccountPrincipal principal) {
@@ -85,9 +108,19 @@ public class StaffOperationalScopePolicy {
 
     public void requireAlertAccess(Alert alert, AccountPrincipal principal) {
         Account account = requireCurrentStaffOrAdmin(principal);
-        if (account.getRole() == Role.ADMIN) return;
-        UUID accountId = account.getAccountId();
-        Instant now = Instant.now(clock);
+        if (account.getRole() != Role.ADMIN
+                && !isAlertInScope(alert, account.getAccountId(), Instant.now(clock))) {
+            throw new AccessDeniedException("Alert is outside this Staff operational scope");
+        }
+    }
+
+    public boolean canAccessAlert(Alert alert, AccountPrincipal principal) {
+        Account account = requireCurrentStaffOrAdmin(principal);
+        return account.getRole() == Role.ADMIN
+                || isAlertInScope(alert, account.getAccountId(), Instant.now(clock));
+    }
+
+    private boolean isAlertInScope(Alert alert, UUID accountId, Instant now) {
         boolean recipient = alert != null
                 && alertRecipientRepository.existsByAlertAlertIdAndAccountAccountId(alert.getAlertId(), accountId);
         boolean requestScope = alert != null && alert.getServiceRequest() != null
@@ -96,9 +129,11 @@ public class StaffOperationalScopePolicy {
                 && isJobInScope(alert.getJobStep().getJobTask().getJob(), accountId, now);
         boolean incidentScope = alert != null && alert.getIncident() != null
                 && isIncidentInScope(alert.getIncident(), accountId, now);
-        if (!recipient && !requestScope && !jobScope && !incidentScope) {
-            throw new AccessDeniedException("Alert is outside this Staff operational scope");
-        }
+        boolean zoneScope = alert != null && alert.getZone() != null
+                && endpointRepository.findByZoneZoneId(alert.getZone().getZoneId()).stream()
+                .filter(endpoint -> endpoint.getRoom() != null)
+                .anyMatch(endpoint -> hasEffectiveShift(accountId, endpoint.getRoom().getRoomId(), now));
+        return recipient || requestScope || jobScope || incidentScope || zoneScope;
     }
 
     public void requireIncidentAccess(EmergencyIncident incident, AccountPrincipal principal) {
@@ -109,19 +144,16 @@ public class StaffOperationalScopePolicy {
         }
     }
 
+    public boolean canAccessIncident(EmergencyIncident incident, AccountPrincipal principal) {
+        Account account = requireCurrentStaffOrAdmin(principal);
+        return account.getRole() == Role.ADMIN
+                || isIncidentInScope(incident, account.getAccountId(), Instant.now(clock));
+    }
+
     public boolean hasEffectiveShiftInRoom(AccountPrincipal principal, UUID roomId) {
         Account account = requireCurrentStaffOrAdmin(principal);
         return account.getRole() == Role.ADMIN || roomId != null
                 && shiftRepository.existsEffectiveActiveInRoom(account.getAccountId(), roomId, Instant.now(clock));
-    }
-
-    private boolean isJobInScope(Job job, UUID accountId, Instant now) {
-        if (job == null) return false;
-        if (job.getAssignedStaffAccount() != null
-                && Objects.equals(job.getAssignedStaffAccount().getAccountId(), accountId)) return true;
-        if (job.getSchedule() != null && job.getSchedule().getCreatedByAccount() != null
-                && Objects.equals(job.getSchedule().getCreatedByAccount().getAccountId(), accountId)) return true;
-        return job.getServiceRequest() != null && isServiceRequestInScope(job.getServiceRequest(), accountId, now);
     }
 
     private boolean isIncidentInScope(EmergencyIncident incident, UUID accountId, Instant now) {
@@ -132,6 +164,10 @@ public class StaffOperationalScopePolicy {
                 && Objects.equals(incident.getResolvedByAccount().getAccountId(), accountId)) return true;
         if (incident.getEndpoint() != null && incident.getEndpoint().getRoom() != null
                 && hasEffectiveShift(accountId, incident.getEndpoint().getRoom().getRoomId(), now)) return true;
+        if (incident.getDetectionEvent() != null && incident.getDetectionEvent().getZone() != null
+                && endpointRepository.findByZoneZoneId(incident.getDetectionEvent().getZone().getZoneId()).stream()
+                .filter(endpoint -> endpoint.getRoom() != null)
+                .anyMatch(endpoint -> hasEffectiveShift(accountId, endpoint.getRoom().getRoomId(), now))) return true;
         ServiceRequest related = serviceRequestRepository.findByRelatedIncidentId(incident.getIncidentId()).orElse(null);
         if (related != null && isServiceRequestInScope(related, accountId, now)) return true;
         return alertRepository.findByIncidentIncidentId(incident.getIncidentId()).stream()

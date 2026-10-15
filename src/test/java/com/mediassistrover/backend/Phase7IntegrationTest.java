@@ -19,7 +19,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.*;
+import org.springframework.data.domain.PageRequest;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class Phase7IntegrationTest extends MySqlIntegrationTest {
     @Autowired ObjectMapper objectMapper; @Autowired JdbcTemplate jdbc;
@@ -34,6 +36,7 @@ class Phase7IntegrationTest extends MySqlIntegrationTest {
     @Autowired AlertRecipientRepository recipientRepository; @Autowired AuthVerificationRepository verificationRepository;
     @Autowired DeliveryService deliveryService; @Autowired ServiceRequestService requestService;
     @Autowired AuthVerificationService verificationService; @Autowired EmergencyService emergencyService;
+    @Autowired AlertService alertService;
     private Account staff; private AccountPrincipal staffPrincipal;
 
     @BeforeEach void setup(){clean();staff=accountRepository.save(Account.builder().accountCode("STAFF-P7").username("phase7.staff").fullName("Phase 7 Staff").email("phase7.staff@example.test").role(Role.STAFF).authProvider(AuthProvider.LOCAL).passwordHash("unused").status(AccountStatus.ACTIVE).passwordChangedAt(Instant.now()).build());staffPrincipal=AccountPrincipal.fromAccount(staff);}
@@ -63,6 +66,7 @@ class Phase7IntegrationTest extends MySqlIntegrationTest {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.resolvedByAccountId").doesNotExist())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.recipients").doesNotExist());
         assertThat(emergencyService.acknowledge(created.incident().incidentId(),staffPrincipal,metadata()).status()).isEqualTo(EmergencyIncidentStatus.ACKNOWLEDGED);assertThat(alertRepository.findById(created.alertId()).orElseThrow().getStatus()).isEqualTo(AlertStatus.ACKNOWLEDGED);
+        assertThatThrownBy(()->alertService.resolve(created.alertId(),staffPrincipal,metadata())).hasMessageContaining("linked incident");
         assertThat(emergencyService.start(created.incident().incidentId(),staffPrincipal,metadata()).status()).isEqualTo(EmergencyIncidentStatus.IN_PROGRESS);assertThat(emergencyService.resolve(created.incident().incidentId(),new Resolution("Staff arrived"),staffPrincipal,metadata()).status()).isEqualTo(EmergencyIncidentStatus.RESOLVED);assertThat(emergencyService.close(created.incident().incidentId(),staffPrincipal,metadata()).status()).isEqualTo(EmergencyIncidentStatus.CLOSED);assertThat(alertRepository.findById(created.alertId()).orElseThrow().getStatus()).isEqualTo(AlertStatus.CLOSED);
         assertThat(emergencyService.getDeviceIncident(created.incident().incidentId(),device).status()).isEqualTo(EmergencyIncidentStatus.CLOSED);
     }
@@ -76,6 +80,15 @@ class Phase7IntegrationTest extends MySqlIntegrationTest {
 
     @Test void deviceCannotReadAnotherRobotsIncident(){FacilityMap map=facility();Robot owner=robot(map,"P7-SOS-OWNER");Robot other=robot(map,"P7-SOS-OTHER");var ownerDevice=new DevicePrincipal(owner.getRobotId(),owner.getRobotCode(),0,"owner",Instant.now().plusSeconds(3600));var otherDevice=new DevicePrincipal(other.getRobotId(),other.getRobotCode(),0,"other",Instant.now().plusSeconds(3600));var created=emergencyService.createSos(envelope(owner,"owned-sos",new SosPayload(map.getMapId(),null,EmergencyIncidentSeverity.CRITICAL,"SOS",null,null),UUID.randomUUID()),ownerDevice,metadata());
         org.assertj.core.api.Assertions.assertThatThrownBy(()->emergencyService.getDeviceIncident(created.incident().incidentId(),otherDevice)).isInstanceOf(org.springframework.security.access.AccessDeniedException.class);}
+    @Test void staffAlertAndIncidentListsApplyFiltersScopeAndRecipientRedaction(){
+        publish("EMERGENCY");Account second=accountRepository.save(Account.builder().accountCode("STAFF-P8-SECOND").username("phase8.second").fullName("Second Staff").email("phase8.second@example.test").role(Role.STAFF).authProvider(AuthProvider.LOCAL).passwordHash("unused").status(AccountStatus.ACTIVE).passwordChangedAt(Instant.now()).build());
+        FacilityMap map=facility();Endpoint target=endpoint(map,"P8-FILTER");Robot robot=robot(map,"P8-FILTER-ROBOT");DevicePrincipal device=new DevicePrincipal(robot.getRobotId(),robot.getRobotCode(),0,"device",Instant.now().plusSeconds(3600));Instant from=Instant.now().minusSeconds(30);var created=emergencyService.createSos(envelope(robot,"phase8-filter",new SosPayload(map.getMapId(),target.getEndpointId(),EmergencyIncidentSeverity.CRITICAL,"Scoped SOS",BigDecimal.ONE,BigDecimal.TWO),UUID.randomUUID()),device,metadata());Instant to=Instant.now().plusSeconds(30);
+        var alerts=alertService.list(AlertStatus.OPEN,AlertSeverity.CRITICAL,"SOS",from,to,staffPrincipal,PageRequest.of(0,20));assertThat(alerts.getTotalElements()).isEqualTo(1);assertThat(alerts.getContent().getFirst().recipients()).hasSize(1);assertThat(alerts.getContent().getFirst().recipients().getFirst().accountId()).isEqualTo(staff.getAccountId());assertThat(recipientRepository.count()).isEqualTo(2);
+        var incidents=emergencyService.list(EmergencyIncidentStatus.OPEN,EmergencyIncidentSeverity.CRITICAL,"SOS",map.getMapId(),null,from,to,staffPrincipal,PageRequest.of(0,20));assertThat(incidents.getTotalElements()).isEqualTo(1);assertThat(incidents.getContent().getFirst().incidentId()).isEqualTo(created.incident().incidentId());
+        Account foreign=accountRepository.save(Account.builder().accountCode("STAFF-P8-FOREIGN").username("phase8.foreign").fullName("Foreign Staff").email("phase8.foreign@example.test").role(Role.STAFF).authProvider(AuthProvider.LOCAL).passwordHash("unused").status(AccountStatus.ACTIVE).passwordChangedAt(Instant.now()).build());AccountPrincipal foreignPrincipal=AccountPrincipal.fromAccount(foreign);
+        assertThatThrownBy(()->emergencyService.get(created.incident().incidentId(),foreignPrincipal)).isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        assertThat(second.getAccountId()).isNotNull();
+    }
     private Workflow publish(String serviceType){Workflow w=workflowRepository.findAll().stream().filter(x->x.getSchemaVersion()==2&&x.getServiceType().equals(serviceType)).findFirst().orElseThrow();w.setStatus(WorkflowStatus.PUBLISHED);w.setAcceptsNewJobs(true);w.setDefinitionHash("c".repeat(64));w.setCompiledDefinitionJson(objectMapper.createObjectNode().put("workflow",w.getWorkflowCode()));w.setPublishedAt(Instant.now());return workflowRepository.saveAndFlush(w);}
     private Robot robot(FacilityMap map,String code){return robotRepository.saveAndFlush(Robot.builder().currentMap(map).robotCode(code).robotName(code).model("Test").protocolVersion(1).capabilitiesJson(objectMapper.createArrayNode()).status(RobotStatus.IDLE).batteryUnit(BatteryUnit.UNKNOWN).deviceSecretHash("configured-for-test").deviceTokenVersion(0).build());}
     private FacilityMap facility(){HospitalInformation h=hospitalRepository.save(HospitalInformation.builder().updatedBy(staff).infoCategory("PROFILE").title("Hospital").content("Info").languageCode("vi-VN").keywordsJson(objectMapper.createArrayNode()).status(HospitalInformationStatus.PUBLISHED).publicVisible(true).build());Floor f=floorRepository.save(Floor.builder().hospitalInformation(h).floorCode("P7-F1").floorName("Floor 1").displayOrder(1).active(true).build());return mapRepository.save(FacilityMap.builder().floor(f).mapCode("P7-MAP").versionNo(1).mapName("Map").widthM(BigDecimal.TEN).heightM(BigDecimal.TEN).resolutionMPerPixel(new BigDecimal("0.05")).originXM(BigDecimal.ZERO).originYM(BigDecimal.ZERO).originYawRad(BigDecimal.ZERO).frameId("map").mapFileUri("https://example.test/map").assetHash("d".repeat(64)).status(MapStatus.ACTIVE).build());}

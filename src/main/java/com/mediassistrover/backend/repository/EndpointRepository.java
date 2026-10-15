@@ -15,6 +15,7 @@ public interface EndpointRepository extends JpaRepository<Endpoint, UUID> {
     boolean existsByMapMapIdAndEndpointCodeIgnoreCase(UUID mapId, String endpointCode);
     Page<Endpoint> findByActiveTrueAndPublicVisibleTrue(Pageable pageable);
     List<Endpoint> findByMapMapIdOrderByEndpointCodeAsc(UUID mapId);
+    List<Endpoint> findByZoneZoneId(UUID zoneId);
     @Query("""
             select e from Endpoint e where e.active = true and e.publicVisible = true
               and (:mapId is null or e.map.mapId = :mapId)

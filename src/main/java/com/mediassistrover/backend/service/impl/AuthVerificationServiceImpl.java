@@ -16,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.*;
 import com.mediassistrover.backend.validation.RuntimeAuthorizationPolicy;
 import com.mediassistrover.backend.validation.StepResultContractValidator;
+import com.mediassistrover.backend.validation.StaffOperationalScopePolicy;
 import org.springframework.security.access.AccessDeniedException;
 import java.util.*;
 
@@ -27,9 +28,10 @@ public class AuthVerificationServiceImpl implements AuthVerificationService {
     private final ObjectMapper objectMapper; private final Clock clock;
     private final StepResultContractValidator stepResultContractValidator;
     private final OrchestrationWorkService wakeups;
+    private final StaffOperationalScopePolicy staffScope;
 
     @Override @Transactional public AuthVerificationResponse create(UUID jobId,Create r,AccountPrincipal actor,RequestMetadata md){
-        Job job=jobRepository.lockById(jobId).orElseThrow(()->new ResourceNotFoundException("Job not found: "+jobId));RuntimeAuthorizationPolicy.requireJobScope(job,actor);JobStep step=stepRepository.findById(r.authJobStepId()).orElseThrow(()->new ResourceNotFoundException("JobStep not found: "+r.authJobStepId()));
+        Job job=jobRepository.lockById(jobId).orElseThrow(()->new ResourceNotFoundException("Job not found: "+jobId));staffScope.requireJobAccess(job,actor);JobStep step=stepRepository.findById(r.authJobStepId()).orElseThrow(()->new ResourceNotFoundException("JobStep not found: "+r.authJobStepId()));
         if(!step.getJobTask().getJob().getJobId().equals(jobId))throw new BusinessRuleException("Authentication Step does not belong to Job");if(step.getStep().getStepType()!=StepType.AUTHENTICATE)throw new BusinessRuleException("JobStep is not AUTHENTICATE");
         if(r.method()!=AuthVerificationMethod.STAFF_CONFIRMATION)throw new BusinessRuleException("QR_CODE requires proof verification; not supported by this endpoint");
         if(r.purpose()!=RuntimeAuthorizationPolicy.purpose(step))throw new BusinessRuleException("Authentication purpose does not match Step configuration");
@@ -63,7 +65,7 @@ public class AuthVerificationServiceImpl implements AuthVerificationService {
         wakeups.request(job);
         auditService.record(account,"AUTH_VERIFICATION_ISSUED","AuthVerification",verification.getVerificationId(),null,Map.of("jobId",jobId,"purpose",r.purpose().name()),md);return response(verification);
     }
-    @Override public AuthVerificationResponse get(UUID id,AccountPrincipal actor){AuthVerification v=verification(id);if(actor.role()!=Role.ADMIN&&!v.getActorAccount().getAccountId().equals(actor.accountId()))throw new org.springframework.security.access.AccessDeniedException("Verification is outside your scope");return response(v);}
+    @Override public AuthVerificationResponse get(UUID id,AccountPrincipal actor){AuthVerification v=verification(id);staffScope.requireJobAccess(v.getJob(),actor);return response(v);}
     @Override public AuthVerification requireUsable(UUID id,UUID requestId,AuthVerificationPurpose purpose,AccountPrincipal actor){AuthVerification v=verification(id);Instant now=Instant.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS);if(v.getRevokedAt()!=null||!v.getValidUntil().isAfter(now))throw new BusinessRuleException("Auth verification is revoked or expired");if(v.getPurpose()!=purpose)throw new BusinessRuleException("Auth verification purpose mismatch");if(v.getJob().getServiceRequest()==null||!v.getJob().getServiceRequest().getServiceRequestId().equals(requestId))throw new BusinessRuleException("Auth verification does not belong to DeliveryRequest");if(!v.getActorAccount().getAccountId().equals(actor.accountId())&&actor.role()!=Role.ADMIN)throw new org.springframework.security.access.AccessDeniedException("Verification belongs to another Staff account");return v;}
     private AuthVerificationResponse response(AuthVerification v){return new AuthVerificationResponse(v.getVerificationId(),v.getJob().getJobId(),v.getAuthJobStep().getJobStepId(),v.getActorAccount().getAccountId(),v.getUsedByJobStep()==null?null:v.getUsedByJobStep().getJobStepId(),v.getMethod(),v.getPurpose(),v.getRequiredPermission(),v.getIssuedAt(),v.getValidUntil(),v.getRevokedAt());}
     private AuthVerification verification(UUID id){return repository.findById(id).orElseThrow(()->new ResourceNotFoundException("AuthVerification not found: "+id));}private Account account(UUID id){return accountRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Account not found: "+id));}

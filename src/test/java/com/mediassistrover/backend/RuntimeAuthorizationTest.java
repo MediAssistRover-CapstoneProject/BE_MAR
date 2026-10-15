@@ -31,6 +31,7 @@ class RuntimeAuthorizationTest {
     final WorkflowRuntimeTransitionService transitions = mock(WorkflowRuntimeTransitionService.class);
     final JobStepRuntimeGuard guard = mock(JobStepRuntimeGuard.class);
     final Clock clock = Clock.systemUTC();
+    final com.mediassistrover.backend.validation.StaffOperationalScopePolicy staffScope = mock(com.mediassistrover.backend.validation.StaffOperationalScopePolicy.class);
     PiJobRuntimeServiceImpl runtime;
     AuthVerificationServiceImpl auth;
     Job job; JobStep step; Robot robot; Account owner; DevicePrincipal device;
@@ -51,9 +52,11 @@ class RuntimeAuthorizationTest {
         when(accounts.findById(owner.getAccountId())).thenReturn(Optional.of(owner));
         when(grants.save(any())).thenAnswer(invocation -> {AuthVerification v=invocation.getArgument(0);v.setVerificationId(UUID.randomUUID());return v;});
         when(steps.findByJobId(job.getJobId())).thenReturn(List.of(step));
+        doAnswer(invocation -> {com.mediassistrover.backend.validation.RuntimeAuthorizationPolicy.requireJobScope(invocation.getArgument(0),invocation.getArgument(1));return null;})
+                .when(staffScope).requireJobAccess(any(),any());
         runtime = new PiJobRuntimeServiceImpl(mock(com.mediassistrover.backend.mqtt.MqttProperties.class),mock(com.mediassistrover.backend.mqtt.MqttRolloutService.class),jobs,tasks,steps,events,robots,json,clock,
                 mock(JobStepInputResolver.class),transitions,guard,mock(com.mediassistrover.backend.validation.StepResultContractValidator.class));
-        auth = new AuthVerificationServiceImpl(grants,jobs,steps,accounts,events,mock(AuditService.class),json,clock,mock(com.mediassistrover.backend.validation.StepResultContractValidator.class),mock(com.mediassistrover.backend.service.OrchestrationWorkService.class));
+        auth = new AuthVerificationServiceImpl(grants,jobs,steps,accounts,events,mock(AuditService.class),json,clock,mock(com.mediassistrover.backend.validation.StepResultContractValidator.class),mock(com.mediassistrover.backend.service.OrchestrationWorkService.class),staffScope);
     }
 
     @ParameterizedTest @EnumSource(value=StepType.class,names={"AUTHENTICATE","HANDLE_PAYLOAD","DATA_SERVICE","NOTIFY"})

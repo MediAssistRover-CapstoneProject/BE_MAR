@@ -291,6 +291,8 @@ Các route đọc hiện tại nằm dưới prefix `/admin` dù cho phép Staff
 
 ## 12. Phase 6 — Staff: request, Job, robot và schedule
 
+> Trạng thái: **IMPLEMENTED, VERIFICATION PENDING** (2026-10-15). Chi tiết: [phase6-staff-requests-jobs-robots-schedules.md](phase6-staff-requests-jobs-robots-schedules.md).
+
 ### 12.1. ServiceRequest
 
 | Trạng thái | Method và path | Actor/Auth | Input/Query | Output | Scope và acceptance |
@@ -337,6 +339,8 @@ Các route đọc hiện tại nằm dưới prefix `/admin` dù cho phép Staff
 
 ## 13. Phase 7 — Staff: delivery, QR và physical confirmation
 
+> Trạng thái: **IMPLEMENTED, VERIFICATION PENDING** (2026-10-15). Chi tiết: [phase7-staff-delivery-qr-physical-confirmation.md](phase7-staff-delivery-qr-physical-confirmation.md).
+
 | Trạng thái | Method và path | Actor/Auth | Input/Query | Output | Scope và acceptance |
 |---|---|---|---|---|---|
 | `KEEP` | `POST /api/v1/delivery-requests` | Staff/Admin JWT | key, pickup/delivery target, recipient, deadline, items | DeliveryResponse | Item code unique; snapshot; creator ownership; server chọn robot. |
@@ -359,6 +363,8 @@ Schema 3 dùng ba response chính:
 Hủy sau pickup hoặc khi cargo/door/lock chưa đối soát phải giữ robot trong `RECOVERY_REQUIRED` đến khi Staff reconcile.
 
 ## 14. Phase 8 — Staff: alert, emergency và recovery
+
+> Trạng thái: **IMPLEMENTED, VERIFICATION PENDING** (2026-10-15). Chi tiết: [phase8-staff-alert-emergency-recovery.md](phase8-staff-alert-emergency-recovery.md).
 
 ### 14.1. Alert và incident
 

@@ -3,6 +3,7 @@ package com.mediassistrover.backend;
 import com.mediassistrover.backend.entity.*;
 import com.mediassistrover.backend.enums.AccountStatus;
 import com.mediassistrover.backend.enums.Role;
+import com.mediassistrover.backend.enums.JobStatus;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.AccountPrincipal;
 import com.mediassistrover.backend.security.DevicePrincipal;
@@ -15,6 +16,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -61,8 +63,9 @@ class Phase1ScopePolicyTest {
         NavigationRequestRepository navigation = mock(NavigationRequestRepository.class);
         EscortRequestRepository escorts = mock(EscortRequestRepository.class);
         DeliveryRequestRepository deliveries = mock(DeliveryRequestRepository.class);
+        EndpointRepository endpoints = mock(EndpointRepository.class);
         StaffOperationalScopePolicy policy = new StaffOperationalScopePolicy(
-                accounts, shifts, jobs, alerts, recipients, requests, navigation, escorts, deliveries, CLOCK);
+                accounts, shifts, jobs, alerts, recipients, requests, navigation, escorts, deliveries, endpoints, CLOCK);
 
         UUID accountId = UUID.randomUUID();
         Account account = Account.builder().accountId(accountId).role(Role.STAFF)
@@ -92,12 +95,51 @@ class Phase1ScopePolicyTest {
         when(shifts.existsEffectiveActiveInRoom(accountId, roomId, NOW)).thenReturn(true);
         assertThatCode(() -> policy.requireServiceRequestAccess(roomScoped, principal)).doesNotThrowAnyException();
 
+        Job shiftScopedJob = Job.builder().jobId(UUID.randomUUID()).serviceRequest(roomScoped).build();
+        assertThatCode(() -> policy.requireJobAccess(shiftScopedJob, principal)).doesNotThrowAnyException();
+        Schedule ownedSchedule = Schedule.builder().scheduleId(UUID.randomUUID()).createdByAccount(account).build();
+        assertThatCode(() -> policy.requireJobAccess(
+                Job.builder().jobId(UUID.randomUUID()).schedule(ownedSchedule).build(), principal))
+                .doesNotThrowAnyException();
+        UUID robotId = UUID.randomUUID();
+        when(jobs.findByRobotRobotIdAndStatusIn(robotId, List.of(JobStatus.RECOVERY_REQUIRED)))
+                .thenReturn(List.of(shiftScopedJob));
+        assertThatCode(() -> policy.requireRobotRecoveryAccess(robotId, principal)).doesNotThrowAnyException();
+
+        EmergencyIncident roomIncident = EmergencyIncident.builder().incidentId(UUID.randomUUID())
+                .endpoint(Endpoint.builder().room(room).build()).build();
+        assertThatCode(() -> policy.requireIncidentAccess(roomIncident, principal)).doesNotThrowAnyException();
+        assertThatCode(() -> policy.requireAlertAccess(
+                Alert.builder().alertId(UUID.randomUUID()).incident(roomIncident).build(), principal))
+                .doesNotThrowAnyException();
+        Zone zone = Zone.builder().zoneId(UUID.randomUUID()).build();
+        when(endpoints.findByZoneZoneId(zone.getZoneId())).thenReturn(List.of(Endpoint.builder().room(room).build()));
+        assertThatCode(() -> policy.requireAlertAccess(
+                Alert.builder().alertId(UUID.randomUUID()).zone(zone).build(), principal))
+                .doesNotThrowAnyException();
+
+        UUID recipientAlertId = UUID.randomUUID();
+        when(recipients.existsByAlertAlertIdAndAccountAccountId(recipientAlertId, accountId)).thenReturn(true);
+        assertThatCode(() -> policy.requireAlertAccess(
+                Alert.builder().alertId(recipientAlertId).build(), principal)).doesNotThrowAnyException();
+
         UUID foreignId = UUID.randomUUID();
         ServiceRequest foreign = ServiceRequest.builder().serviceRequestId(foreignId).build();
         when(navigation.findById(foreignId)).thenReturn(Optional.empty());
         when(escorts.findById(foreignId)).thenReturn(Optional.empty());
         when(deliveries.findById(foreignId)).thenReturn(Optional.empty());
         assertThatThrownBy(() -> policy.requireServiceRequestAccess(foreign, principal))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> policy.requireJobAccess(
+                Job.builder().jobId(UUID.randomUUID()).serviceRequest(foreign).build(), principal))
+                .isInstanceOf(AccessDeniedException.class);
+        EmergencyIncident foreignIncident = EmergencyIncident.builder().incidentId(UUID.randomUUID()).build();
+        when(requests.findByRelatedIncidentId(foreignIncident.getIncidentId())).thenReturn(Optional.empty());
+        when(alerts.findByIncidentIncidentId(foreignIncident.getIncidentId())).thenReturn(List.of());
+        assertThatThrownBy(() -> policy.requireIncidentAccess(foreignIncident, principal))
+                .isInstanceOf(AccessDeniedException.class);
+        assertThatThrownBy(() -> policy.requireAlertAccess(
+                Alert.builder().alertId(UUID.randomUUID()).incident(foreignIncident).build(), principal))
                 .isInstanceOf(AccessDeniedException.class);
     }
 }

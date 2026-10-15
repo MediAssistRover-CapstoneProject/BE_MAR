@@ -12,6 +12,7 @@ import com.mediassistrover.backend.service.*;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.PageRequest;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.*;
@@ -29,6 +30,9 @@ class DeliveryWorkflowAcceptanceTest extends MySqlIntegrationTest {
 
     @Test void jobAndPayloadKeepPersistedCargoSnapshotWhenRequestOrCatalogDataChanges(){
         Fixture f=fixture();
+        assertThat(deliveryService.list(ServiceRequestStatus.IN_PROGRESS,null,null,null,null,null,null,
+                Instant.now().minusSeconds(60),Instant.now().plusSeconds(60),f.principal,PageRequest.of(0,20))
+                .getTotalElements()).isEqualTo(1);
         assertThat(f.job.getInputJson().path("items").get(0).path("quantity").asInt()).isEqualTo(2);
         var item=deliveryItems.findByDeliveryRequestServiceRequestIdOrderByItemCodeAsc(f.deliveryId).getFirst();
         item.setQuantity(7); deliveryItems.saveAndFlush(item);

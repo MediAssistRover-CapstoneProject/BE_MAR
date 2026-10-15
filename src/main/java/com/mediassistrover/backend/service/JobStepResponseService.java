@@ -28,15 +28,16 @@ public class JobStepResponseService {
     private final StaffStepResponseValidator validator;
     private final ObjectMapper json;
     private final Clock clock;
+    private final StaffOperationalScopePolicy staffScope;
 
     public record Receipt(UUID responseId,UUID jobStepId,boolean duplicate,JsonNode result,Instant completedAt) { }
 
     @Transactional
     public Receipt respond(UUID stepId,String key,JsonNode body,AccountPrincipal actor) {
         if (key==null || !key.matches("[A-Za-z0-9._:-]{1,150}")) throw new BusinessRuleException("Idempotency-Key must be 1–150 letters, digits, dot, underscore, colon or hyphen");
-        validator.validate(body);
         UUID jobId=steps.findJobId(stepId).orElseThrow(()->new ResourceNotFoundException("JobStep not found"));
-        Job job=jobs.lockById(jobId).orElseThrow(); RuntimeAuthorizationPolicy.requireJobScope(job,actor);
+        Job job=jobs.lockById(jobId).orElseThrow(); staffScope.requireJobAccess(job,actor);
+        validator.validate(body);
         Account account=accounts.findById(actor.accountId()).orElseThrow();
         if (account.getStatus()!=AccountStatus.ACTIVE || account.getRole()!=actor.role() || account.isMustChangePassword()
                 || account.getTokenVersion()!=actor.tokenVersion()) throw new AccessDeniedException("Active Staff/Admin session required");
