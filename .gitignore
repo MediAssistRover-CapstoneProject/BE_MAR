@@ -1,0 +1,10 @@
+target/
+.idea/
+.vscode/
+*.iml
+*.log
+.env
+secrets/
+data/map-artifacts/
+.DS_Store
+Thumbs.db
