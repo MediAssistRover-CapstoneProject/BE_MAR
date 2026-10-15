@@ -11,6 +11,7 @@ import com.mediassistrover.backend.mapper.RequestJobMapper;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.AccountPrincipal;
 import com.mediassistrover.backend.service.*;
+import com.mediassistrover.backend.validation.DeviceResourceScopePolicy;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.*;
 import org.springframework.stereotype.Service;
@@ -31,37 +32,43 @@ public class ServiceRequestServiceImpl implements ServiceRequestService {
     private final RoomRepository roomRepository; private final EndpointRepository endpointRepository;
     private final ZoneRepository zoneRepository; private final DetectionEventRepository detectionEventRepository;
     private final EndpointGroupRepository groupRepository; private final AccountRepository accountRepository;
+    private final EndpointGroupMemberRepository memberRepository;
     private final JobExecutionService jobExecutionService; private final RequestJobMapper mapper;
     private final JobRepository jobRepository;
     private final RobotRepository robotRepository;
     private final ObjectMapper objectMapper; private final AuditService auditService; private final Clock clock;
+    private final DeviceResourceScopePolicy deviceScope;
 
     @Override @Transactional public ServiceRequestResponse createInformation(InformationCreateRequest r,String key,AccountPrincipal actor,RequestMetadata md){return createInformation(r,key,new RequestActor(actor.accountId(),null),md);}
     private ServiceRequestResponse createInformation(InformationCreateRequest r,String key,RequestActor actor,RequestMetadata md){
-        ServiceRequest existing=existing(key,actor);if(existing!=null){if(existing.getRequestType()!=ServiceRequestType.INFORMATION)throw new ConflictException("Idempotency-Key was used for another request type");return mapper.toResponse(existing);}
+        ServiceRequest existing=existing(key,actor);if(existing!=null){if(existing.getRequestType()!=ServiceRequestType.INFORMATION)throw new ConflictException("Idempotency-Key was used for another request type");requireInformationReplay(existing,r);return mapper.toResponse(existing);}
         ObjectNode data=data(r.data());if(!data.path("question").isTextual()||data.path("question").asText().isBlank())data.put("question",r.note());
         ServiceRequest request=saveBase(ServiceRequestType.INFORMATION,r.priority(),r.note(),data,key,actor);
         audit(actor,"SERVICE_REQUEST_CREATED",request,md);return mapper.toResponse(request);
     }
     @Override @Transactional public NavigationResponse createNavigation(NavigationCreateRequest r,String key,AccountPrincipal actor,RequestMetadata md){return createNavigation(r,key,new RequestActor(actor.accountId(),null),md);}
     private NavigationResponse createNavigation(NavigationCreateRequest r,String key,RequestActor actor,RequestMetadata md){
-        ServiceRequest found=existing(key,actor);if(found!=null){if(found.getRequestType()!=ServiceRequestType.NAVIGATION)throw new ConflictException("Idempotency-Key was used for another request type");return navigation(found);}
-        FacilityMap map=map(r.mapId());Endpoint endpoint=endpoint(r.destinationEndpointId());EndpointGroup group=group(r.destinationGroupId());validateTarget(map,r.targetMode(),endpoint,group);
+        ServiceRequest found=existing(key,actor);if(found!=null){if(found.getRequestType()!=ServiceRequestType.NAVIGATION)throw new ConflictException("Idempotency-Key was used for another request type");requireNavigationReplay(found,r);return navigation(found);}
+        FacilityMap map=map(r.mapId());requireActiveMap(map);Endpoint endpoint=endpoint(r.destinationEndpointId());EndpointGroup group=group(r.destinationGroupId());validateTarget(map,r.targetMode(),endpoint,group);
+        Room requestedRoom=room(r.roomId());validateRoom(map,requestedRoom,"Navigation room");
+        if(r.accessibilityNeed()!=null&&!r.accessibilityNeed().isBlank()&&endpoint!=null&&!endpoint.isAccessible())throw new BusinessRuleException("Destination endpoint is not accessible");
         ObjectNode data=data(r.data());data.put("map_id",map.getMapId().toString());data.put("target_mode",r.targetMode().name());
         if(endpoint!=null)data.put("endpoint_id",endpoint.getEndpointId().toString());if(group!=null)data.put("endpoint_group_id",group.getEndpointGroupId().toString());
         ServiceRequest parent=saveBase(ServiceRequestType.NAVIGATION,r.priority(),r.note(),data,key,actor);
-        NavigationRequest child=navigationRepository.save(NavigationRequest.builder().serviceRequest(parent).map(map).room(room(r.roomId())).destinationEndpoint(endpoint).destinationGroup(group).targetMode(r.targetMode()).navigationMode(r.navigationMode()).accessibilityNeed(r.accessibilityNeed()).passengerCount(r.passengerCount()).arrivalInstruction(r.arrivalInstruction()).build());
+        NavigationRequest child=navigationRepository.save(NavigationRequest.builder().serviceRequest(parent).map(map).room(requestedRoom).destinationEndpoint(endpoint).destinationGroup(group).targetMode(r.targetMode()).navigationMode(r.navigationMode()).accessibilityNeed(r.accessibilityNeed()).passengerCount(r.passengerCount()).arrivalInstruction(r.arrivalInstruction()).build());
         audit(actor,"NAVIGATION_REQUEST_CREATED",parent,md);return navigation(child);
     }
     @Override @Transactional public EscortResponse createEscort(EscortCreateRequest r,String key,AccountPrincipal actor,RequestMetadata md){return createEscort(r,key,new RequestActor(actor.accountId(),null),md);}
     private EscortResponse createEscort(EscortCreateRequest r,String key,RequestActor actor,RequestMetadata md){
-        ServiceRequest found=existing(key,actor);if(found!=null){if(found.getRequestType()!=ServiceRequestType.ESCORT)throw new ConflictException("Idempotency-Key was used for another request type");return escort(found);}
-        FacilityMap map=map(r.mapId());Endpoint destination=endpoint(r.destinationEndpointId());EndpointGroup group=group(r.destinationGroupId());validateTarget(map,r.targetMode(),destination,group);Endpoint origin=endpoint(r.originEndpointId());if(origin!=null&& !origin.getMap().getMapId().equals(map.getMapId()))throw new BusinessRuleException("Origin endpoint must belong to request map");
+        ServiceRequest found=existing(key,actor);if(found!=null){if(found.getRequestType()!=ServiceRequestType.ESCORT)throw new ConflictException("Idempotency-Key was used for another request type");requireEscortReplay(found,r);return escort(found);}
+        if(r.walkingSpeedMps()==null||r.walkingSpeedMps().compareTo(new java.math.BigDecimal("0.100"))<0||r.walkingSpeedMps().compareTo(new java.math.BigDecimal("0.300"))>0)throw new BusinessRuleException("walkingSpeedMps must be between 0.100 and 0.300");
+        FacilityMap map=map(r.mapId());requireActiveMap(map);Endpoint destination=endpoint(r.destinationEndpointId());EndpointGroup group=group(r.destinationGroupId());validateTarget(map,r.targetMode(),destination,group);Endpoint origin=endpoint(r.originEndpointId());if(origin!=null&& !origin.getMap().getMapId().equals(map.getMapId()))throw new BusinessRuleException("Origin endpoint must belong to request map");if(origin!=null&&!origin.isActive())throw new BusinessRuleException("Origin endpoint is inactive");
+        Room originRoom=room(r.originRoomId());Room destinationRoom=room(r.destinationRoomId());validateRoom(map,originRoom,"Origin room");validateRoom(map,destinationRoom,"Destination room");
         ObjectNode data=data(r.data());data.put("map_id",map.getMapId().toString());data.put("target_mode",r.targetMode().name());
         if(destination!=null)data.put("endpoint_id",destination.getEndpointId().toString());if(group!=null)data.put("endpoint_group_id",group.getEndpointGroupId().toString());
         data.put("patient_reference",r.patientReference());
         ServiceRequest parent=saveBase(ServiceRequestType.ESCORT,r.priority(),r.note(),data,key,actor);
-        EscortRequest child=escortRepository.save(EscortRequest.builder().serviceRequest(parent).map(map).originRoom(room(r.originRoomId())).destinationRoom(room(r.destinationRoomId())).originEndpoint(origin).destinationEndpoint(destination).destinationGroup(group).targetMode(r.targetMode()).patientReference(r.patientReference()).escortMode(r.escortMode()).walkingSpeedMps(r.walkingSpeedMps()).confirmationTimeoutSec(r.confirmationTimeoutSec()).escortNote(r.escortNote()).build());
+        EscortRequest child=escortRepository.save(EscortRequest.builder().serviceRequest(parent).map(map).originRoom(originRoom).destinationRoom(destinationRoom).originEndpoint(origin).destinationEndpoint(destination).destinationGroup(group).targetMode(r.targetMode()).patientReference(r.patientReference()).escortMode(r.escortMode()).walkingSpeedMps(r.walkingSpeedMps()).confirmationTimeoutSec(r.confirmationTimeoutSec()).escortNote(r.escortNote()).build());
         audit(actor,"ESCORT_REQUEST_CREATED",parent,md);return escort(child);
     }
     @Override @Transactional public ServiceRequestResponse createOperational(OperationalCreateRequest r,String key,AccountPrincipal actor,RequestMetadata md){
@@ -125,7 +132,20 @@ public class ServiceRequestServiceImpl implements ServiceRequestService {
     private FacilityMap requiredMap(ObjectNode data){return map(requiredUuid(data,"map_id"));}
     private UUID requiredUuid(ObjectNode data,String field){String value=requiredText(data,field);try{return UUID.fromString(value);}catch(IllegalArgumentException ex){throw new BusinessRuleException(field+" must be a UUID");}}
     private String requiredText(ObjectNode data,String field){if(!data.path(field).isTextual()||data.path(field).asText().isBlank())throw new BusinessRuleException(field+" is required");return data.path(field).asText();}
-    private void validateTarget(FacilityMap map,TargetMode mode,Endpoint endpoint,EndpointGroup group){if(mode==TargetMode.ENDPOINT&&(endpoint==null||group!=null)||mode==TargetMode.ENDPOINT_GROUP&&(group==null||endpoint!=null))throw new BusinessRuleException("Target mode requires exactly one matching destination");UUID targetMap=endpoint!=null?endpoint.getMap().getMapId():group.getMap().getMapId();if(!targetMap.equals(map.getMapId()))throw new BusinessRuleException("Destination must belong to request map");if(endpoint!=null&&!endpoint.isActive()||group!=null&&!group.isActive())throw new BusinessRuleException("Destination is inactive");}
+    private void validateTarget(FacilityMap map,TargetMode mode,Endpoint endpoint,EndpointGroup group){
+        if(mode==TargetMode.ENDPOINT&&(endpoint==null||group!=null)||mode==TargetMode.ENDPOINT_GROUP&&(group==null||endpoint!=null))throw new BusinessRuleException("Target mode requires exactly one matching destination");
+        UUID targetMap=endpoint!=null?endpoint.getMap().getMapId():group.getMap().getMapId();if(!targetMap.equals(map.getMapId()))throw new BusinessRuleException("Destination must belong to request map");
+        if(endpoint!=null&&!endpoint.isActive()||group!=null&&!group.isActive())throw new BusinessRuleException("Destination is inactive");
+        if(group!=null&&memberRepository.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(group.getEndpointGroupId()).stream().noneMatch(m->m.isActive()&&m.getEndpoint().isActive()&&m.getEndpoint().getMap().getMapId().equals(map.getMapId())))throw new BusinessRuleException("Destination group has no active endpoint on the request map");
+    }
+    private void requireActiveMap(FacilityMap map){if(map.getStatus()!=MapStatus.ACTIVE)throw new BusinessRuleException("Request map must be ACTIVE");}
+    private void validateRoom(FacilityMap map,Room room,String label){if(room==null)return;if(!room.isActive())throw new BusinessRuleException(label+" is inactive");if(!room.getFloor().getFloorId().equals(map.getFloor().getFloorId()))throw new BusinessRuleException(label+" must belong to the request map floor");}
+    private void requireInformationReplay(ServiceRequest existing,InformationCreateRequest r){ObjectNode expected=data(r.data());if(!expected.path("question").isTextual()||expected.path("question").asText().isBlank())expected.put("question",r.note());if(existing.getPriority()!=r.priority()||!Objects.equals(existing.getRequestNote(),r.note())||!Objects.equals(replayData(existing),expected))replayConflict();}
+    private void requireNavigationReplay(ServiceRequest existing,NavigationCreateRequest r){NavigationRequest n=navigationRepository.findById(existing.getServiceRequestId()).orElseThrow(()->new ConflictException("Navigation subtype is missing"));ObjectNode expected=data(r.data());expected.put("map_id",r.mapId().toString());expected.put("target_mode",r.targetMode().name());if(r.destinationEndpointId()!=null)expected.put("endpoint_id",r.destinationEndpointId().toString());if(r.destinationGroupId()!=null)expected.put("endpoint_group_id",r.destinationGroupId().toString());if(existing.getPriority()!=r.priority()||!Objects.equals(existing.getRequestNote(),r.note())||!Objects.equals(replayData(existing),expected)||!Objects.equals(n.getMap().getMapId(),r.mapId())||!Objects.equals(id(n.getRoom()),r.roomId())||!Objects.equals(id(n.getDestinationEndpoint()),r.destinationEndpointId())||!Objects.equals(gid(n.getDestinationGroup()),r.destinationGroupId())||n.getTargetMode()!=r.targetMode()||n.getNavigationMode()!=r.navigationMode()||!Objects.equals(n.getAccessibilityNeed(),r.accessibilityNeed())||n.getPassengerCount()!=r.passengerCount()||!Objects.equals(n.getArrivalInstruction(),r.arrivalInstruction()))replayConflict();}
+    private void requireEscortReplay(ServiceRequest existing,EscortCreateRequest r){EscortRequest e=escortRepository.findById(existing.getServiceRequestId()).orElseThrow(()->new ConflictException("Escort subtype is missing"));ObjectNode expected=data(r.data());expected.put("map_id",r.mapId().toString());expected.put("target_mode",r.targetMode().name());if(r.destinationEndpointId()!=null)expected.put("endpoint_id",r.destinationEndpointId().toString());if(r.destinationGroupId()!=null)expected.put("endpoint_group_id",r.destinationGroupId().toString());expected.put("patient_reference",r.patientReference());if(existing.getPriority()!=r.priority()||!Objects.equals(existing.getRequestNote(),r.note())||!Objects.equals(replayData(existing),expected)||!Objects.equals(e.getMap().getMapId(),r.mapId())||!Objects.equals(id(e.getOriginRoom()),r.originRoomId())||!Objects.equals(id(e.getDestinationRoom()),r.destinationRoomId())||!Objects.equals(id(e.getOriginEndpoint()),r.originEndpointId())||!Objects.equals(id(e.getDestinationEndpoint()),r.destinationEndpointId())||!Objects.equals(gid(e.getDestinationGroup()),r.destinationGroupId())||e.getTargetMode()!=r.targetMode()||!Objects.equals(e.getPatientReference(),r.patientReference())||e.getEscortMode()!=r.escortMode()||!sameDecimal(e.getWalkingSpeedMps(),r.walkingSpeedMps())||e.getConfirmationTimeoutSec()!=r.confirmationTimeoutSec()||!Objects.equals(e.getEscortNote(),r.escortNote()))replayConflict();}
+    private ObjectNode replayData(ServiceRequest existing){ObjectNode value=data(existing.getRequestDataJson());value.remove(List.of("device_cancel_idempotency_key","device_cancel_reason"));return value;}
+    private boolean sameDecimal(java.math.BigDecimal left,java.math.BigDecimal right){return left==null?right==null:right!=null&&left.compareTo(right)==0;}
+    private void replayConflict(){throw new ConflictException("Idempotency-Key was reused with a different payload");}
     private NavigationResponse navigation(ServiceRequest r){return navigation(navigationRepository.findById(r.getServiceRequestId()).orElseThrow(()->new ConflictException("Navigation subtype is missing")));}
     private NavigationResponse navigation(NavigationRequest n){return new NavigationResponse(mapper.toResponse(n.getServiceRequest()),n.getMap().getMapId(),id(n.getRoom()),id(n.getDestinationEndpoint()),gid(n.getDestinationGroup()),id(n.getResolvedEndpoint()),n.getTargetMode(),n.getNavigationMode(),n.getAccessibilityNeed(),n.getPassengerCount(),n.getArrivalInstruction());}
     private EscortResponse escort(ServiceRequest r){return escort(escortRepository.findById(r.getServiceRequestId()).orElseThrow(()->new ConflictException("Escort subtype is missing")));}
@@ -140,19 +160,39 @@ public class ServiceRequestServiceImpl implements ServiceRequestService {
     private Room room(UUID id){return id==null?null:roomRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Room not found: "+id));}
     private Endpoint endpoint(UUID id){return id==null?null:endpointRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Endpoint not found: "+id));}
     private EndpointGroup group(UUID id){return id==null?null:groupRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("EndpointGroup not found: "+id));}
-    private void audit(RequestActor actor,String action,ServiceRequest request,RequestMetadata md){auditService.record(actor.accountId()==null?null:account(actor.accountId()),action,"ServiceRequest",request.getServiceRequestId(),null,Map.of("status",request.getStatus().name()),md);}
+    private void audit(RequestActor actor,String action,ServiceRequest request,RequestMetadata md){Map<String,Object> after=new LinkedHashMap<>();after.put("status",request.getStatus().name());if(actor.robotId()!=null)after.put("robotId",actor.robotId());auditService.record(actor.accountId()==null?null:account(actor.accountId()),action,"ServiceRequest",request.getServiceRequestId(),null,after,md);}
 
     @Override @Transactional public ServiceRequestResponse createDeviceInformation(InformationCreateRequest r,String key,com.mediassistrover.backend.security.DevicePrincipal actor,RequestMetadata md){
-        ServiceRequestResponse response=createInformation(r,key,new RequestActor(null,actor.robotId()),md);
+        Robot device=deviceScope.requireCurrentDevice(actor);ServiceRequestResponse response=createInformation(r,key,new RequestActor(null,device.getRobotId()),md);
         submitDevice(response.serviceRequestId());return mapper.toResponse(request(response.serviceRequestId()));
     }
     @Override @Transactional public NavigationResponse createDeviceNavigation(NavigationCreateRequest r,String key,com.mediassistrover.backend.security.DevicePrincipal actor,RequestMetadata md){
-        NavigationResponse response=createNavigation(r,key,new RequestActor(null,actor.robotId()),md);
-        ServiceRequest existing=existing(key,new RequestActor(null,actor.robotId()));submitDevice(existing.getServiceRequestId());return navigation(existing);
+        Robot device=deviceScope.requireCurrentDevice(actor);RequestActor owner=new RequestActor(null,device.getRobotId());
+        createNavigation(r,key,owner,md);ServiceRequest existing=existing(key,owner);submitDevice(existing.getServiceRequestId());return navigation(existing);
     }
     @Override @Transactional public EscortResponse createDeviceEscort(EscortCreateRequest r,String key,com.mediassistrover.backend.security.DevicePrincipal actor,RequestMetadata md){
-        EscortResponse response=createEscort(r,key,new RequestActor(null,actor.robotId()),md);
-        ServiceRequest existing=existing(key,new RequestActor(null,actor.robotId()));submitDevice(existing.getServiceRequestId());return escort(existing);
+        Robot device=deviceScope.requireCurrentDevice(actor);RequestActor owner=new RequestActor(null,device.getRobotId());
+        createEscort(r,key,owner,md);ServiceRequest existing=existing(key,owner);submitDevice(existing.getServiceRequestId());return escort(existing);
+    }
+    @Override public DeviceRequestDetailResponse getDeviceRequest(UUID id,com.mediassistrover.backend.security.DevicePrincipal actor){ServiceRequest value=request(id);deviceScope.requireRequestOwner(value,actor);return deviceDetail(value);}
+    @Override @Transactional public DeviceRequestDetailResponse cancelDeviceRequest(UUID id,String reason,String key,com.mediassistrover.backend.security.DevicePrincipal actor,RequestMetadata md){
+        if(reason==null||reason.isBlank()||reason.length()>1000)throw new BusinessRuleException("Cancellation reason is required and must be at most 1000 characters");
+        if(key!=null&&(key.isBlank()||key.length()>150))throw new BusinessRuleException("Idempotency-Key must be 1-150 characters when provided");
+        ServiceRequest value=request(id);deviceScope.requireRequestOwner(value,actor);ObjectNode data=data(value.getRequestDataJson());
+        if(key!=null&&data.hasNonNull("device_cancel_idempotency_key")){
+            if(!key.equals(data.path("device_cancel_idempotency_key").asText())||!reason.equals(data.path("device_cancel_reason").asText()))throw new ConflictException("Idempotency-Key was reused with a different cancellation payload");
+            return deviceDetail(value);
+        }
+        if(isTerminal(value.getStatus()))return deviceDetail(value);
+        if(key!=null){data.put("device_cancel_idempotency_key",key);data.put("device_cancel_reason",reason);value.setRequestDataJson(data);}
+        Instant now=Instant.now(clock);boolean uncertain=false;
+        for(Job candidate:jobRepository.findByServiceRequestServiceRequestId(id)){Job job=jobRepository.lockById(candidate.getJobId()).orElseThrow();
+            if(job.getStatus()==JobStatus.RUNNING){uncertain=true;job.setStatus(JobStatus.RECOVERY_REQUIRED);job.setErrorCode("DEVICE_CANCEL_PHYSICAL_STATE_UNKNOWN");job.setFailureReason(reason);if(job.getRobot()!=null)job.getRobot().setStatus(RobotStatus.ERROR);}
+            else if(!Set.of(JobStatus.SUCCEEDED,JobStatus.FAILED,JobStatus.CANCELLED,JobStatus.RECOVERY_REQUIRED).contains(job.getStatus())&&job.getCancelCommandId()==null){job.setCancelCommandId(UUID.randomUUID());job.setCancelRequestedAt(now);}
+            wakeups.request(job);
+        }
+        value.setStatus(uncertain?ServiceRequestStatus.RECOVERY_REQUIRED:ServiceRequestStatus.CANCELLED);if(!uncertain)value.setCancelledAt(now);
+        audit(new RequestActor(null,actor.robotId()),uncertain?"DEVICE_REQUEST_RECOVERY_REQUIRED":"DEVICE_REQUEST_CANCELLED",value,md);return deviceDetail(value);
     }
     private void submitDevice(UUID id){
         ServiceRequest request=request(id);
@@ -161,5 +201,7 @@ public class ServiceRequestServiceImpl implements ServiceRequestService {
         jobExecutionService.createForRequest(request);request.setStatus(ServiceRequestStatus.QUEUED);
     }
     private Robot robot(UUID id){return robotRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Robot not found"));}
+    private boolean isTerminal(ServiceRequestStatus status){return Set.of(ServiceRequestStatus.COMPLETED,ServiceRequestStatus.FAILED,ServiceRequestStatus.CANCELLED,ServiceRequestStatus.RECOVERY_REQUIRED).contains(status);}
+    private DeviceRequestDetailResponse deviceDetail(ServiceRequest value){List<DeviceJobSummary> jobs=jobRepository.findByServiceRequestServiceRequestId(value.getServiceRequestId()).stream().sorted(Comparator.comparing(Job::getQueuedAt).thenComparing(Job::getJobId)).map(j->new DeviceJobSummary(j.getJobId(),j.getJobCode(),j.getStatus(),j.getRobot()==null?null:j.getRobot().getRobotId(),j.getErrorCode(),j.getFailureReason(),j.getQueuedAt(),j.getStartedAt(),j.getEndedAt())).toList();return new DeviceRequestDetailResponse(value.getServiceRequestId(),value.getRequestCode(),value.getRequestType(),value.getStatus(),value.getPriority(),value.getRequestNote(),value.getRequestedAt(),value.getCancelledAt(),value.getCompletedAt(),jobs);}
     private record RequestActor(UUID accountId,UUID robotId){}
 }

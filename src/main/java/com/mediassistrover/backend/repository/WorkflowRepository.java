@@ -10,6 +10,11 @@ public interface WorkflowRepository extends JpaRepository<Workflow,UUID> {
     Optional<Workflow> findTopByWorkflowCodeIgnoreCaseOrderByVersionNoDesc(String code);
     Page<Workflow> findByStatus(WorkflowStatus status,Pageable pageable);
     List<Workflow> findByStatusAndAcceptsNewJobsTrueOrderByWorkflowCodeAscVersionNoDesc(WorkflowStatus status);
+    @Query("select w from Workflow w where w.status=:status and w.acceptsNewJobs=true " +
+            "and (:serviceType is null or lower(w.serviceType)=lower(:serviceType))")
+    Page<Workflow> searchPublished(@Param("status") WorkflowStatus status,
+                                   @Param("serviceType") String serviceType,
+                                   Pageable pageable);
     Optional<Workflow> findFirstByWorkflowCodeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(String code,WorkflowStatus status);
     Optional<Workflow> findFirstByServiceTypeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(String serviceType,WorkflowStatus status);
     Optional<Workflow> findFirstByServiceTypeIgnoreCaseAndStatusAndAcceptsNewJobsTrueAndSchemaVersionOrderByVersionNoDesc(String serviceType,WorkflowStatus status,int schemaVersion);

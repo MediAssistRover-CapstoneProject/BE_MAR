@@ -8,6 +8,7 @@ import org.springframework.data.domain.*;
 import java.util.UUID;
 public interface EmergencyService {
     SosResponse createSos(PiEnvelope<SosPayload> envelope,DevicePrincipal actor,RequestMetadata metadata);
+    DeviceIncidentStatusResponse getDeviceIncident(UUID id,DevicePrincipal actor);
     IncidentResponse get(UUID id);
     Page<IncidentResponse> list(EmergencyIncidentStatus status,Pageable pageable);
     IncidentResponse acknowledge(UUID id,AccountPrincipal actor,RequestMetadata metadata);

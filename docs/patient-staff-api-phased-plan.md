@@ -175,6 +175,8 @@ Các quan hệ room được resolve theo subtype request: Navigation room, Esco
 
 ## 8. Phase 2 — Patient: danh mục bệnh viện, information và voice
 
+> **Trạng thái: IMPLEMENTED, VERIFICATION PENDING (2026-10-15).** Public catalog đã được tách DTO an toàn, bổ sung filter/detail/endpoint-group/article APIs và acceptance test tại [`FacilityIntegrationTest`](../src/test/java/com/mediassistrover/backend/FacilityIntegrationTest.java). Java compile và unit regression liên quan đã đạt; MySQL integration gate đang chờ Docker/Testcontainers khả dụng. Chi tiết tại [`phase2-patient-catalog-information-voice.md`](./phase2-patient-catalog-information-voice.md).
+
 ### 8.1. Public catalog
 
 | Trạng thái | Method và path | Actor/Auth | Query | Output | Scope và acceptance |
@@ -209,6 +211,8 @@ Public DTO phải tách khỏi internal Facility DTO. Không trả `updatedByAcc
 
 ## 9. Phase 3 — Patient: navigation, escort và request control
 
+> **Trạng thái: IMPLEMENTED, VERIFICATION PENDING (2026-10-15).** Đã bổ sung device-owned request detail/cancel, payload-bound idempotency, target/map hardening, escort speed policy và recovery-safe cancellation. Java compile/package và 18 unit regression test đạt; MySQL integration gate đang chờ Docker/Testcontainers khả dụng. Chi tiết tại [`phase3-patient-navigation-escort-request-control.md`](./phase3-patient-navigation-escort-request-control.md).
+
 | Trạng thái | Method và path | Actor/Auth | Input | Output | Scope và acceptance |
 |---|---|---|---|---|---|
 | `HARDEN` | `POST /api/v1/pi/requests/navigation` | Device JWT | key, map, room/endpoint/group, mode, accessibility | NavigationResponse | XOR endpoint/group; cùng Map; active target; retry cùng payload idempotent. |
@@ -225,6 +229,8 @@ Public DTO phải tách khỏi internal Facility DTO. Không trả `updatedByAcc
 
 ## 10. Phase 4 — Patient: SOS và theo dõi hỗ trợ
 
+> **Trạng thái: IMPLEMENTED, VERIFICATION PENDING (2026-10-15).** Đã bổ sung device-safe incident status, gắn current-device/ownership policy và serialize SOS creation theo robot để bảo toàn duplicate operation. Java compile/package và 18 unit regression test đạt; MySQL integration gate đang chờ Docker/Testcontainers khả dụng. Chi tiết tại [`phase4-patient-sos-and-assistance-status.md`](./phase4-patient-sos-and-assistance-status.md).
+
 | Trạng thái | Method và path | Actor/Auth | Input | Output | Scope và acceptance |
 |---|---|---|---|---|---|
 | `HARDEN` | `POST /api/v1/pi/incidents/sos` | Device JWT | PiEnvelope, map/endpoint/coordinates, severity, description | SosResponse | Một transaction tạo incident/request/alert/job; duplicate operation trả cùng IDs. |
@@ -233,6 +239,8 @@ Public DTO phải tách khỏi internal Facility DTO. Không trả `updatedByAcc
 SOS phải phát Alert ngay cả khi robot đang BUSY. `ACKNOWLEDGED` chỉ là Staff tiếp nhận; `IN_PROGRESS` là đã bắt đầu xử lý; `RESOLVED` là xử lý xong; `CLOSED` là đóng hồ sơ. Không tự resume Job cũ sau SOS.
 
 ## 11. Phase 5 — Staff: hồ sơ, ca trực và dữ liệu tham chiếu
+
+> **Trạng thái: IMPLEMENTED, VERIFICATION PENDING (2026-10-15).** Đã sửa quyền xem ca trực về đúng `403`, harden voice history theo operational scope và bổ sung published Workflow catalog canonical không mang prefix `/admin`. Java compile/package và 18 unit regression test đạt; MySQL integration gate đang chờ Docker/Testcontainers khả dụng. Chi tiết tại [`phase5-staff-shifts-reference-voice-workflows.md`](./phase5-staff-shifts-reference-voice-workflows.md).
 
 ### 11.1. Ca trực và Facility read-only
 

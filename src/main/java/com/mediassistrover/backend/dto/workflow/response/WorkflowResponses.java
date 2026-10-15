@@ -15,6 +15,10 @@ public final class WorkflowResponses {
                                    int maxTotalVisits,int graphVersion,int schemaVersion,String definitionHash,
                                    WorkflowStatus status,boolean acceptsNewJobs,Instant publishedAt,long rowVersion,
                                    Instant createdAt,Instant updatedAt) {}
+    public record PublishedWorkflowSummaryResponse(UUID workflowId,String workflowCode,int versionNo,
+                                                    String workflowName,String serviceType,String description,
+                                                    JsonNode requiredCapabilitiesJson,int maxDurationSec,
+                                                    int graphVersion,int schemaVersion,Instant publishedAt) {}
     public record TaskResponse(UUID taskId,UUID workflowId,String taskCode,String taskName,int sequenceNo,
                                String description,JsonNode configJson,Instant createdAt) {}
     public record StepResponse(UUID stepId,UUID workflowId,UUID taskId,String stepTypeCode,String stepCode,

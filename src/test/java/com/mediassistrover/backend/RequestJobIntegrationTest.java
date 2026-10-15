@@ -15,6 +15,7 @@ import com.mediassistrover.backend.service.*;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.MockMvc;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.*;
@@ -22,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class RequestJobIntegrationTest extends MySqlIntegrationTest {
     @Autowired ObjectMapper objectMapper; @Autowired JdbcTemplate jdbc;
+    @Autowired MockMvc mvc; @Autowired DeviceJwtTokenService deviceTokens;
     @Autowired AccountRepository accountRepository; @Autowired WorkflowRepository workflowRepository;
     @Autowired RobotRepository robotRepository; @Autowired JobRepository jobRepository;
     @Autowired JobStepRepository stepRepository; @Autowired StepRepository definitionStepRepository; @Autowired StepTransitionRepository transitionRepository; @Autowired JobEventRepository eventRepository;
@@ -76,7 +78,7 @@ class RequestJobIntegrationTest extends MySqlIntegrationTest {
     }
 
     @Test void escortRequestRunsEndToEndWithPiReportedStepResults(){publish("ESCORT");FacilityMap map=facility();Endpoint endpoint=endpoint(map);robot=robot(map,"P6-ESCORT");device=device(robot);
-        EscortCreateRequest body=new EscortCreateRequest(map.getMapId(),null,null,null,endpoint.getEndpointId(),null,TargetMode.ENDPOINT,"PAT-REF",EscortMode.GUIDED,new BigDecimal("0.800"),60,"Please follow",80,"Escort",objectMapper.createObjectNode());
+        EscortCreateRequest body=new EscortCreateRequest(map.getMapId(),null,null,null,endpoint.getEndpointId(),null,TargetMode.ENDPOINT,"PAT-REF",EscortMode.GUIDED,new BigDecimal("0.300"),60,"Please follow",80,"Escort",objectMapper.createObjectNode());
         EscortResponse created=requestService.createEscort(body,"escort-idem-1",principal,metadata());requestService.submit(created.request().serviceRequestId(),principal,metadata());
         Job job=jobRepository.findByServiceRequestServiceRequestId(created.request().serviceRequestId()).getFirst();runToCompletion(job);
         assertThat(stepRepository.findByJobId(job.getJobId()).stream().filter(s->s.getStatus()==JobStepStatus.SUCCEEDED)).hasSize(4);
@@ -89,7 +91,7 @@ class RequestJobIntegrationTest extends MySqlIntegrationTest {
         scheduleService.activate(schedule.scheduleId(),adminPrincipal,metadata());assertThat(scheduleService.runDue(Instant.now().plusSeconds(1),10)).isEqualTo(1);assertThat(scheduleService.runDue(Instant.now().plusSeconds(2),10)).isZero();assertThat(scheduleRepository.findById(schedule.scheduleId()).orElseThrow().getStatus()).isEqualTo(ScheduleStatus.RETIRED);assertThat(jobRepository.count()).isEqualTo(1);
     }
 
-    @Test void deviceInteractionCreatesAnonymousRequestAndOnlyOneServerJob(){
+    @Test void deviceInteractionCreatesAnonymousRequestAndOnlyOneServerJob() throws Exception {
         publish("INFORMATION");robot=robot(null,"SCREEN-1");device=device(robot);
         InformationCreateRequest body=new InformationCreateRequest(50,"Help",objectMapper.createObjectNode());
         ServiceRequestResponse first=requestService.createDeviceInformation(body,"screen-idempotency",device,metadata());
@@ -100,8 +102,31 @@ class RequestJobIntegrationTest extends MySqlIntegrationTest {
         assertThat(saved.getRequestedByAccount()).isNull();
         assertThat(saved.getSourceType()).isEqualTo(RequestSourceType.ROBOT_UI);
         assertThat(saved.getStatus()).isEqualTo(ServiceRequestStatus.QUEUED);
+        assertThat(requestService.getDeviceRequest(first.serviceRequestId(),device).jobs()).hasSize(1);
+        String bearer="Bearer "+deviceTokens.issue(robot).value();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/pi/requests/{id}",first.serviceRequestId()).header("Authorization",bearer))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.requestedByAccountId").doesNotExist())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.jobs[0].assignedStaffAccountId").doesNotExist());
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->requestService.createDeviceInformation(
+                new InformationCreateRequest(51,"Different",objectMapper.createObjectNode()),"screen-idempotency",device,metadata()))
+                .isInstanceOf(com.mediassistrover.backend.exception.ConflictException.class);
         DevicePrincipal another=device(robot(null,"SCREEN-2"));
         org.assertj.core.api.Assertions.assertThatThrownBy(()->requestService.createDeviceInformation(body,"screen-idempotency",another,metadata())).isInstanceOf(com.mediassistrover.backend.exception.ConflictException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->requestService.getDeviceRequest(first.serviceRequestId(),another))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        var cancelled=requestService.cancelDeviceRequest(first.serviceRequestId(),"Patient changed request","cancel-screen-1",device,metadata());
+        assertThat(cancelled.status()).isEqualTo(ServiceRequestStatus.CANCELLED);
+        assertThat(requestService.cancelDeviceRequest(first.serviceRequestId(),"Patient changed request","cancel-screen-1",device,metadata()).status()).isEqualTo(ServiceRequestStatus.CANCELLED);
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->requestService.cancelDeviceRequest(first.serviceRequestId(),"Different reason","cancel-screen-1",device,metadata()))
+                .isInstanceOf(com.mediassistrover.backend.exception.ConflictException.class);
+    }
+
+    @Test void deviceCancellationDuringRunningNavigationRequiresRecovery(){publish("NAVIGATION");FacilityMap map=facility();Endpoint endpoint=endpoint(map);robot=robot(map,"SCREEN-NAV");device=device(robot);
+        NavigationCreateRequest body=new NavigationCreateRequest(map.getMapId(),null,endpoint.getEndpointId(),null,TargetMode.ENDPOINT,NavigationMode.STANDARD,null,1,null,60,"Guide patient",objectMapper.createObjectNode());
+        NavigationResponse created=requestService.createDeviceNavigation(body,"device-nav-running",device,metadata());Job job=jobRepository.findByServiceRequestServiceRequestId(created.request().serviceRequestId()).getFirst();job.setStatus(JobStatus.RUNNING);job.setStartedAt(Instant.now());requestRepository.findById(created.request().serviceRequestId()).orElseThrow().setStatus(ServiceRequestStatus.IN_PROGRESS);jobRepository.saveAndFlush(job);
+        var detail=requestService.cancelDeviceRequest(created.request().serviceRequestId(),"Stop now",null,device,metadata());
+        assertThat(detail.status()).isEqualTo(ServiceRequestStatus.RECOVERY_REQUIRED);assertThat(detail.jobs().getFirst().status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(robotRepository.findById(robot.getRobotId()).orElseThrow().getStatus()).isEqualTo(RobotStatus.ERROR);
     }
 
     @Test void requestRemainsQueuedWithoutRobotAndDispatcherAssignsItAfterRobotIsReleased(){
@@ -160,7 +185,7 @@ class RequestJobIntegrationTest extends MySqlIntegrationTest {
     }
     private <T> PiEnvelope<T> envelope(Job job,JobStep step,String operation,String type,T payload,UUID messageId){return new PiEnvelope<>("1.0",messageId,operation,UUID.randomUUID(),robot.getRobotId(),job.getJobId(),step==null?null:step.getJobStepId(),type,Instant.now(),producerSession,++sequence,payload);}
     private Workflow publish(String serviceType){Workflow w=workflowRepository.findAll().stream().filter(x->x.getSchemaVersion()==2&&x.getServiceType().equals(serviceType)).findFirst().orElseThrow();w.setStatus(WorkflowStatus.PUBLISHED);w.setAcceptsNewJobs(true);w.setDefinitionHash("a".repeat(64));w.setCompiledDefinitionJson(objectMapper.createObjectNode().put("workflow",w.getWorkflowCode()));w.setPublishedAt(Instant.now());return workflowRepository.saveAndFlush(w);}
-    private Robot robot(FacilityMap map,String code){return robotRepository.saveAndFlush(Robot.builder().currentMap(map).robotCode(code).robotName(code).model("Test").protocolVersion(1).capabilitiesJson(objectMapper.createArrayNode()).status(RobotStatus.IDLE).batteryUnit(BatteryUnit.UNKNOWN).deviceTokenVersion(0).build());}
+    private Robot robot(FacilityMap map,String code){return robotRepository.saveAndFlush(Robot.builder().currentMap(map).robotCode(code).robotName(code).model("Test").protocolVersion(1).capabilitiesJson(objectMapper.createArrayNode()).status(RobotStatus.IDLE).batteryUnit(BatteryUnit.UNKNOWN).deviceSecretHash("configured-for-test").deviceTokenVersion(0).build());}
     private DevicePrincipal device(Robot r){return new DevicePrincipal(r.getRobotId(),r.getRobotCode(),0,"test-device",Instant.now().plusSeconds(3600));}
     private FacilityMap facility(){HospitalInformation h=hospitalRepository.save(HospitalInformation.builder().updatedBy(actor).infoCategory("PROFILE").title("Hospital").content("Info").languageCode("vi-VN").keywordsJson(objectMapper.createArrayNode()).status(HospitalInformationStatus.PUBLISHED).publicVisible(true).build());Floor f=floorRepository.save(Floor.builder().hospitalInformation(h).floorCode("P6-F1").floorName("Floor 1").displayOrder(1).active(true).build());return mapRepository.save(FacilityMap.builder().floor(f).mapCode("P6-MAP").versionNo(1).mapName("Map").widthM(BigDecimal.TEN).heightM(BigDecimal.TEN).resolutionMPerPixel(new BigDecimal("0.05")).originXM(BigDecimal.ZERO).originYM(BigDecimal.ZERO).originYawRad(BigDecimal.ZERO).frameId("map").mapFileUri("https://example.test/map").assetHash("b".repeat(64)).status(MapStatus.ACTIVE).build());}
     private Endpoint endpoint(FacilityMap map){return endpointRepository.save(Endpoint.builder().map(map).endpointCode("P6-DEST").endpointName("Destination").endpointType(EndpointType.ROOM_STOP).xM(BigDecimal.ONE).yM(BigDecimal.ONE).yawRad(BigDecimal.ZERO).active(true).accessible(true).publicVisible(true).build());}

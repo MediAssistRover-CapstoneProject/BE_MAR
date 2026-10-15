@@ -5,6 +5,7 @@ import com.mediassistrover.backend.enums.*;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
+import java.util.List;
 
 public final class ServiceRequestResponses {
     private ServiceRequestResponses() {}
@@ -19,4 +20,9 @@ public final class ServiceRequestResponses {
             UUID originEndpointId,UUID destinationEndpointId,UUID destinationGroupId,UUID resolvedEndpointId,
             TargetMode targetMode,String patientReference,EscortMode escortMode,BigDecimal walkingSpeedMps,
             int confirmationTimeoutSec,String escortNote) {}
+    public record DeviceJobSummary(UUID jobId,String jobCode,JobStatus status,UUID robotId,
+            String errorCode,String failureReason,Instant queuedAt,Instant startedAt,Instant endedAt) {}
+    public record DeviceRequestDetailResponse(UUID serviceRequestId,String requestCode,
+            ServiceRequestType requestType,ServiceRequestStatus status,int priority,String requestNote,
+            Instant requestedAt,Instant cancelledAt,Instant completedAt,List<DeviceJobSummary> jobs) {}
 }

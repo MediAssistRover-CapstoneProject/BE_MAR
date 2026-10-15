@@ -9,6 +9,8 @@ public interface ServiceRequestService {
     ServiceRequestResponse createDeviceInformation(InformationCreateRequest request,String key,com.mediassistrover.backend.security.DevicePrincipal actor,RequestMetadata metadata);
     NavigationResponse createDeviceNavigation(NavigationCreateRequest request,String key,com.mediassistrover.backend.security.DevicePrincipal actor,RequestMetadata metadata);
     EscortResponse createDeviceEscort(EscortCreateRequest request,String key,com.mediassistrover.backend.security.DevicePrincipal actor,RequestMetadata metadata);
+    DeviceRequestDetailResponse getDeviceRequest(UUID id,com.mediassistrover.backend.security.DevicePrincipal actor);
+    DeviceRequestDetailResponse cancelDeviceRequest(UUID id,String reason,String idempotencyKey,com.mediassistrover.backend.security.DevicePrincipal actor,RequestMetadata metadata);
     ServiceRequestResponse createInformation(InformationCreateRequest request,String idempotencyKey,AccountPrincipal actor,RequestMetadata metadata);
     NavigationResponse createNavigation(NavigationCreateRequest request,String idempotencyKey,AccountPrincipal actor,RequestMetadata metadata);
     EscortResponse createEscort(EscortCreateRequest request,String idempotencyKey,AccountPrincipal actor,RequestMetadata metadata);

@@ -16,7 +16,7 @@ public final class ServiceRequestRequests {
     public record EscortCreateRequest(@NotNull UUID mapId,UUID originRoomId,UUID destinationRoomId,
             UUID originEndpointId,UUID destinationEndpointId,UUID destinationGroupId,@NotNull TargetMode targetMode,
             @Size(max=100) String patientReference,@NotNull EscortMode escortMode,
-            @NotNull @DecimalMin("0.100") @DecimalMax("3.000") BigDecimal walkingSpeedMps,
+            @NotNull @DecimalMin("0.100") @DecimalMax("0.300") BigDecimal walkingSpeedMps,
             @Min(1) @Max(3600) int confirmationTimeoutSec,@Size(max=4000) String escortNote,
             @Min(0) @Max(100) int priority,@Size(max=4000) String note,JsonNode data) {}
     public record OperationalCreateRequest(@NotNull ServiceRequestType requestType,@NotNull UUID robotId,
