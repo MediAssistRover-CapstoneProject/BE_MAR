@@ -10,6 +10,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -28,6 +29,22 @@ public interface ShiftRepository extends JpaRepository<Shift, UUID> {
     @Query("select s from Shift s where s.staffProfile.account.accountId = :accountId " +
             "and (:status is null or s.status = :status)")
     Page<Shift> findOwn(@Param("accountId") UUID accountId, @Param("status") ShiftStatus status, Pageable pageable);
+
+    @EntityGraph(attributePaths = {"staffProfile", "staffProfile.account", "room", "slots"})
+    @Query("select distinct s from Shift s where s.staffProfile.account.accountId = :accountId " +
+            "and s.status = com.mediassistrover.backend.enums.ShiftStatus.ACTIVE " +
+            "and s.startsAt <= :now and s.endsAt > :now order by s.startsAt, s.shiftCode")
+    List<Shift> findEffectiveActiveByAccountId(@Param("accountId") UUID accountId, @Param("now") Instant now);
+
+    @Query("select count(s) > 0 from Shift s where s.staffProfile.account.accountId = :accountId " +
+            "and s.staffProfile.active = true " +
+            "and s.staffProfile.account.status = com.mediassistrover.backend.enums.AccountStatus.ACTIVE " +
+            "and s.room.roomId = :roomId " +
+            "and s.status = com.mediassistrover.backend.enums.ShiftStatus.ACTIVE " +
+            "and s.startsAt <= :now and s.endsAt > :now")
+    boolean existsEffectiveActiveInRoom(@Param("accountId") UUID accountId,
+                                        @Param("roomId") UUID roomId,
+                                        @Param("now") Instant now);
 
     @Query("select count(s) > 0 from Shift s where s.staffProfile.staffProfileId = :staffId " +
             "and s.status <> com.mediassistrover.backend.enums.ShiftStatus.CANCELLED " +

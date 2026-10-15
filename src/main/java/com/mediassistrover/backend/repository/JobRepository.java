@@ -19,6 +19,7 @@ public interface JobRepository extends JpaRepository<Job,UUID> {
     List<UUID> findReadyBeJobIds(Pageable page);
     Page<Job> findByServiceRequestRequestedByAccountAccountId(UUID accountId,Pageable pageable);
     List<Job> findByServiceRequestServiceRequestId(UUID requestId);
+    boolean existsByServiceRequestServiceRequestIdAndAssignedStaffAccountAccountId(UUID requestId, UUID accountId);
     Page<Job> findByAssignedStaffAccountAccountIdOrServiceRequestRequestedByAccountAccountId(UUID assigned,UUID requester,Pageable pageable);
     List<Job> findByRobotRobotIdAndStatusIn(UUID robotId,Collection<JobStatus> statuses);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
