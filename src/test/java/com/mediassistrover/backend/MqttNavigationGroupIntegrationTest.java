@@ -53,7 +53,7 @@ class MqttNavigationGroupIntegrationTest extends MySqlIntegrationTest {
         tx.executeWithoutResult(status->{Robot robot=em.find(Robot.class,f.robotId);robot.setDeviceSecretHash("test-device-registration");
             if(grouped){Job job=em.find(Job.class,f.jobId);JobStep move=em.find(JobStep.class,f.piStepId);Task task=move.getStep().getTask();
                 EndpointGroup group=EndpointGroup.builder().map(job.getMap()).groupCode("G-"+UUID.randomUUID()).groupName("Group").selectionPolicy(SelectionPolicy.PRIORITY).allowFallback(true).active(true).build();em.persist(group);groupId=group.getEndpointGroupId();
-                Endpoint second=Endpoint.builder().map(job.getMap()).endpointCode("Z-"+UUID.randomUUID()).endpointName("Second").endpointType(EndpointType.CHECKPOINT)
+                Endpoint second=Endpoint.builder().map(job.getMap()).endpointCode("Z-"+UUID.randomUUID()).endpointName("Second").endpointType(EndpointType.WAYPOINT)
                         .xM(BigDecimal.TEN).yM(BigDecimal.ONE).yawRad(BigDecimal.ZERO).active(true).accessible(true).build();em.persist(second);secondId=second.getEndpointId();
                 for(int i=0;i<2;i++){Endpoint e=em.find(Endpoint.class,i==0?f.endpointId:secondId);em.persist(EndpointGroupMember.builder().id(new EndpointGroupMemberId(groupId,e.getEndpointId())).endpointGroup(group).endpoint(e).map(job.getMap()).sequenceNo(i+1).active(true).build());}
                 job.setInputJson(json.createObjectNode().put("endpoint_group_id",groupId.toString()));job.getWorkflow().setMaxTotalVisits(40);move.getStep().setMaxVisits(3);

@@ -69,10 +69,10 @@ class Phase11IntegrationTest extends MySqlIntegrationTest {
                 .mapFileUri("https://example.test/maps/p11.yaml").assetHash("a".repeat(64))
                 .status(MapStatus.ACTIVE).build());
         zone = zoneRepository.save(Zone.builder().map(map).zoneCode("P11-ZONE").zoneName("Waiting area")
-                .zoneType(ZoneType.WAITING).polygonJson(objectMapper.createArrayNode()).active(true)
+                .zoneType(ZoneType.NO_STOP).polygonJson(objectMapper.createArrayNode()).active(true)
                 .publicVisible(true).build());
         checkpoint = endpointRepository.save(Endpoint.builder().map(map).zone(zone).endpointCode("P11-CP")
-                .endpointName("Checkpoint").endpointType(EndpointType.CHECKPOINT).xM(BigDecimal.ONE)
+                .endpointName("Checkpoint").endpointType(EndpointType.WAYPOINT).xM(BigDecimal.ONE)
                 .yM(BigDecimal.ONE).yawRad(BigDecimal.ZERO).active(true).accessible(true)
                 .publicVisible(true).build());
         robot = robotRepository.save(Robot.builder().currentMap(map).robotCode("P11-ROBOT")

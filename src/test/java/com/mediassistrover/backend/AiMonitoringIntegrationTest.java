@@ -51,7 +51,7 @@ class AiMonitoringIntegrationTest extends MySqlIntegrationTest {
     void fixture(String type,boolean configured){sensing=type;
         f=tx.execute(s->{var fixture=MqttTestFixture.create(em,json,StepType.MOVE,null);fixture.type=StepType.EXECUTE_SENSING;fixture.sensing=type;
             JobStep step=steps.findById(fixture.piStepId).orElseThrow();step.setStepTypeSnapshot("EXECUTE_SENSING");step.getStep().setStepType(StepType.EXECUTE_SENSING);Job job=step.getJobTask().getJob();job.getRobot().setDeviceSecretHash("test-only");
-            var zone=zones.saveAndFlush(Zone.builder().map(job.getMap()).zoneCode("AI-"+UUID.randomUUID()).zoneName("Test AI zone").zoneType(type.equals("RESTRICTED_ZONE")?ZoneType.RESTRICTED:ZoneType.WAITING).active(true).polygonJson(json.createArrayNode()).build());zoneId=zone.getZoneId();
+            var zone=zones.saveAndFlush(Zone.builder().map(job.getMap()).zoneCode("AI-"+UUID.randomUUID()).zoneName("Test AI zone").zoneType(type.equals("RESTRICTED_ZONE")?ZoneType.KEEP_OUT:ZoneType.NO_STOP).active(true).polygonJson(json.createArrayNode()).build());zoneId=zone.getZoneId();
             step.getStep().setParamsJson(json.createObjectNode().put("sensing_type",type).put("zone_id",zoneId.toString()).put("window_sec",windowSec));return fixture;});
         mqtt.getRobotIds().add(f.robotId);if(configured)configure("model-1",true,false);advance();receive(f.hello(json));heartbeat();if(configured)advance();}
     void configure(String model,boolean enabled,boolean positions){ai.configure(f.robotId,new AiSensingService.Configure(zoneId,sensing,model,"camera-A",enabled,positions,"Test fixture commissioning; no real producer"),actor());}

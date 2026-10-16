@@ -141,7 +141,7 @@ public class AiSensingService {
                 || robot.getMapAssetHash()==null || !robot.getMapAssetHash().equalsIgnoreCase(zone.getMap().getAssetHash())
                 || zone.getMap().getStatus()!=MapStatus.ACTIVE || zone.getMap().getAssetHash()==null || !zone.getMap().getAssetHash().matches("[a-fA-F0-9]{64}")
                 || zone.getMap().getFrameId()==null || zone.getMap().getFrameId().isBlank())fail("AI profile requires active zone/map and robot map scope");
-        if("RESTRICTED_ZONE".equals(type) && zone.getZoneType()!=ZoneType.RESTRICTED)fail("RESTRICTED_ZONE requires a restricted zone");
+        if("RESTRICTED_ZONE".equals(type) && zone.getZoneType()!=ZoneType.KEEP_OUT)fail("RESTRICTED_ZONE requires a KEEP_OUT zone");
     }
     private static void fail(String message){throw new BusinessRuleException(message);}
 }

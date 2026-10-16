@@ -24,7 +24,7 @@ final class MqttTestFixture {
             map=FacilityMap.builder().floor(floor).mapCode("M-"+code).mapName("Test").versionNo(1).widthM(BigDecimal.TEN).heightM(BigDecimal.TEN)
                     .resolutionMPerPixel(new BigDecimal("0.05")).originXM(BigDecimal.ZERO).originYM(BigDecimal.ZERO).originYawRad(BigDecimal.ZERO).frameId("map")
                     .mapFileUri("test://map").assetHash("a".repeat(64)).status(MapStatus.ACTIVE).build();em.persist(map);f.mapId=map.getMapId();
-            Endpoint endpoint=Endpoint.builder().map(map).endpointCode("E-"+code).endpointName("Test").endpointType(EndpointType.CHECKPOINT).xM(BigDecimal.ONE).yM(BigDecimal.ONE).yawRad(BigDecimal.ZERO).active(true).accessible(true).build();em.persist(endpoint);f.endpointId=endpoint.getEndpointId();
+            Endpoint endpoint=Endpoint.builder().map(map).endpointCode("E-"+code).endpointName("Test").endpointType(EndpointType.WAYPOINT).xM(BigDecimal.ONE).yM(BigDecimal.ONE).yawRad(BigDecimal.ZERO).active(true).accessible(true).build();em.persist(endpoint);f.endpointId=endpoint.getEndpointId();
         }
         Robot robot=Robot.builder().robotCode("MQ-"+code).robotName("Test").model("Test").status(RobotStatus.IDLE).protocolVersion(1).currentMap(map).mapAssetHash(map==null?null:map.getAssetHash()).capabilitiesJson(json.createArrayNode()).build();em.persist(robot);f.robotId=robot.getRobotId();
         Workflow workflow=Workflow.builder().workflowCode("MQ-"+code).workflowName("Test").serviceType("TEST").versionNo(1).schemaVersion(3).graphVersion(3).maxDurationSec(600).maxTotalVisits(10)

@@ -2,6 +2,7 @@ package com.mediassistrover.backend.dto.pi.response;
 
 import com.mediassistrover.backend.enums.MapStatus;
 import com.mediassistrover.backend.enums.RobotStatus;
+import com.mediassistrover.backend.enums.EndpointType;
 
 import java.time.Instant;
 import java.util.List;
@@ -18,7 +19,7 @@ public final class PiResponses {
     public record CatalogManifestResponse(String protocolVersion,UUID robotId,UUID mapId,Integer mapVersion,
             String mapHash,String mapUri,String deployedCatalogHash,String expectedCatalogHash,
             boolean catalogSyncRequired,boolean mapSyncRequired,List<EndpointManifest> endpoints) { }
-    public record EndpointManifest(UUID endpointId,String endpointCode,String endpointType,
+    public record EndpointManifest(UUID endpointId,String endpointCode,EndpointType endpointType,
             String xM,String yM,String yawRad,boolean active) { }
     public record PiMapMetadata(UUID mapId,String mapCode,int versionNo,String mapFileUri,String assetHash,
             String frameId,MapStatus status) { }

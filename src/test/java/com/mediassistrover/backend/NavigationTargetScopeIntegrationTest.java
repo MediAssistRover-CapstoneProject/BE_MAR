@@ -20,7 +20,7 @@ class NavigationTargetScopeIntegrationTest extends MySqlIntegrationTest {
     @Autowired EntityManager em;@Autowired ObjectMapper json;@Autowired NavigationTargetService targets;@Autowired NavigationProfileService profiles;
     MqttTestFixture f;Job job;JobStep resolve;EndpointGroup group;Endpoint first,second;ArrayNode list;
     void fixture(){f=MqttTestFixture.create(em,json,StepType.MOVE,null);job=em.find(Job.class,f.jobId);job.setStatus(JobStatus.RUNNING);job.setStartedAt(Instant.now());
-        first=em.find(Endpoint.class,f.endpointId);second=Endpoint.builder().map(job.getMap()).endpointCode("S-"+UUID.randomUUID()).endpointName("second").endpointType(EndpointType.CHECKPOINT).xM(BigDecimal.TEN).yM(BigDecimal.ONE).yawRad(BigDecimal.ZERO).active(true).accessible(true).build();em.persist(second);
+        first=em.find(Endpoint.class,f.endpointId);second=Endpoint.builder().map(job.getMap()).endpointCode("S-"+UUID.randomUUID()).endpointName("second").endpointType(EndpointType.WAYPOINT).xM(BigDecimal.TEN).yM(BigDecimal.ONE).yawRad(BigDecimal.ZERO).active(true).accessible(true).build();em.persist(second);
         group=EndpointGroup.builder().map(job.getMap()).groupCode("G-"+UUID.randomUUID()).groupName("group").selectionPolicy(SelectionPolicy.PRIORITY).allowFallback(true).active(true).build();em.persist(group);
         int i=0;for(Endpoint e:List.of(first,second))em.persist(EndpointGroupMember.builder().id(new EndpointGroupMemberId(group.getEndpointGroupId(),e.getEndpointId())).endpointGroup(group).endpoint(e).map(job.getMap()).sequenceNo(++i).active(true).build());
         resolve=em.find(JobStep.class,f.piStepId);resolve.setStatus(JobStepStatus.RUNNING);resolve.setSelectedAt(Instant.now());resolve.setStartedAt(Instant.now());resolve.setExecutionSequenceNo(10);resolve.getStep().setStepType(StepType.DATA_SERVICE);
@@ -63,7 +63,7 @@ class NavigationTargetScopeIntegrationTest extends MySqlIntegrationTest {
         assertThatThrownBy(()->targets.bindMove(move,move.getResolvedInputsJson())).hasMessageContaining("SELECT_TARGET");}
     @Test void frozenCandidateOrderCannotBeSkipped(){fixture();JobStep selector=selector();assertThatThrownBy(()->targets.select(selector,list,1)).hasMessageContaining("advance once");}
     @Test void zoneCatalogKeepsMapFrameAndOmitsInactiveZones(){fixture();ArrayNode polygon=json.createArrayNode().addArray().add(0).add(0);polygon.addArray().add(1).add(0);polygon.addArray().add(0).add(1);
-        Zone zone=Zone.builder().map(job.getMap()).zoneCode("Z").zoneName("Zone").zoneType(ZoneType.RESTRICTED).polygonJson(polygon).active(true).build();em.persist(zone);em.flush();
+        Zone zone=Zone.builder().map(job.getMap()).zoneCode("Z").zoneName("Zone").zoneType(ZoneType.KEEP_OUT).polygonJson(polygon).active(true).build();em.persist(zone);em.flush();
         DevicePrincipal device=new DevicePrincipal(job.getRobot().getRobotId(),job.getRobot().getRobotCode(),0,"test",Instant.now().plusSeconds(300));var config=profiles.zoneConfiguration(f.mapId,device);
         assertThat(config.path("config").path("frame_id").asText()).isEqualTo(job.getMap().getFrameId());assertThat(config.path("config").path("zones").get(0).path("polygon")).isEqualTo(polygon);
         zone.setActive(false);assertThat(profiles.zoneConfiguration(f.mapId,device).path("config").path("zones")).isEmpty();

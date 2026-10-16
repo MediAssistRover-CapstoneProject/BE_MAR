@@ -11,6 +11,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.validation.BindException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -68,6 +69,15 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException.class)
     ResponseEntity<ApiErrorResponse> handleUnreadableBody(Exception exception,HttpServletRequest request){
         return response(HttpStatus.BAD_REQUEST,"VALIDATION_ERROR","Invalid JSON or enum value",request,null);
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    ResponseEntity<ApiErrorResponse> handleInvalidRequestParameter(
+            MethodArgumentTypeMismatchException exception, HttpServletRequest request) {
+        var violation = new ApiErrorResponse.FieldViolation(
+                exception.getName(), "Unsupported value: " + exception.getValue());
+        return response(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR",
+                "Invalid request parameter or enum value", request, List.of(violation));
     }
 
     @ExceptionHandler(ConflictException.class)

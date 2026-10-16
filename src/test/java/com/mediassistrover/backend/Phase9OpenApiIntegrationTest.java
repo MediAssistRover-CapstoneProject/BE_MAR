@@ -59,6 +59,18 @@ class Phase9OpenApiIntegrationTest extends MySqlIntegrationTest {
     }
 
     @Test
+    void publishesEndpointAndZoneEnumsAsClosedStringContracts() throws Exception {
+        mvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.components.schemas.EndpointType.type").value("string"))
+                .andExpect(jsonPath("$.components.schemas.EndpointType.enum")
+                        .value(List.of("WAYPOINT", "CHARGER", "PARK", "STAGING")))
+                .andExpect(jsonPath("$.components.schemas.ZoneType.type").value("string"))
+                .andExpect(jsonPath("$.components.schemas.ZoneType.enum")
+                        .value(List.of("KEEP_OUT", "SPEED", "NO_STOP")));
+    }
+
+    @Test
     void keepsEveryPhase0PathAndOperationForBackwardCompatibility() throws Exception {
         Path baselinePath = Path.of("docs", "baselines", "openapi-phase0.json");
         assertThat(Files.exists(baselinePath)).as("Phase 0 OpenAPI baseline must be available").isTrue();

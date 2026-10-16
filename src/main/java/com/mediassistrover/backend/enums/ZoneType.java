@@ -1,3 +1,7 @@
 package com.mediassistrover.backend.enums;
 
-public enum ZoneType { WAITING, CORRIDOR, RESTRICTED, SERVICE, OTHER }
+public enum ZoneType {
+    KEEP_OUT,
+    SPEED,
+    NO_STOP
+}

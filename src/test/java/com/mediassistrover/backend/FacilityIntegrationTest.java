@@ -55,7 +55,7 @@ class FacilityIntegrationTest extends MySqlIntegrationTest {
         UUID mapId = createMap(floorId, "MAP-F1", 1);
 
         String publicZone = """
-                {"mapId":"%s","zoneCode":"PUBLIC","zoneName":"Public Zone","zoneType":"WAITING",
+                {"mapId":"%s","zoneCode":"PUBLIC","zoneName":"Public Zone","zoneType":"NO_STOP",
                  "polygonJson":{"points":[[0,0],[1,0],[1,1]]},"active":true,"publicVisible":true}
                 """.formatted(mapId);
         mockMvc.perform(post("/api/v1/zones").header("Authorization", bearer(adminToken))
@@ -95,7 +95,7 @@ class FacilityIntegrationTest extends MySqlIntegrationTest {
                                 .formatted(groupId, publicEndpointId)))
                 .andExpect(status().isCreated());
         mockMvc.perform(get("/api/v1/public/endpoints").param("mapId", mapId.toString())
-                        .param("endpointType", "CHECKPOINT").param("accessible", "true").param("q", "Endpoint"))
+                        .param("endpointType", "WAYPOINT").param("accessible", "true").param("q", "Endpoint"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
                 .andExpect(jsonPath("$.content[0].xM").doesNotExist())
                 .andExpect(jsonPath("$.content[0].description").doesNotExist());
@@ -150,6 +150,32 @@ class FacilityIntegrationTest extends MySqlIntegrationTest {
                 .andExpect(status().isForbidden()).andExpect(jsonPath("$.error").value("FORBIDDEN"));
     }
 
+    @Test
+    void rejectsLegacyAndUnknownEndpointAndZoneTypes() throws Exception {
+        UUID hospitalId = createHospitalProfile(true, false);
+        UUID floorId = createFloor(hospitalId);
+        UUID mapId = createMap(floorId, "TYPE-VALIDATION", 1);
+
+        String endpoint = "{\"mapId\":\"%s\",\"endpointCode\":\"INVALID\",\"endpointName\":\"Invalid\",\"endpointType\":\"PICKUP\",\"xM\":1,\"yM\":2,\"yawRad\":0}".formatted(mapId);
+        mockMvc.perform(post("/api/v1/endpoints").header("Authorization", bearer(adminToken))
+                        .contentType(MediaType.APPLICATION_JSON).content(endpoint))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+
+        String zone = "{\"mapId\":\"%s\",\"zoneCode\":\"INVALID\",\"zoneName\":\"Invalid\",\"zoneType\":\"RESTRICTED\",\"polygonJson\":{\"points\":[[0,0],[1,0],[1,1]]}}".formatted(mapId);
+        mockMvc.perform(post("/api/v1/zones").header("Authorization", bearer(adminToken))
+                        .contentType(MediaType.APPLICATION_JSON).content(zone))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"));
+
+        mockMvc.perform(get("/api/v1/public/endpoints").param("endpointType", "PICKUP"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.violations[0].field").value("endpointType"));
+        mockMvc.perform(get("/api/v1/public/zones").param("zoneType", "RESTRICTED"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.violations[0].field").value("zoneType"));
+    }
+
     private UUID createHospitalProfile(boolean publicVisible, boolean publish) throws Exception {
         String body = """
                 {"infoCategory":"HOSPITAL_PROFILE","title":"MediAssist Hospital","content":"Hospital profile",
@@ -188,7 +214,7 @@ class FacilityIntegrationTest extends MySqlIntegrationTest {
     }
 
     private UUID createEndpoint(UUID mapId) throws Exception {
-        String body="{\"mapId\":\"%s\",\"endpointCode\":\"EP-1\",\"endpointName\":\"Endpoint 1\",\"endpointType\":\"CHECKPOINT\",\"xM\":1,\"yM\":2,\"yawRad\":0,\"active\":true,\"accessible\":true,\"publicVisible\":true}".formatted(mapId);
+        String body="{\"mapId\":\"%s\",\"endpointCode\":\"EP-1\",\"endpointName\":\"Endpoint 1\",\"endpointType\":\"WAYPOINT\",\"xM\":1,\"yM\":2,\"yawRad\":0,\"active\":true,\"accessible\":true,\"publicVisible\":true}".formatted(mapId);
         return UUID.fromString(response(post("/api/v1/endpoints").header("Authorization",bearer(adminToken)).contentType(MediaType.APPLICATION_JSON).content(body),201).get("endpointId").asText());
     }
 
