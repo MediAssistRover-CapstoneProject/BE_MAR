@@ -358,16 +358,16 @@ public class StepInputContractValidator {
                 );
 
                 text(
-                        s,
-                        n,
-                        "correlation_key",
-                        required
-                                && "EVENT".equals(
-                                n.path("wait_type").asText()
-                        ),
-                        template
-                );
-
+        s,
+        n,
+        "correlation_key",
+        required
+                && pi
+                && "EVENT".equals(
+                n.path("wait_type").asText()
+        ),
+        template
+);
                 timeout(
                         s,
                         n,
