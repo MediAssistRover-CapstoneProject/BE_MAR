@@ -21,9 +21,6 @@ public class PahoMqttTransport implements SmartLifecycle {
     private final ObjectProvider<MqttInboundRouter> router;
     private volatile MqttAsyncClient client;
     private volatile boolean running;
-    private final MqttPublishQueue publications=new MqttPublishQueue();
-    private final ScheduledExecutorService outbound=Executors.newSingleThreadScheduledExecutor(task->{Thread thread=new Thread(task,"mar-mqtt-outbound");thread.setDaemon(true);return thread;});
-    private final java.util.concurrent.atomic.AtomicBoolean outboundStarted=new java.util.concurrent.atomic.AtomicBoolean();
     private final ThreadPoolExecutor inbound=new ThreadPoolExecutor(2,2,0,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<>(128),
             task->{Thread thread=new Thread(task,"mar-mqtt-inbound");thread.setDaemon(true);return thread;},new ThreadPoolExecutor.AbortPolicy());
 
@@ -49,16 +46,17 @@ public class PahoMqttTransport implements SmartLifecycle {
         try {
             client=new MqttAsyncClient(properties.getBrokerUri(),properties.getClientId(),new MemoryPersistence());
             client.setCallback(new MqttCallback() {
-                public void disconnected(MqttDisconnectResponse response) {state.disconnected();publications.failPending(new IllegalStateException("MQTT disconnected"));}
+                public void disconnected(MqttDisconnectResponse response) {state.disconnected();}
                 public void mqttErrorOccurred(MqttException error) {log.warn("MQTT client error: reason {}",error.getReasonCode());}
                 public void deliveryComplete(IMqttToken token) { }
                 public void authPacketArrived(int reason,MqttProperties packet) { }
                 public void connectComplete(boolean reconnect,String uri) {
                     try {
-                        client.subscribe(subscriptions(),null,new MqttActionListener() {
+                        client.subscribe(new MqttSubscription[]{new MqttSubscription("mar/robots/+/events",1),new MqttSubscription("mar/robots/+/heartbeat",0),
+                                new MqttSubscription("mar/robots/+/presence",1),new MqttSubscription("mar/robots/+/map-preview",0)},null,new MqttActionListener() {
                             public void onSuccess(IMqttToken token) {
                                 int[] reasons=token.getReasonCodes();
-                                if (reasons==null || reasons.length!=5 || java.util.Arrays.stream(reasons).anyMatch(code->code>=128)) {
+                                if (reasons==null || reasons.length!=4 || java.util.Arrays.stream(reasons).anyMatch(code->code>=128)) {
                                     state.disconnected();log.warn("MQTT SUBACK denied a required topic; session remains unavailable");
                                 } else state.connectedNow();
                             }
@@ -77,7 +75,6 @@ public class PahoMqttTransport implements SmartLifecycle {
             options.setAutomaticReconnect(true);options.setAutomaticReconnectDelay(1000,5000);options.setMaximumPacketSize(1_048_576L);
             options.setSocketFactory(tls(properties));options.setHttpsHostnameVerificationEnabled(true);
             running=true;
-            if(outboundStarted.compareAndSet(false,true)) outbound.scheduleWithFixedDelay(this::drainPublication,0,10,TimeUnit.MILLISECONDS);
             client.connect(options,null,new MqttActionListener() {
                 public void onSuccess(IMqttToken token) { }
                 public void onFailure(IMqttToken token,Throwable error) {state.disconnected();log.warn("MQTT initial connection failed; scheduler will retry");}
@@ -85,33 +82,13 @@ public class PahoMqttTransport implements SmartLifecycle {
         } catch (MqttException ex) {running=false;throw new IllegalStateException("Cannot start MQTT client",ex);}
     }
     public CompletableFuture<Void> publish(String topic,byte[] bytes,int qos) {
-        if (!connected()) return CompletableFuture.failedFuture(new IllegalStateException("MQTT is disconnected"));
-        var payload=new MqttWire().parse(bytes);
-        boolean priority="SERVER_HEARTBEAT".equals(payload.path("messageType").asText()) || "CANCEL_STEP".equals(payload.path("commandType").asText());
-        return publications.offer(topic,bytes,qos,priority,properties.getPublishQueueCapacity());
-    }
-    /** Preserve the broker's retain flag; ignore stored retained messages when subscribing. */
-    public static MqttSubscription[] subscriptions() {
-        String[] lanes={"events","heartbeat","presence","mapping/preview","profile-acks"};
-        MqttSubscription[] subscriptions=new MqttSubscription[lanes.length];
-        for(int i=0;i<lanes.length;i++) {
-            var value=new MqttSubscription("mar/robots/+/"+lanes[i],i==1 || i==3?0:1);
-            value.setRetainAsPublished(true);value.setRetainHandling(2);subscriptions[i]=value;
-        }
-        return subscriptions;
-    }
-    private void drainPublication() {
-        if(!connected()) return;
-        var pending=publications.poll(System.nanoTime(),properties.getPublishRatePerSecond());if(pending==null)return;
-        try {
-            var payload=new MqttWire().parse(pending.bytes());
-            if(payload.has("expiresAt") && !java.time.Instant.parse(payload.path("expiresAt").asText()).isAfter(java.time.Instant.now()))
-                throw new IllegalStateException("MQTT command expired in publish queue");
-            client.publish(pending.topic(),pending.bytes(),pending.qos(),false,null,new MqttActionListener() {
-                public void onSuccess(IMqttToken token) {pending.result().complete(null);}
-                public void onFailure(IMqttToken token,Throwable error) {pending.result().completeExceptionally(error);}
-            });
-        } catch (Exception ex) {pending.result().completeExceptionally(ex);}
+        var result=new CompletableFuture<Void>();
+        if (!connected()) {result.completeExceptionally(new IllegalStateException("MQTT is disconnected"));return result;}
+        try {client.publish(topic,bytes,qos,false,null,new MqttActionListener() {
+            public void onSuccess(IMqttToken token) {result.complete(null);}
+            public void onFailure(IMqttToken token,Throwable error) {result.completeExceptionally(error);}
+        });} catch (MqttException ex) {result.completeExceptionally(ex);}
+        return result;
     }
     public synchronized void retryInitialConnection() {
         if (properties.isEnabled() && !connected() && client!=null && !client.isConnected()) {
@@ -120,11 +97,10 @@ public class PahoMqttTransport implements SmartLifecycle {
     }
     @Override public synchronized void stop() {
         state.disconnected();running=false;
-        publications.failPending(new IllegalStateException("MQTT transport stopped"));
         if (client!=null) {try {client.disconnectForcibly(1000L,1000L,true);client.close(true);} catch (MqttException ex) {log.debug("MQTT close: reason {}",ex.getReasonCode());}client=null;}
     }
     @Override public boolean isRunning() {return running;}
-    @jakarta.annotation.PreDestroy public void destroy() {stop();inbound.shutdownNow();outbound.shutdownNow();}
+    @jakarta.annotation.PreDestroy public void destroy() {stop();inbound.shutdownNow();}
     @Override public boolean isAutoStartup() {return properties.isEnabled();}
     @Override public int getPhase() {return Integer.MAX_VALUE-100;}
 }

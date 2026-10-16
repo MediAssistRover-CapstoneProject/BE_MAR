@@ -10,6 +10,8 @@ import com.mediassistrover.backend.security.AccountPrincipal;
 import com.mediassistrover.backend.service.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.*;
@@ -26,8 +28,8 @@ public class MqttOperationRecoveryService {
     private final RobotCommandOutboxRepository commands;
     private final MqttOperationRecoveryReceiptRepository receipts;
     private final RobotMqttInboxRepository inbox;
-    private final AccountRepository accounts;
     private final JobEventRepository events;
+    private final com.mediassistrover.backend.validation.StaffOperationalScopePolicy scopePolicy;
     private final MqttSessionRegistry registry;
     private final MqttWire wire;
     private final AuditService audit;
@@ -40,16 +42,30 @@ public class MqttOperationRecoveryService {
     @Transactional(readOnly=true)
     public JsonNode evidence(UUID jobId,AccountPrincipal actor) {
         Job job=jobs.findById(jobId).orElseThrow(()->new ResourceNotFoundException("Job not found"));authorize(job,actor);
-        var result=wire.object().put("jobId",jobId.toString()).put("status",job.getStatus().name());
+        var result=wire.object().put("jobId",jobId.toString()).put("status",job.getStatus().name())
+                .put("recoveryRequired",job.getStatus()==JobStatus.RECOVERY_REQUIRED);
         if(job.getSelectedJobStep()!=null)result.put("jobStepId",job.getSelectedJobStep().getJobStepId().toString()).put("operationKey",job.getSelectedJobStep().getOperationKey());
+        boolean uncertain=false;
         var list=result.putArray("commands");for(var command:commands.findByJobIdOrderByCreatedAt(jobId)) {
             var row=list.addObject().put("commandId",command.getCommandId().toString()).put("jobStepId",command.getJobStepId().toString())
-                    .put("commandType",command.getCommandType()).put("state",command.getState()).put("sendAttempts",command.getSendAttempts());
-            row.set("physicalStopConfirmed",wire.tree(command.getPhysicalStopConfirmed()));row.set("receipt",command.getResultEnvelopeJson());
+                    .put("commandType",command.getCommandType()).put("state",command.getState()).put("sendAttempts",command.getSendAttempts())
+                    .put("createdAt",command.getCreatedAt().toString());
+            row.set("physicalStopConfirmed",wire.tree(command.getPhysicalStopConfirmed()));
+            if(command.getLastPublishAt()!=null)row.put("lastPublishedAt",command.getLastPublishAt().toString());
+            if(command.getAcknowledgedAt()!=null)row.put("acknowledgedAt",command.getAcknowledgedAt().toString());
+            if(!Boolean.TRUE.equals(command.getPhysicalStopConfirmed()))uncertain=true;
         }
+        var eventList=result.putArray("events");events.findByJobJobId(jobId,PageRequest.of(0,50,Sort.by(Sort.Direction.DESC,"occurredAt"))).forEach(event->eventList.addObject()
+                .put("jobEventId",event.getJobEventId().toString()).put("eventType",event.getEventType())
+                .put("jobStepId",event.getJobStep()==null?null:event.getJobStep().getJobStepId().toString())
+                .put("previousStatus",event.getPreviousStatus()).put("newStatus",event.getNewStatus())
+                .put("occurredAt",event.getOccurredAt().toString()));
         var session=job.getRobot()==null?null:sessions.findById(job.getRobot().getRobotId()).orElse(null);
-        if(session!=null){result.put("transportSessionId",session.getTransportSessionId().toString()).put("sessionOwned",registry.owned(session));
-            result.set("journal",session.getHelloJson().path("states"));result.set("heartbeat",session.getHeartbeatJson());}
+        var physical=result.putObject("physicalUncertainty");physical.put("stopUnconfirmed",uncertain);
+        if(session!=null){boolean owned=registry.owned(session);boolean fresh=registry.fresh(session);JsonNode heartbeat=session.getHeartbeatJson();boolean idle=heartbeat!=null&&"IDLE".equals(heartbeat.path("status").asText());boolean active=heartbeat!=null&&!heartbeat.path("activeJobStepId").isNull();
+            result.put("transportSessionId",session.getTransportSessionId().toString());physical.put("sessionOwned",owned).put("heartbeatFresh",fresh).put("robotReportsIdle",idle).put("activeOperationReported",active).put("mappingOpen",heartbeat!=null&&com.mediassistrover.backend.mapping.MappingLifecycleService.reportsOpen(heartbeat.path("mappingSession")));
+            physical.put("requiresStaffReconciliation",job.getStatus()==JobStatus.RECOVERY_REQUIRED||uncertain||!owned||!fresh||!idle||active);
+        }else physical.put("sessionAvailable",false).put("requiresStaffReconciliation",true);
         return result;
     }
 
@@ -117,10 +133,7 @@ public class MqttOperationRecoveryService {
         audit.record(actor,"MQTT_OPERATION_RECONCILED","Job",jobId,null,Map.of("receipt",response),metadata);wakeups.request(job);updates.publishEvent(new RuntimeChanged(jobId));return response;
     }
     private Account authorize(Job job,AccountPrincipal actor) {
-        Account current=accounts.findById(actor.accountId()).orElseThrow(()->new AccessDeniedException("Account unavailable"));
-        if(current.getStatus()!=AccountStatus.ACTIVE || current.getRole()!=actor.role() || current.getTokenVersion()!=actor.tokenVersion()
-                || !Set.of(Role.ADMIN,Role.STAFF).contains(current.getRole()))throw new AccessDeniedException("Recovery requires active STAFF/ADMIN");
-        boolean assigned=job.getAssignedStaffAccount()!=null && job.getAssignedStaffAccount().getAccountId().equals(current.getAccountId());
-        if(current.getRole()!=Role.ADMIN && !assigned)throw new AccessDeniedException("Operation recovery requires assigned staff or ADMIN");return current;
+        scopePolicy.requireJobAccess(job,actor);
+        return scopePolicy.requireCurrentStaffOrAdmin(actor);
     }
 }

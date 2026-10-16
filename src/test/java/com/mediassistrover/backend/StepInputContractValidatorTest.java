@@ -45,16 +45,6 @@ class StepInputContractValidatorTest {
         assertThatThrownBy(()->validator.validateTemplate(s)).hasMessageContaining("purpose");
     }
 
-    @Test void commissioningUnlockIsExplicitAndStillCannotMapItsAction() throws Exception {
-        Step s=step(StepType.CONTROL_HARDWARE,"{\"action\":\"UNLOCK_COMPARTMENT\",\"compartment_id\":\"CART_MAIN\"}");
-        s.setWorkflow(Workflow.builder().schemaVersion(3).build());
-        assertThatThrownBy(()->validator.validateTemplate(s)).hasMessageContaining("authorization");
-        org.springframework.test.util.ReflectionTestUtils.setField(validator,"allowCommissioningUnlock",true);
-        assertThatCode(()->validator.validateTemplate(s)).doesNotThrowAnyException();
-        ((ObjectNode)s.getInputMappingJson()).put("action","UNLOCK_COMPARTMENT");
-        assertThatThrownBy(()->validator.validateTemplate(s)).hasMessageContaining("fixed");
-    }
-
     static Stream<Arguments> validInputs() {
         return Stream.of(
                 Arguments.of(StepType.MOVE, "{\"map_id\":\"" + ID + "\",\"endpoint_id\":\"" + ID + "\",\"max_speed_mps\":0.05}"),

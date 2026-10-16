@@ -15,7 +15,8 @@ public interface AlertService {
                             EmergencyIncident incident,ServiceRequest request,JobStep step,Zone zone,
                             boolean requireAck,AlertAckPolicy policy,Instant expiresAt,JsonNode recipients);
     AlertResponse get(UUID id,AccountPrincipal actor);
-    Page<AlertResponse> list(AlertStatus status,AccountPrincipal actor,Pageable pageable);
+    Page<AlertResponse> list(AlertStatus status,AlertSeverity severity,String type,Instant from,Instant to,
+                             AccountPrincipal actor,Pageable pageable);
     AlertResponse acknowledge(UUID id,AccountPrincipal actor,RequestMetadata metadata);
     AlertResponse resolve(UUID id,AccountPrincipal actor,RequestMetadata metadata);
     AlertResponse close(UUID id,AccountPrincipal actor,RequestMetadata metadata);

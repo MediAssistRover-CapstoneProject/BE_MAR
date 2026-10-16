@@ -31,11 +31,11 @@ public class WorkflowController {
     @PutMapping("/{id}/graph") @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary="Replace draft graph atomically; rollback on validation failure")
     public WorkflowDetailResponse replaceGraph(@PathVariable UUID id,@Valid @RequestBody GraphRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.replaceGraph(id,body,actor.accountId(),RequestMetadataFactory.from(request));}
-    @GetMapping("/step-types") public List<StepTypeResponse> stepTypes(){return service.stepTypes();}
+    @GetMapping("/step-types") @Operation(deprecated=true) public List<StepTypeResponse> stepTypes(){return service.stepTypes();}
     @GetMapping @PreAuthorize("hasRole('ADMIN')") public PageResponse<WorkflowResponse> list(@RequestParam(required=false)WorkflowStatus status,@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size){return PageResponse.from(service.list(status,PageRequest.of(page,size,Sort.by("workflowCode").and(Sort.by(Sort.Direction.DESC,"versionNo")))));}
     @GetMapping("/{id}") @PreAuthorize("hasRole('ADMIN')") public WorkflowDetailResponse get(@PathVariable UUID id){return service.get(id);}
-    @GetMapping("/published/all") public List<WorkflowDetailResponse> published(){return service.published();}
-    @GetMapping("/published/{id}") public WorkflowDetailResponse published(@PathVariable UUID id){WorkflowDetailResponse result=service.get(id);if(result.workflow().status()!=WorkflowStatus.PUBLISHED||!result.workflow().acceptsNewJobs())throw new com.mediassistrover.backend.exception.ResourceNotFoundException("Published workflow not found: "+id);return result;}
+    @GetMapping("/published/all") @Operation(deprecated=true) public List<WorkflowDetailResponse> published(){return service.published();}
+    @GetMapping("/published/{id}") @Operation(deprecated=true) public WorkflowDetailResponse published(@PathVariable UUID id){return service.published(id);}
     @PostMapping @ResponseStatus(HttpStatus.CREATED) @PreAuthorize("hasRole('ADMIN')") public WorkflowResponse create(@Valid @RequestBody WorkflowUpsertRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.create(b,a.accountId(),RequestMetadataFactory.from(r));}
     @PutMapping("/{id}") @PreAuthorize("hasRole('ADMIN')") public WorkflowResponse update(@PathVariable UUID id,@Valid @RequestBody WorkflowUpsertRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.update(id,b,a.accountId(),RequestMetadataFactory.from(r));}
     @DeleteMapping("/{id}") @ResponseStatus(HttpStatus.NO_CONTENT) @PreAuthorize("hasRole('ADMIN')") public void delete(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){service.deleteDraft(id,a.accountId(),RequestMetadataFactory.from(r));}

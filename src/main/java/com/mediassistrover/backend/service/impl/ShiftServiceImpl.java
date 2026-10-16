@@ -12,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -116,7 +117,7 @@ public class ShiftServiceImpl implements ShiftService {
     public ShiftResponse getOwn(UUID shiftId, UUID accountId) {
         Shift shift = shift(shiftId);
         if (!shift.getStaffProfile().getAccount().getAccountId().equals(accountId)) {
-            throw new ResourceNotFoundException("Shift not found: " + shiftId);
+            throw new AccessDeniedException("Shift belongs to another Staff account");
         }
         return mapper.toResponse(shift);
     }

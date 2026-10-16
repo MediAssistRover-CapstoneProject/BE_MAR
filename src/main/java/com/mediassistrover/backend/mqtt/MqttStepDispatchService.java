@@ -35,8 +35,7 @@ public class MqttStepDispatchService {
                 || !properties.getEnabledStepTypes().contains(step.getStepType().name()))
             throw new BusinessRuleException("Step "+step.getStepCode()+" awaits configured MQTT dispatch; keep workflow DRAFT");
         ObjectNode params=((ObjectNode)step.getParamsJson()).deepCopy();params.setAll((ObjectNode)step.getInputMappingJson());
-        if (step.getStepType()==StepType.CONTROL_HARDWARE && !Set.of("LOCK_COMPARTMENT","LOCK").contains(params.path("action").asText())
-                && !(properties.isAllowCommissioningUnlock() && Set.of("UNLOCK_COMPARTMENT","UNLOCK").contains(params.path("action").asText()) && !step.getInputMappingJson().has("action")))
+        if (step.getStepType()==StepType.CONTROL_HARDWARE && !Set.of("LOCK_COMPARTMENT","LOCK").contains(params.path("action").asText()))
             throw new BusinessRuleException("Official UNLOCK awaits Pi STAFF_VERIFIED enforcement and a confirmed HELLO/output contract; keep workflow DRAFT");
         if (step.getStepType()==StepType.EXECUTE_SENSING && "MAPPING".equals(params.path("sensing_type").asText()))mapping.requireSupported(step);
         if(step.getStepType()==StepType.EXECUTE_SENSING && com.mediassistrover.backend.ai.AiSensingService.TYPES.contains(params.path("sensing_type").asText()))ai.requireEnabled();
@@ -61,7 +60,7 @@ public class MqttStepDispatchService {
             throw new BusinessRuleException("Open mapping permits only MAPPING/SAVE or STOP Pi actions");
         boolean unlock="CONTROL_HARDWARE".equals(step.getStepTypeSnapshot())
                 && "UNLOCK_COMPARTMENT".equals(step.getResolvedInputsJson().path("action").asText());
-        if(unlock && !properties.isAllowCommissioningUnlock()) operationAuthorization.requireBound(step,step.getResolvedInputsJson().path("authorization"));
+        if(unlock) operationAuthorization.requireBound(step,step.getResolvedInputsJson().path("authorization"));
         if(!step.isMappingCleanup())requireActionSupported(step.getStep());
         if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step))mapping.requireBound(step);
         ObjectNode business=((ObjectNode)step.getResolvedInputsJson()).deepCopy();
@@ -71,8 +70,6 @@ public class MqttStepDispatchService {
         robots.findByIdForUpdate(job.getRobot().getRobotId()).orElseThrow();
         RobotMqttSession session=sessions.lock(job.getRobot().getRobotId()).orElse(null);
         if (!registry.fresh(session)) return;
-        if(unlock && properties.isAllowCommissioningUnlock() && !"COMMISSIONING_ONLY".equals(session.getHelloJson().path("unlockPolicy").asText()))
-            throw new BusinessRuleException("Commissioning UNLOCK must be enabled on both BE and Pi");
         if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step) && !session.getHelloJson().path("mappingEnabled").asBoolean())
             throw new BusinessRuleException("Pi does not enable mapping");
         if (session.getHelloJson().path("simulation").asBoolean() && !properties.isAllowSimulation()) throw new BusinessRuleException("Simulation dispatch is disabled");

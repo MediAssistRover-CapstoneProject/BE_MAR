@@ -37,4 +37,38 @@ public interface HospitalInformationArticleRepository extends JpaRepository<Hosp
                                                               @Param("languageCode") String languageCode,
                                                               @Param("now") Instant now,
                                                               Pageable pageable);
+
+    @Query("""
+            select a from HospitalInformationArticle a
+            where a.hospitalInformation.hospitalInformationId = :hospitalId
+              and a.hospitalInformation.status = :status and a.hospitalInformation.publicVisible = true
+              and (a.hospitalInformation.effectiveFrom is null or a.hospitalInformation.effectiveFrom <= :now)
+              and (a.hospitalInformation.effectiveUntil is null or a.hospitalInformation.effectiveUntil > :now)
+              and a.status = :status and a.publicVisible = true
+              and (a.effectiveFrom is null or a.effectiveFrom <= :now)
+              and (a.effectiveUntil is null or a.effectiveUntil > :now)
+              and (:category is null or lower(a.category) = lower(:category))
+              and (:languageCode is null or lower(a.languageCode) = lower(:languageCode))
+              and (:q is null or lower(a.title) like lower(concat('%', :q, '%'))
+                   or lower(a.canonicalQuestion) like lower(concat('%', :q, '%'))
+                   or lower(a.answer) like lower(concat('%', :q, '%')))
+            """)
+    Page<HospitalInformationArticle> searchPublic(@Param("hospitalId") UUID hospitalId,
+            @Param("status") HospitalInformationStatus status, @Param("now") Instant now,
+            @Param("q") String q, @Param("category") String category,
+            @Param("languageCode") String languageCode, Pageable pageable);
+
+    @Query("""
+            select a from HospitalInformationArticle a
+            where a.articleId = :articleId and a.hospitalInformation.hospitalInformationId = :hospitalId
+              and a.hospitalInformation.status = :status and a.hospitalInformation.publicVisible = true
+              and (a.hospitalInformation.effectiveFrom is null or a.hospitalInformation.effectiveFrom <= :now)
+              and (a.hospitalInformation.effectiveUntil is null or a.hospitalInformation.effectiveUntil > :now)
+              and a.status = :status and a.publicVisible = true
+              and (a.effectiveFrom is null or a.effectiveFrom <= :now)
+              and (a.effectiveUntil is null or a.effectiveUntil > :now)
+            """)
+    java.util.Optional<HospitalInformationArticle> findPublicById(@Param("hospitalId") UUID hospitalId,
+            @Param("articleId") UUID articleId, @Param("status") HospitalInformationStatus status,
+            @Param("now") Instant now);
 }

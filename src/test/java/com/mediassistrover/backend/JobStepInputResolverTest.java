@@ -96,26 +96,6 @@ class JobStepInputResolverTest {
                 .hasMessageContaining("/outputs/MISSING/value");
     }
 
-    @Test void commissioningUnlockResolvesWithoutInventingStaffVerification() {
-        var authorization=mock(com.mediassistrover.backend.service.OperationAuthorizationService.class);
-        var scope=mock(com.mediassistrover.backend.validation.StepInputScopeValidator.class);
-        var checked=new JobStepInputResolverImpl(repository,json,
-                new com.mediassistrover.backend.validation.StepInputContractValidator(new com.mediassistrover.backend.validation.WorkflowJsonValidator()),
-                scope,authorization,mock(com.mediassistrover.backend.service.NavigationTargetService.class));
-        org.springframework.test.util.ReflectionTestUtils.setField(checked,"allowCommissioningUnlock",true);
-        var job=Job.builder().jobId(UUID.randomUUID()).schemaVersion(3).inputJson(json.createObjectNode()).contextJson(json.createObjectNode()).build();
-        var definition=Step.builder().stepCode("UNLOCK").stepType(com.mediassistrover.backend.enums.StepType.CONTROL_HARDWARE)
-                .workflow(com.mediassistrover.backend.entity.Workflow.builder().schemaVersion(3).build()).maxAttempts(1).timeoutSec(10)
-                .paramsJson(json.createObjectNode().put("action","UNLOCK_COMPARTMENT").put("compartment_id","CART_MAIN"))
-                .inputMappingJson(json.createObjectNode()).build();
-        var current=JobStep.builder().jobTask(JobTask.builder().job(job).build()).step(definition).build();
-        var result=checked.resolve(current);
-        assertThat(result.path("action").asText()).isEqualTo("UNLOCK_COMPARTMENT");
-        assertThat(result.has("authorization")).isFalse();
-        org.mockito.Mockito.verifyNoInteractions(authorization);
-        org.mockito.Mockito.verify(scope).validate(org.mockito.ArgumentMatchers.eq(definition),org.mockito.ArgumentMatchers.eq(result),org.mockito.ArgumentMatchers.eq(job));
-    }
-
     private ObjectNode ref(String pointer) {
         return json.createObjectNode().put("$ref", pointer);
     }

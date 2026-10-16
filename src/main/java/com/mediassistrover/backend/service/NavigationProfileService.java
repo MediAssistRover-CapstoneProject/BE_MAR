@@ -21,7 +21,6 @@ import java.util.*;
 public class NavigationProfileService {
     private final RobotRepository robots;
     private final RobotNavigationProfileRepository profiles;
-    private final RobotMqttSessionRepository sessions;
     private final EndpointRepository endpoints;
     private final ZoneRepository zones;
     private final JobRepository jobs;
@@ -59,43 +58,6 @@ public class NavigationProfileService {
     public Receipt confirm(Confirm request,DevicePrincipal principal) {
         List<Job> active=jobs.lockRobotJobs(principal.robotId(),HELD);
         Robot robot=robots.findByIdForUpdate(principal.robotId()).orElseThrow();requireDevice(robot,principal);
-        return confirmLocked(request,robot,active);
-    }
-
-    @Transactional
-    public Receipt confirmMqtt(UUID robotId,JsonNode ack) {
-        if(!properties.isNavigationProfileSyncEnabled()) throw new BusinessRuleException("MQTT navigation sync disabled");
-        List<Job> active=jobs.lockRobotJobs(robotId,HELD);
-        Robot robot=robots.findByIdForUpdate(robotId).orElseThrow();
-        UUID transport=UUID.fromString(ack.path("transportSessionId").asText());
-        RobotMqttSession session=registry.requireCurrent(robotId,transport);
-        if(!session.getProducerSessionId().toString().equals(ack.path("producerSessionId").asText()))
-            throw new BusinessRuleException("Profile ACK producer differs from HELLO");
-        if(!ack.path("accepted").asBoolean()) throw new BusinessRuleException("Pi rejected navigation profile: "+ack.path("errorCode").asText());
-        return confirmLocked(new Confirm(transport,session.getProducerSessionId(),UUID.fromString(ack.path("mapId").asText()),
-                ack.path("mapAssetHash").asText(),ack.path("profileHash").asText()),robot,active);
-    }
-
-    @Transactional(readOnly=true)
-    public ObjectNode pendingMqtt(UUID robotId) {
-        RobotMqttSession session=sessions.findById(robotId).orElse(null);
-        if(!registry.fresh(session) || !"IDLE".equals(session.getHeartbeatJson().path("status").asText())
-                || !session.getHeartbeatJson().path("activeJobStepId").isNull()
-                || com.mediassistrover.backend.mapping.MappingLifecycleService.reportsOpen(session.getHeartbeatJson().path("mappingSession"))) return null;
-        boolean move=false;for(JsonNode type:session.getHelloJson().path("enabledStepTypes")) if("MOVE".equals(type.asText())) move=true;
-        if(!move) return null;
-        Robot robot=robots.findById(robotId).orElseThrow();
-        if(robot.getCurrentMap()==null) return null;
-        Manifest expected=snapshot(robot);
-        RobotNavigationProfile prior=profiles.findById(robotId).orElse(null);
-        if(prior!=null && matches(prior,robot,session,expected.profileHash())) return null;
-        if(expected.profile().path("endpoints").isEmpty()) return null;
-        ObjectNode message=wire.object().put("messageType","NAV_PROFILE").put("robotId",robotId.toString())
-                .put("transportSessionId",session.getTransportSessionId().toString()).put("profileVersion",expected.profileVersion())
-                .put("profileHash",expected.profileHash());message.set("profile",expected.profile());return message;
-    }
-
-    private Receipt confirmLocked(Confirm request,Robot robot,List<Job> active) {
         if(!properties.manages(robot.getRobotId())) throw new BusinessRuleException("Profile ACK requires an MQTT-enrolled robot");
         RobotMqttSession session=registry.requireCurrent(robot.getRobotId(),request.transportSessionId());
         Instant now=Instant.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
@@ -106,7 +68,7 @@ public class NavigationProfileService {
         if(prior!=null && matches(prior,robot,session,request.profileHash().toLowerCase(Locale.ROOT))
                 && prior.getMapId().equals(request.mapId()) && prior.getMapAssetHash().equalsIgnoreCase(request.mapAssetHash())) return receipt(prior,true);
         if(!"IDLE".equals(session.getHeartbeatJson().path("status").asText()) || !session.getHeartbeatJson().path("activeJobStepId").isNull()
-                || com.mediassistrover.backend.mapping.MappingLifecycleService.reportsOpen(session.getHeartbeatJson().path("mappingSession"))) throw new BusinessRuleException("New profile ACK requires an idle Pi with no active operation or mapping session");
+                || !session.getHeartbeatJson().path("mappingSession").isNull()) throw new BusinessRuleException("New profile ACK requires an idle Pi with no active operation or mapping session");
         Manifest expected=snapshot(robot);
         if(!expected.profile().path("map_id").asText().equals(request.mapId().toString())
                 || !expected.profile().path("map_asset_sha256").asText().equalsIgnoreCase(request.mapAssetHash())

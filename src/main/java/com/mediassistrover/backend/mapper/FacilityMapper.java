@@ -2,6 +2,7 @@ package com.mediassistrover.backend.mapper;
 
 import com.mediassistrover.backend.dto.facility.request.FacilityRequests.*;
 import com.mediassistrover.backend.dto.facility.response.FacilityResponses.*;
+import com.mediassistrover.backend.dto.facility.response.PublicFacilityResponses;
 import com.mediassistrover.backend.entity.*;
 import org.mapstruct.*;
 
@@ -24,6 +25,23 @@ public interface FacilityMapper {
     @Mapping(target = "endpointGroupId", source = "endpointGroup.endpointGroupId")
     @Mapping(target = "endpointId", source = "endpoint.endpointId") @Mapping(target = "mapId", source = "map.mapId")
     EndpointGroupMemberResponse toResponse(EndpointGroupMember entity);
+
+    @Mapping(target = "hospitalInformationId", source = "hospitalInformation.hospitalInformationId")
+    PublicFacilityResponses.Floor toPublicResponse(Floor entity);
+    @Mapping(target = "mapId", source = "map.mapId")
+    PublicFacilityResponses.Zone toPublicResponse(Zone entity);
+    @Mapping(target = "floorId", source = "floor.floorId")
+    @Mapping(target = "defaultEndpointGroupId", source = "defaultEndpointGroup.endpointGroupId")
+    PublicFacilityResponses.Room toPublicResponse(Room entity);
+    @Mapping(target = "mapId", source = "map.mapId")
+    @Mapping(target = "zoneId", source = "zone.zoneId")
+    @Mapping(target = "roomId", source = "room.roomId")
+    PublicFacilityResponses.Endpoint toPublicResponse(Endpoint entity);
+    @Mapping(target = "mapId", source = "map.mapId")
+    PublicFacilityResponses.EndpointGroup toPublicResponse(EndpointGroup entity);
+    PublicFacilityResponses.Hospital toPublicResponse(HospitalInformation entity);
+    @Mapping(target = "hospitalInformationId", source = "hospitalInformation.hospitalInformationId")
+    PublicFacilityResponses.Article toPublicResponse(HospitalInformationArticle entity);
 
     @Mapping(target = "status", constant = "DRAFT") @Mapping(target = "updatedBy", ignore = true)
     HospitalInformation toEntity(HospitalInformationRequest request);

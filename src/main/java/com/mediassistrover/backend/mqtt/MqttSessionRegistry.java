@@ -67,9 +67,7 @@ public class MqttSessionRegistry {
             if (known==null || !known.getOperationKey().equals(state.path("operationKey").asText())
                     || !known.getJobTask().getJob().getJobId().equals(UUID.fromString(state.path("jobId").asText()))
                     || known.getJobTask().getJob().getRobot()==null || !known.getJobTask().getJob().getRobot().getRobotId().equals(e.robotId())) {
-                if (known!=null || !Set.of("SUCCEEDED","FAILED","TIMED_OUT","CANCELLED").contains(state.path("status").asText())) {
-                    reconciled=false;reason="Unknown or foreign active operation in HELLO journal";
-                }
+                reconciled=false;reason="Unknown or foreign operation in HELLO journal";
             }
             if ("RECOVERY_REQUIRED".equals(state.path("status").asText())) {reconciled=false;reason="Pi journal requires recovery";}
         }
@@ -115,7 +113,7 @@ public class MqttSessionRegistry {
         if(!mapping.telemetryMatches(e.robotId(),p.path("mappingSession")) || mappingOpen && (mapId!=null || !p.path("mapAssetHash").isNull())) {
             session.setDispatchReady(false);session.setFailureReason("Mapping heartbeat scope/map identity mismatch");active.forEach(j->safety.recovery(j,session.getFailureReason()));
         }
-        FacilityMap map=mapId==null || mappingOpen?null:maps.findById(mapId).orElse(null);
+        FacilityMap map=mapId==null || mappingOpen?null:maps.findById(mapId).orElseThrow(()->new BusinessRuleException("Heartbeat map does not exist"));
         RobotNavigationProfile deployed=navigationProfiles.findById(e.robotId()).orElse(null);
         boolean incompatibleMove=commands.findByRobotIdAndStateIn(e.robotId(),List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED")).stream()
                 .filter(c->c.getSendAttempts()>0 && "MOVE".equals(c.getPayloadJson().path("step").path("stepType").asText()))
@@ -139,7 +137,7 @@ public class MqttSessionRegistry {
         RobotStatus next=recovery || "ERROR".equals(p.path("status").asText())?RobotStatus.ERROR:
                 held || "BUSY".equals(p.path("status").asText()) || mappingOpen?RobotStatus.BUSY:RobotStatus.IDLE;
         robot.setStatus(next);robot.setLastHeartbeatAt(now);robot.setRuntimeVersion(p.path("runtimeVersion").asText());robot.setCurrentMap(map);
-        robot.setMapAssetHash(map==null || mappingOpen || p.path("mapAssetHash").isNull()?null:p.path("mapAssetHash").asText().toLowerCase(Locale.ROOT));robot.setCapabilitiesJson(p.path("capabilities").deepCopy());
+        robot.setMapAssetHash(mappingOpen || p.path("mapAssetHash").isNull()?null:p.path("mapAssetHash").asText().toLowerCase(Locale.ROOT));robot.setCapabilitiesJson(p.path("capabilities").deepCopy());
         JsonNode telemetry=p.path("telemetry"),battery=telemetry.path("battery");
         if (battery.has("value") && !battery.path("value").isNull() && battery.path("age_sec").asDouble()<=15) {
             robot.setBatteryRaw(battery.path("value").asInt());robot.setBatteryUnit(BatteryUnit.UNKNOWN);

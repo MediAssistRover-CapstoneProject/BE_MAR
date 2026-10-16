@@ -24,6 +24,17 @@ public final class VoiceResponses {
             String audioUri
     ) { }
 
+    public record InteractionMetadataResponse(
+            UUID voiceInteractionId,
+            UUID robotId,
+            String languageCode,
+            VoiceInteractionStatus status,
+            Instant startedAt,
+            Instant endedAt,
+            String detectedIntent,
+            boolean rawDataAvailable
+    ) { }
+
     public record CommandResponse(
             UUID voiceCommandId,
             UUID voiceInteractionId,
@@ -38,5 +49,19 @@ public final class VoiceResponses {
             VoiceCommandStatus status,
             Instant receivedAt,
             Instant processedAt
+    ) { }
+
+    public record CommandMetadataResponse(
+            UUID voiceCommandId,
+            UUID voiceInteractionId,
+            UUID serviceRequestId,
+            int sequenceNo,
+            String intentCode,
+            BigDecimal confidenceScore,
+            String commandType,
+            VoiceCommandStatus status,
+            Instant receivedAt,
+            Instant processedAt,
+            boolean rawDataAvailable
     ) { }
 }

@@ -21,6 +21,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
+import java.time.Instant;
 
 @RestController @RequestMapping("/api/v1/robots") @RequiredArgsConstructor @Validated
 @PreAuthorize("hasAnyRole('ADMIN','STAFF')")
@@ -34,7 +35,7 @@ public class RobotController {
     @PostMapping("/{id}/provision-secret") @PreAuthorize("hasRole('ADMIN')") @Operation(summary="Cấp device secret một lần",description="Secret chỉ xuất hiện trong response này và được lưu dạng BCrypt hash") public DeviceSecretResponse provision(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.provisionSecret(id,a.accountId(),RequestMetadataFactory.from(r));}
     @PostMapping("/{id}/rotate-secret") @PreAuthorize("hasRole('ADMIN')") public DeviceSecretResponse rotate(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.rotateSecret(id,a.accountId(),RequestMetadataFactory.from(r));}
     @PostMapping("/{id}/maintenance") @PreAuthorize("hasRole('ADMIN')") public RobotResponse maintenance(@PathVariable UUID id,@Valid @RequestBody RobotActionRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.maintenance(id,b.reason(),a.accountId(),RequestMetadataFactory.from(r));}
-    @PostMapping("/{id}/reconcile") public RobotResponse reconcile(@PathVariable UUID id,@Valid @RequestBody RobotActionRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.reconcile(id,b.reason(),a.accountId(),RequestMetadataFactory.from(r));}
+    @PostMapping("/{id}/reconcile") public RobotResponse reconcile(@PathVariable UUID id,@Valid @RequestBody RobotActionRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.reconcile(id,b.reason(),a,RequestMetadataFactory.from(r));}
     @GetMapping("/{id}/status-history") public PageResponse<RobotStatusHistoryResponse> statusHistory(@PathVariable UUID id,@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size){return PageResponse.from(service.statusHistory(id,PageRequest.of(page,size,Sort.by(Sort.Direction.DESC,"recordedAt"))));}
-    @GetMapping("/{id}/location-history") public PageResponse<RobotLocationResponse> locationHistory(@PathVariable UUID id,@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size){return PageResponse.from(service.locationHistory(id,PageRequest.of(page,size,Sort.by(Sort.Direction.DESC,"capturedAt"))));}
+    @GetMapping("/{id}/location-history") public PageResponse<RobotLocationResponse> locationHistory(@PathVariable UUID id,@RequestParam(required=false)Instant from,@RequestParam(required=false)Instant to,@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size){return PageResponse.from(service.locationHistory(id,from,to,PageRequest.of(page,size,Sort.by(Sort.Direction.DESC,"capturedAt"))));}
 }

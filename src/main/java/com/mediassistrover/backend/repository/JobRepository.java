@@ -19,7 +19,16 @@ public interface JobRepository extends JpaRepository<Job,UUID> {
     List<UUID> findReadyBeJobIds(Pageable page);
     Page<Job> findByServiceRequestRequestedByAccountAccountId(UUID accountId,Pageable pageable);
     List<Job> findByServiceRequestServiceRequestId(UUID requestId);
+    boolean existsByServiceRequestServiceRequestIdAndAssignedStaffAccountAccountId(UUID requestId, UUID accountId);
     Page<Job> findByAssignedStaffAccountAccountIdOrServiceRequestRequestedByAccountAccountId(UUID assigned,UUID requester,Pageable pageable);
+    @Query("select j from Job j where (:status is null or j.status=:status) " +
+            "and (:workflowId is null or j.workflow.workflowId=:workflowId) " +
+            "and (:requestId is null or j.serviceRequest.serviceRequestId=:requestId) " +
+            "and (:robotId is null or j.robot.robotId=:robotId) " +
+            "and (:from is null or j.queuedAt>=:from) and (:to is null or j.queuedAt<:to)")
+    Page<Job> search(@Param("status") JobStatus status,@Param("workflowId") UUID workflowId,
+                     @Param("requestId") UUID requestId,@Param("robotId") UUID robotId,
+                     @Param("from") Instant from,@Param("to") Instant to,Pageable pageable);
     List<Job> findByRobotRobotIdAndStatusIn(UUID robotId,Collection<JobStatus> statuses);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     List<Job> findByStatusAndRobotIsNullOrderByPriorityDescQueuedAtAsc(JobStatus status,Pageable pageable);

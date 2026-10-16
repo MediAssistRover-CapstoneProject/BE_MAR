@@ -130,13 +130,13 @@ class MqttCancellationRecoveryIntegrationTest extends MySqlIntegrationTest {
         var wrong=new MqttOperationRecoveryRequest(UUID.randomUUID(),f.operationKey,f.transportId,b.evidence(),true,b.outcome(),b.note());assertThatThrownBy(()->recovery.reconcile(f.jobId,f.piStepId,"wrong",wrong,admin,null)).hasMessageContaining("commandId");
         recovery.reconcile(f.jobId,f.piStepId,"valid",b,admin,new RequestMetadata("127.0.0.1","test","valid"));assertThat(job().getStatus()).isEqualTo(JobStatus.CANCELLED);}
 
-    @Test void recoveryRequiresAssignedActiveStaffAndNeverConsumesAForeignActorClaim(){fixture(StepType.MOVE);dispatch(true);error("FAILED",null,f.commandId);
+    @Test void recoveryRequiresOperationalScopeAndNeverConsumesAForeignActorClaim(){fixture(StepType.MOVE);dispatch(true);error("FAILED",null,f.commandId);
         receive(f.event(json,"OPERATOR_RECONCILED",json.createObjectNode().put("reason","Stopped locally").put("status","CANCELLED")));hello("CANCELLED");
         var staff=tx.execute(s->{Account actor=em.find(Account.class,f.accountId);actor.setRole(Role.STAFF);return AccountPrincipal.fromAccount(actor);});
         var body=body(MqttOperationRecoveryRequest.Evidence.STAFF_INSPECTED_STOP);
-        assertThatThrownBy(()->recovery.reconcile(f.jobId,f.piStepId,"scope",body,staff,null)).hasMessageContaining("assigned staff");
+        assertThatThrownBy(()->recovery.reconcile(f.jobId,f.piStepId,"scope",body,staff,null)).hasMessageContaining("operational scope");
         tx.executeWithoutResult(s->{jobs.findById(f.jobId).orElseThrow().setAssignedStaffAccount(em.find(Account.class,f.accountId));em.find(Account.class,f.accountId).setStatus(AccountStatus.INACTIVE);});
-        assertThatThrownBy(()->recovery.reconcile(f.jobId,f.piStepId,"inactive",body,staff,null)).hasMessageContaining("active STAFF");
+        assertThatThrownBy(()->recovery.reconcile(f.jobId,f.piStepId,"inactive",body,staff,null)).hasMessageContaining("unrestricted Staff/Admin");
         tx.executeWithoutResult(s->em.find(Account.class,f.accountId).setStatus(AccountStatus.ACTIVE));recovery.reconcile(f.jobId,f.piStepId,"assigned",body,staff,null);assertThat(job().getStatus()).isEqualTo(JobStatus.CANCELLED);}
 
     @Test void concurrentRecoveryUsesOneReceiptAndRollbackRestoresHeldRobot() throws Exception {fixture(StepType.MOVE);dispatch(true);error("FAILED",null,f.commandId);
@@ -175,7 +175,9 @@ class MqttCancellationRecoveryIntegrationTest extends MySqlIntegrationTest {
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(path).header("Authorization","Bearer "+token).header("Idempotency-Key","http").contentType("application/json").content(wire.bytes(falseClaim)))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest());
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/jobs/"+f.jobId+"/operations/recovery").header("Authorization","Bearer "+token))
-                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.jobStepId").value(f.piStepId.toString()));
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.jobStepId").value(f.piStepId.toString()))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.physicalUncertainty.requiresStaffReconciliation").value(true))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.journal").doesNotExist());
         mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(path).header("Authorization","Bearer "+token).header("Idempotency-Key","http").contentType("application/json").content(json.writeValueAsBytes(b)))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk()).andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.requiresNewHello").value(true));
         assertThat(job().getStatus()).isEqualTo(JobStatus.CANCELLED);

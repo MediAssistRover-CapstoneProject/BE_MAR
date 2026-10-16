@@ -12,10 +12,6 @@ public class MqttProperties {
     private boolean enabled;
     private boolean dispatchEnabled;
     private boolean allowSimulation;
-    private boolean allowCommissioningUnlock;
-    private boolean navigationProfileSyncEnabled=true;
-    private int publishRatePerSecond=8;
-    private int publishQueueCapacity=64;
     private String brokerUri="ssl://localhost:8883";
     private String clientId="mar-be-mqtt";
     private String username;
@@ -36,8 +32,6 @@ public class MqttProperties {
         if (username==null || username.isBlank() || password==null || password.isBlank()) throw new IllegalArgumentException("MQTT broker credentials are required");
         if (clientId==null || clientId.isBlank() || commandTtlSec<1 || commandTtlSec>300 || retryIntervalSec<1 || retryIntervalSec>10)
             throw new IllegalArgumentException("Invalid MQTT client ID / timing configuration");
-        if (publishRatePerSecond<1 || publishRatePerSecond>10 || publishQueueCapacity<8 || publishQueueCapacity>256)
-            throw new IllegalArgumentException("MQTT publish rate must be 1..10/sec and queue capacity 8..256");
         if (!Set.of("WAIT","MOVE","CONTROL_HARDWARE","EXECUTE_SENSING").containsAll(enabledStepTypes)) throw new IllegalArgumentException("Unsupported MQTT enabled StepType");
     }
 }

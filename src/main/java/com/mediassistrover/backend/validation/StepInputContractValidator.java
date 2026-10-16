@@ -18,8 +18,6 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class StepInputContractValidator {
     private final WorkflowJsonValidator jsonValidator;
-    @org.springframework.beans.factory.annotation.Value("${app.mqtt.allow-commissioning-unlock:false}")
-    private boolean allowCommissioningUnlock;
     private static final Set<String> UUID_FIELDS = Set.of("map_id", "endpoint_id", "zone_id",
             "endpoint_group_id", "service_request_id", "detection_event_id", "incident_id",
             "mapping_session_id", "artifact_id", "floor_id", "verification_id", "actor_account_id");
@@ -41,8 +39,8 @@ public class StepInputContractValidator {
         }
         if(step.getWorkflow()!=null && step.getWorkflow().getSchemaVersion()==3 && step.getStepType()==StepType.CONTROL_HARDWARE
                 && Set.of("UNLOCK","UNLOCK_COMPARTMENT").contains(merged.path("action").asText())) {
-            if(!allowCommissioningUnlock && !merged.has("authorization")) fail(step,"authorization","UNLOCK requires a BE verification mapping");
-            if(!allowCommissioningUnlock) enumeration(step,merged.path("authorization"),"purpose",Set.of("DELIVERY_SENDER","DELIVERY_RECEIVER"),true,false);
+            if(!merged.has("authorization")) fail(step,"authorization","UNLOCK requires a BE verification mapping");
+            enumeration(step,merged.path("authorization"),"purpose",Set.of("DELIVERY_SENDER","DELIVERY_RECEIVER"),true,false);
             if(step.getInputMappingJson().has("action")) fail(step,"action","authorized UNLOCK must be fixed in paramsJson");
         }
     }

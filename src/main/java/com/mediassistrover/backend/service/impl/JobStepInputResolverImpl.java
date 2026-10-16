@@ -30,8 +30,6 @@ public class JobStepInputResolverImpl implements JobStepInputResolver {
     private final com.mediassistrover.backend.service.OperationAuthorizationService operationAuthorization;
     private final com.mediassistrover.backend.service.NavigationTargetService navigation;
     private final WorkflowJsonValidator references = new WorkflowJsonValidator();
-    @org.springframework.beans.factory.annotation.Value("${app.mqtt.allow-commissioning-unlock:false}")
-    private boolean allowCommissioningUnlock;
 
     @Override
     public JsonNode resolve(JobStep current) {
@@ -62,8 +60,7 @@ public class JobStepInputResolverImpl implements JobStepInputResolver {
                 && "UNLOCK_COMPARTMENT".equals(resolved.path("action").asText())) {
             ObjectNode business=resolved.deepCopy(); business.remove("authorization");
             scopeValidator.validate(current.getStep(),business,job);
-            if(allowCommissioningUnlock) resolved.remove("authorization");
-            else resolved.set("authorization",operationAuthorization.bind(current,resolved.get("authorization")));
+            resolved.set("authorization",operationAuthorization.bind(current,resolved.get("authorization")));
         } else scopeValidator.validate(current.getStep(), resolved, job);
         if(current.getStep().getStepType()==StepType.MOVE) navigation.bindMove(current,resolved);
         return resolved;
