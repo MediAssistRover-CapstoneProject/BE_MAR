@@ -1,7 +1,7 @@
 # Kế hoạch triển khai toàn bộ API Patient và Staff
 
-> Trạng thái tài liệu: Phase 0 và Phase 1 đã hoàn tất. Các API ở Phase 2–9 vẫn là kế hoạch.
-> Cập nhật: 2026-10-15. Phạm vi: Backend Java/Spring Boot của MediAssistRover.
+> Trạng thái tài liệu: Phase 0–1 đã hoàn tất; Phase 2–9 đã triển khai và đang chờ gate MySQL 8.4/full regression.
+> Cập nhật: 2026-10-16. Phạm vi: Backend Java/Spring Boot của MediAssistRover.
 
 ## 1. Mục tiêu và cách đọc
 
@@ -393,6 +393,8 @@ Hủy sau pickup hoặc khi cargo/door/lock chưa đối soát phải giữ robo
 `POST /api/v1/jobs/{jobId}/events` ở Phase 6 là entry point cho `PATH_CLEARED`, responder arrival và event đánh thức WAIT. Server dùng registry allowlist, kiểm `eventType + correlationKey + occurredAt`, lưu event trước ACK và từ chối event ngoài Job scope.
 
 ## 15. Phase 9 — OpenAPI, compatibility và rollout
+
+> **Trạng thái: IMPLEMENTED, VERIFICATION PENDING (2026-10-16).** Security boundary, tag, reusable error contract và kiểm tra tương thích tự động với snapshot Phase 0 đã được triển khai. Java 21 package và unit test OpenAPI đã pass; fresh MySQL 8.4/full regression đang chờ Docker khả dụng. Chi tiết tại [`phase9-openapi-compatibility-rollout.md`](./phase9-openapi-compatibility-rollout.md).
 
 ### 15.1. Public interfaces/types
 
