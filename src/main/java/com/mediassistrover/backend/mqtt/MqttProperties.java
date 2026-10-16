@@ -31,13 +31,17 @@ public class MqttProperties {
         return enabled && dispatchEnabled && stepType!=null && enabledStepTypes.contains(stepType.name());
     }
     @PostConstruct
-    public void validateStepTypes() {
-        for (String value:enabledStepTypes) {
-            if(value==null || value.isBlank()) throw new IllegalArgumentException("MQTT enabled StepType must not be blank");
-            try { StepType.valueOf(value); }
-            catch (IllegalArgumentException ex) { throw new IllegalArgumentException("Unsupported MQTT enabled StepType: "+value,ex); }
+    private void validateStepTypes() {
+    for (String value : enabledStepTypes) {
+        try {
+            StepType.valueOf(value);
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException(
+                    "Unsupported MQTT enabled StepType: " + value
+            );
         }
     }
+}
     public void validateConnection() {
         validateStepTypes();
         if (!enabled) return;
