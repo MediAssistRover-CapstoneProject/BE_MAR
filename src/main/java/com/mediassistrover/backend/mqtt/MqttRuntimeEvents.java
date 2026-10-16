@@ -101,7 +101,10 @@ public class MqttRuntimeEvents {
         step.setResultJson(p.path("result").deepCopy());step.setStatus(JobStepStatus.SUCCEEDED);step.setEndedAt(Instant.now(clock));command.setState("COMPLETED");
         command.setPhysicalStopConfirmed(p.path("physicalStopConfirmed").isBoolean()?p.path("physicalStopConfirmed").asBoolean():null);
         if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step) && p.path("physicalStopConfirmed").asBoolean())mapping.completed(step,p.path("result"),true);
-        if (physical(step) && !p.path("physicalStopConfirmed").asBoolean()) safety.recovery(job,"Successful physical action has no confirmed stop");
+        if (physical(step) && !p.path("physicalStopConfirmed").asBoolean()) {
+            command.setInterruptionReason("PHYSICAL_STOP_UNCONFIRMED");
+            safety.recovery(job,"Successful physical action has no confirmed stop");
+        }
         if("MOVE".equals(step.getStepTypeSnapshot()) && job.getStatus()==JobStatus.RUNNING && step.getInterruptionReason()==null
                 && p.path("physicalStopConfirmed").asBoolean() && step.getResultJson().path("reached").asBoolean()) navigationTargets.reached(step);
         finishInterrupted(job,step,command,p);
@@ -121,7 +124,10 @@ public class MqttRuntimeEvents {
         if (p.path("result").isObject()) step.setResultJson(p.path("result").deepCopy());
         command.setState(next==JobStepStatus.RECOVERY_REQUIRED?"RECOVERY_REQUIRED":"COMPLETED");
         command.setPhysicalStopConfirmed(p.path("physicalStopConfirmed").isBoolean()?p.path("physicalStopConfirmed").asBoolean():null);
-        if (next==JobStepStatus.RECOVERY_REQUIRED || physical(step) && !p.path("physicalStopConfirmed").asBoolean()) safety.recovery(job,"Pi error/restart lacks confirmed physical stop");
+        if (next==JobStepStatus.RECOVERY_REQUIRED || physical(step) && !p.path("physicalStopConfirmed").asBoolean()) {
+            command.setInterruptionReason("PHYSICAL_STOP_UNCONFIRMED");
+            safety.recovery(job,"Pi error/restart lacks confirmed physical stop");
+        }
         else if(step.getInterruptionReason()!=null)finishInterrupted(job,step,command,p);
         else if (next==JobStepStatus.CANCELLED && job.getStatus()==JobStatus.RUNNING) {
             if(mapping.open(job.getJobId())) {job.setCancelRequestedAt(Instant.now(clock));wakeups.request(job);return;}

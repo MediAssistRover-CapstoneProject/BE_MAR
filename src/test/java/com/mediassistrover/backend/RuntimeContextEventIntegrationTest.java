@@ -32,8 +32,9 @@ class RuntimeContextEventIntegrationTest extends MySqlIntegrationTest {
 
     @Test void earlyEventIsDurableConsumedOnceAndDuplicateIsIdempotent(){
         Fixture f=fixture("WF_EMERGENCY_SOS_RESPONSE","WAIT_STAFF",JobStepStatus.PENDING);UUID eventId=UUID.randomUUID();Instant occurred=Instant.now();WorkflowEventRequest request=new WorkflowEventRequest(eventId,"STAFF_ARRIVED","arrival-1",occurred,json.createObjectNode().put("note","at scene"));
+        f.step.setResolvedInputsJson(json.createObjectNode().put("wait_type","EVENT").put("event_type","STAFF_ARRIVED").put("correlation_key","arrival-1"));jobSteps.flush();
         var early=eventService.publish(f.job.getJobId(),request,f.principal,metadata());assertThat(early.consumedByJobStepId()).isNull();
-        f.step.setResolvedInputsJson(json.createObjectNode().put("wait_type","EVENT").put("event_type","STAFF_ARRIVED").put("correlation_key","arrival-1"));f.step.setStatus(JobStepStatus.RUNNING);f.step.setStartedAt(occurred.minusSeconds(1));jobSteps.flush();
+        f.step.setStatus(JobStepStatus.RUNNING);f.step.setStartedAt(occurred.minusSeconds(1));jobSteps.flush();
         assertThat(eventService.consumeAvailable(f.step)).isTrue();assertThat(f.step.getStatus()).isEqualTo(JobStepStatus.SUCCEEDED);assertThat(f.step.getResultJson().path("wake_reason").asText()).isEqualTo("EVENT");JobEvent stored=events.findById(eventId).orElseThrow();assertThat(stored.getConsumedByJobStep().getJobStepId()).isEqualTo(f.step.getJobStepId());assertThat(eventService.publish(f.job.getJobId(),request,f.principal,metadata()).duplicate()).isTrue();
     }
 

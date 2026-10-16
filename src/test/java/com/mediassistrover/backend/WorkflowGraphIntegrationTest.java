@@ -6,11 +6,13 @@ import com.mediassistrover.backend.entity.Account;
 import com.mediassistrover.backend.enums.*;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.JwtTokenService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.*;
+import org.springframework.transaction.annotation.Transactional;
 import java.util.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -20,13 +22,31 @@ class WorkflowGraphIntegrationTest extends MySqlIntegrationTest {
     @Autowired MockMvc mvc; @Autowired ObjectMapper json; @Autowired JdbcTemplate jdbc;
     @Autowired AccountRepository accounts; @Autowired WorkflowRepository workflows;
     @Autowired JwtTokenService jwt;
-    private String token(){String key=UUID.randomUUID().toString();Account admin=accounts.save(Account.builder().accountCode(key).username(key).fullName("Graph Admin").role(Role.ADMIN).authProvider(AuthProvider.LOCAL).status(AccountStatus.ACTIVE).passwordHash("unused").build());return jwt.issueAccessToken(admin).value();}
+    private UUID createdWorkflowId;
+    private UUID adminAccountId;
+    private String token(){String key=UUID.randomUUID().toString();Account admin=accounts.save(Account.builder().accountCode(key).username(key).fullName("Graph Admin").role(Role.ADMIN).authProvider(AuthProvider.LOCAL).status(AccountStatus.ACTIVE).passwordHash("unused").build());adminAccountId=admin.getAccountId();return jwt.issueAccessToken(admin).value();}
+
+    @AfterEach void cleanCreatedGraphAndAccount(){
+        if(createdWorkflowId==null&&adminAccountId==null)return;
+        jdbc.execute("SET FOREIGN_KEY_CHECKS=0");
+        try{
+            if(adminAccountId!=null)jdbc.update("DELETE FROM AuditLog WHERE account_id=UNHEX(REPLACE(?,'-',''))",adminAccountId.toString());
+            if(createdWorkflowId!=null){
+                String workflowId=createdWorkflowId.toString();
+                jdbc.update("DELETE FROM StepTransition WHERE workflow_id=UNHEX(REPLACE(?,'-',''))",workflowId);
+                jdbc.update("DELETE FROM Step WHERE workflow_id=UNHEX(REPLACE(?,'-',''))",workflowId);
+                jdbc.update("DELETE FROM Task WHERE workflow_id=UNHEX(REPLACE(?,'-',''))",workflowId);
+                jdbc.update("DELETE FROM Workflow WHERE workflow_id=UNHEX(REPLACE(?,'-',''))",workflowId);
+            }
+            if(adminAccountId!=null)jdbc.update("DELETE FROM Account WHERE account_id=UNHEX(REPLACE(?,'-',''))",adminAccountId.toString());
+        }finally{jdbc.execute("SET FOREIGN_KEY_CHECKS=1");}
+    }
 
     @Test void graphReplacementIsAtomicAndWorkflowCodeIsImmutable()throws Exception{
         String token=token();ObjectNode graph=graph();String code="AGG_"+UUID.randomUUID().toString().replace("-","").toUpperCase();
         ObjectNode definition=definition(code);ObjectNode request=json.createObjectNode();request.set("workflow",definition);request.set("graph",graph);
         JsonNode created=response(post("/api/v1/admin/workflows/graph").header("Authorization","Bearer "+token).contentType(MediaType.APPLICATION_JSON).content(request.toString()),201);
-        String id=created.path("workflow").path("workflowId").asText();String originalStep=created.path("steps").get(0).path("stepId").asText();
+        String id=created.path("workflow").path("workflowId").asText();createdWorkflowId=UUID.fromString(id);String originalStep=created.path("steps").get(0).path("stepId").asText();
         ObjectNode invalid=graph.deepCopy();((ObjectNode)invalid.path("transitions").get(0)).put("toStepCode","UNKNOWN").remove("terminalStatus");
         mvc.perform(put("/api/v1/admin/workflows/{id}/graph",id).header("Authorization","Bearer "+token).contentType(MediaType.APPLICATION_JSON).content(invalid.toString())).andExpect(status().isUnprocessableEntity());
         JsonNode unchanged=response(get("/api/v1/admin/workflows/{id}",id).header("Authorization","Bearer "+token),200);
@@ -46,14 +66,14 @@ class WorkflowGraphIntegrationTest extends MySqlIntegrationTest {
         mvc.perform(put("/api/v1/admin/workflows/{id}/graph",id).header("Authorization","Bearer "+token).contentType(MediaType.APPLICATION_JSON).content(graph.toString())).andExpect(status().isUnprocessableEntity());
     }
 
-    @Test void allEightSeedGraphsValidateWithoutStepTypeTable()throws Exception{
+    @Test @Transactional void allEightSeedGraphsValidateWithoutStepTypeTable()throws Exception{
         String token=token();Set<String> codes=Set.of("WF_PATIENT_ESCORT","WF_INFORMATION_ASSISTANCE","WF_SECURE_MEDICAL_DELIVERY","WF_EMERGENCY_SOS_RESPONSE","WF_CROWD_MONITORING","WF_FALL_RESPONSE","WF_RESTRICTED_MONITORING","WF_NAVIGATION");
         var seeded=workflows.findAll().stream().filter(w->w.getSchemaVersion()==2&&codes.contains(w.getWorkflowCode())).toList();assertThat(seeded).hasSize(8);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name='StepType'",Integer.class)).isZero();
         assertThat(jdbc.queryForObject("SELECT data_type FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='Account' AND column_name='account_id'",String.class)).isEqualTo("binary");
         for(var workflow:seeded)response(post("/api/v1/admin/workflows/{id}/validate",workflow.getWorkflowId()).header("Authorization","Bearer "+token),200);
     }
-    @Test void semanticContractBlocksUnsupportedHandlersAndUndeclaredInputs()throws Exception{
+    @Test @Transactional void semanticContractBlocksUnsupportedHandlersAndUndeclaredInputs()throws Exception{
         String token=token();
         ObjectNode unsupported=graph();ObjectNode unsupportedStep=(ObjectNode)unsupported.path("steps").get(0);
         unsupportedStep.put("stepType","DATA_SERVICE");unsupportedStep.set("paramsJson",json.createObjectNode().put("service_key","NOT_IMPLEMENTED"));
