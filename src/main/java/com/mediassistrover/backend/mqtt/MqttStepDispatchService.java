@@ -538,16 +538,31 @@ public class MqttStepDispatchService {
             }
         }
 
-        /*
-         * Final MQTT/Pi contract validation.
-         *
-         * StepInputContractValidator.validateMqttParams()
-         * must use pi=true.
-         */
-        inputs.validateMqttParams(
-                step.getStep(),
-                params
-        );
+       /*
+ * WAIT(EVENT) may omit correlation_key in the workflow definition.
+ * The BE normalizes it to operationKey before sending the final
+ * MQTT command to Pi.
+ *
+ * If the workflow already resolved a real correlation_key
+ * (for example mapping_session_id), never overwrite it.
+ */
+if ("WAIT".equals(step.getStepTypeSnapshot())
+        && "EVENT".equals(params.path("wait_type").asText())
+        && (
+        !params.has("correlation_key")
+                || params.path("correlation_key").asText().isBlank()
+)) {
+
+    params.put(
+            "correlation_key",
+            step.getOperationKey()
+    );
+}
+
+inputs.validateMqttParams(
+        step.getStep(),
+        params
+);
 
         UUID commandId =
                 UUID.randomUUID();
