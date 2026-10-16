@@ -76,6 +76,13 @@
             },
             "stepType": {
               "enum": [
+                "AUTHENTICATE",
+                "INTERACT",
+                "HANDLE_PAYLOAD",
+                "DATA_SERVICE",
+                "SET_CONTEXT",
+                "CHECK_CONDITION",
+                "NOTIFY",
                 "MOVE",
                 "CONTROL_HARDWARE",
                 "EXECUTE_SENSING",
@@ -184,7 +191,10 @@
               "then": {
                 "properties": {
                   "params": {
-                    "$ref": "pi-step-inputs.schema.json#/$defs/WAIT"
+                    "anyOf": [
+                      { "$ref": "pi-step-inputs.schema.json#/$defs/WAIT" },
+                      { "$ref": "be-step-contracts.json#/$defs/WAITInput" }
+                    ]
                   }
                 }
               }

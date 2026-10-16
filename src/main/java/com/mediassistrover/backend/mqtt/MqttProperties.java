@@ -4,6 +4,8 @@ import lombok.Getter;
 import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
+import com.mediassistrover.backend.enums.StepType;
+import jakarta.annotation.PostConstruct;
 import java.nio.file.Path;
 import java.util.*;
 
@@ -25,13 +27,24 @@ public class MqttProperties {
     private int commandTtlSec=30;
     private int retryIntervalSec=3;
     public boolean manages(UUID robotId) { return enabled && robotIds.contains(robotId); }
+    public boolean dispatches(StepType stepType) {
+        return enabled && dispatchEnabled && stepType!=null && enabledStepTypes.contains(stepType.name());
+    }
+    @PostConstruct
+    public void validateStepTypes() {
+        for (String value:enabledStepTypes) {
+            if(value==null || value.isBlank()) throw new IllegalArgumentException("MQTT enabled StepType must not be blank");
+            try { StepType.valueOf(value); }
+            catch (IllegalArgumentException ex) { throw new IllegalArgumentException("Unsupported MQTT enabled StepType: "+value,ex); }
+        }
+    }
     public void validateConnection() {
+        validateStepTypes();
         if (!enabled) return;
         var uri=java.net.URI.create(brokerUri);
         if (!"ssl".equals(uri.getScheme()) || uri.getHost()==null) throw new IllegalArgumentException("MQTT requires ssl://host:port with hostname verification");
         if (username==null || username.isBlank() || password==null || password.isBlank()) throw new IllegalArgumentException("MQTT broker credentials are required");
         if (clientId==null || clientId.isBlank() || commandTtlSec<1 || commandTtlSec>300 || retryIntervalSec<1 || retryIntervalSec>10)
             throw new IllegalArgumentException("Invalid MQTT client ID / timing configuration");
-        if (!Set.of("WAIT","MOVE","CONTROL_HARDWARE","EXECUTE_SENSING").containsAll(enabledStepTypes)) throw new IllegalArgumentException("Unsupported MQTT enabled StepType");
     }
 }

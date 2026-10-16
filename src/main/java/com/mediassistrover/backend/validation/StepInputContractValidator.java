@@ -55,14 +55,15 @@ public class StepInputContractValidator {
         validate(step, inputs, true, true, false);
     }
 
-    /** Final gate for the future MQTT dispatcher: exact MAR-STEP-2 Pi payload, no BE metadata. */
-    public void validatePiParams(Step step, JsonNode params) {
+    /** Final gate for the MQTT dispatcher: resolved schema-3 params, no unresolved references. */
+    public void validateMqttParams(Step step, JsonNode params) {
         object(step, params, "params");
         rejectRefs(step, params);
-        if (!Set.of(StepType.MOVE, StepType.CONTROL_HARDWARE, StepType.EXECUTE_SENSING, StepType.WAIT)
-                .contains(step.getStepType())) fail(step, "stepType", "is not a Pi action");
-        validate(step, params, false, true, true);
+        validate(step, params, false, true, false);
     }
+
+    /** Compatibility alias for callers compiled against the earlier four-action API. */
+    public void validatePiParams(Step step, JsonNode params) { validateMqttParams(step,params); }
 
     private void validate(Step s, JsonNode n, boolean template, boolean required, boolean pi) {
         boolean modern = pi || s.getWorkflow() != null && s.getWorkflow().getSchemaVersion() == 3;

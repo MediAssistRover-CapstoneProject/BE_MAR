@@ -29,9 +29,10 @@ public class MqttOperationControlService {
     private final org.springframework.context.ApplicationEventPublisher updates;
     private final Clock clock;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
+    private final StepExecutionPolicy executionPolicy;
     private static final Set<JobStepStatus> TERMINAL=EnumSet.of(JobStepStatus.SUCCEEDED,JobStepStatus.FAILED,JobStepStatus.TIMED_OUT,JobStepStatus.CANCELLED);
     public boolean hasUnresolvedPiWork(List<JobStep> visits) {
-        for(JobStep step:visits)if(!StepExecutionPolicy.isServer(step,step.getResolvedInputsJson())) {
+        for(JobStep step:visits)if(!executionPolicy.isServer(step,step.getResolvedInputsJson())) {
             var command=commands.findByJobStepId(step.getJobStepId()).orElse(null);
             if(command!=null && command.getSendAttempts()>0 && !Boolean.TRUE.equals(command.getPhysicalStopConfirmed())
                     && (!TERMINAL.contains(step.getStatus()) || Set.of("MOVE","CONTROL_HARDWARE").contains(step.getStepTypeSnapshot())
@@ -41,7 +42,7 @@ public class MqttOperationControlService {
     }
 
     public boolean handle(Job job,JobStep step) {
-        if(step==null || StepExecutionPolicy.isServer(step,step.getResolvedInputsJson()))return false;
+        if(step==null || executionPolicy.isServer(step,step.getResolvedInputsJson()))return false;
         if(job.getRobot()!=null)robots.findByIdForUpdate(job.getRobot().getRobotId()).orElseThrow();
         var session=job.getRobot()==null?null:sessions.lock(job.getRobot().getRobotId()).orElse(null);
         var execute=commands.findByJobStepId(step.getJobStepId()).orElse(null);

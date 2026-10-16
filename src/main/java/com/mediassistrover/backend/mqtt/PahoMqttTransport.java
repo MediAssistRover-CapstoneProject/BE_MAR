@@ -75,11 +75,16 @@ public class PahoMqttTransport implements SmartLifecycle {
             options.setAutomaticReconnect(true);options.setAutomaticReconnectDelay(1000,5000);options.setMaximumPacketSize(1_048_576L);
             options.setSocketFactory(tls(properties));options.setHttpsHostnameVerificationEnabled(true);
             running=true;
-            client.connect(options,null,new MqttActionListener() {
-                public void onSuccess(IMqttToken token) { }
-                public void onFailure(IMqttToken token,Throwable error) {state.disconnected();log.warn("MQTT initial connection failed; scheduler will retry");}
-            });
-        } catch (MqttException ex) {running=false;throw new IllegalStateException("Cannot start MQTT client",ex);}
+            try {
+                client.connect(options,null,new MqttActionListener() {
+                    public void onSuccess(IMqttToken token) { }
+                    public void onFailure(IMqttToken token,Throwable error) {state.disconnected();log.warn("MQTT initial connection failed; scheduler will retry");}
+                });
+            } catch (MqttException ex) {
+                state.disconnected();
+                log.warn("MQTT initial connection could not be started; REST backend remains available and scheduler will retry: reason {}",ex.getReasonCode());
+            }
+        } catch (MqttException ex) {running=false;throw new IllegalStateException("Cannot initialize MQTT client",ex);}
     }
     public CompletableFuture<Void> publish(String topic,byte[] bytes,int qos) {
         var result=new CompletableFuture<Void>();

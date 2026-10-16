@@ -35,6 +35,7 @@ public class WorkflowOrchestratorService {
     private final ObjectMapper json;
     private final Clock clock;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
+    private final StepExecutionPolicy executionPolicy;
 
     @Transactional
     public void advance(UUID jobId) {
@@ -78,7 +79,7 @@ public class WorkflowOrchestratorService {
         }
         JobStep selected=job.getSelectedJobStep();
         if (selected!=null && selected.getStatus()==JobStepStatus.RUNNING) {
-            if (!StepExecutionPolicy.isServer(selected,selected.getResolvedInputsJson())) return;
+            if (!executionPolicy.isServer(selected,selected.getResolvedInputsJson())) return;
             if (!selected.getStartedAt().plusSeconds(selected.getTimeoutSecSnapshot()).isAfter(now)) {
                 selected.setStatus(JobStepStatus.TIMED_OUT); selected.setEndedAt(now); selected.setErrorCode("STEP_TIMEOUT");
                 selected.setErrorDetailsJson(json.createObjectNode().put("reason","STEP_TIMEOUT"));
@@ -96,7 +97,7 @@ public class WorkflowOrchestratorService {
             if (route.getToStep()==null) { finish(job,route.getTerminalStatus()); return; }
             target=route.getToStep();
         } else {
-            if (selected.getStatus()==JobStepStatus.PENDING && StepExecutionPolicy.isServer(selected,selected.getResolvedInputsJson()))
+            if (selected.getStatus()==JobStepStatus.PENDING && executionPolicy.isServer(selected,selected.getResolvedInputsJson()))
                 server.execute(selected);
             else if(selected.getStatus()==JobStepStatus.PENDING) mqttDispatch.dispatch(selected);
             updates.publishEvent(new RuntimeChanged(jobId)); return;
@@ -152,7 +153,7 @@ public class WorkflowOrchestratorService {
 
     private boolean hasPhysicalWork(List<JobStep> visits) {
         return visits.stream().anyMatch(s->(s.getStartedAt()!=null || !s.getResolvedInputsJson().isEmpty())
-                && !StepExecutionPolicy.isServer(s,s.getResolvedInputsJson()));
+                && !executionPolicy.isServer(s,s.getResolvedInputsJson()));
     }
     private void finish(Job job,TerminalStatus terminal) {
         JobStep finishingStep=job.getSelectedJobStep();
