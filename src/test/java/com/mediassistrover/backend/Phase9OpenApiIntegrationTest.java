@@ -60,18 +60,20 @@ class Phase9OpenApiIntegrationTest extends MySqlIntegrationTest {
 
     @Test
     void publishesEndpointAndZoneEnumsAsClosedStringContracts() throws Exception {
-        mvc.perform(get("/v3/api-docs"))
+        JsonNode document = objectMapper.readTree(mvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.components.schemas.EndpointRequest.properties.endpointType.$ref")
-                        .value("#/components/schemas/EndpointType"))
-                .andExpect(jsonPath("$.components.schemas.EndpointType.type").value("string"))
-                .andExpect(jsonPath("$.components.schemas.EndpointType.enum")
-                        .value(List.of("WAYPOINT", "CHARGER", "PARK", "STAGING")))
-                .andExpect(jsonPath("$.components.schemas.ZoneRequest.properties.zoneType.$ref")
-                        .value("#/components/schemas/ZoneType"))
-                .andExpect(jsonPath("$.components.schemas.ZoneType.type").value("string"))
-                .andExpect(jsonPath("$.components.schemas.ZoneType.enum")
-                        .value(List.of("KEEP_OUT", "SPEED", "NO_STOP")));
+                .andReturn().getResponse().getContentAsString());
+
+        assertThat(document.at("/components/schemas/EndpointRequest/properties/endpointType/$ref").asText())
+                .isEqualTo("#/components/schemas/EndpointType");
+        assertThat(document.at("/components/schemas/EndpointType/type").asText()).isEqualTo("string");
+        assertThat(document.at("/components/schemas/EndpointType/enum"))
+                .isEqualTo(objectMapper.valueToTree(List.of("WAYPOINT", "CHARGER", "PARK", "STAGING")));
+        assertThat(document.at("/components/schemas/ZoneRequest/properties/zoneType/$ref").asText())
+                .isEqualTo("#/components/schemas/ZoneType");
+        assertThat(document.at("/components/schemas/ZoneType/type").asText()).isEqualTo("string");
+        assertThat(document.at("/components/schemas/ZoneType/enum"))
+                .isEqualTo(objectMapper.valueToTree(List.of("KEEP_OUT", "SPEED", "NO_STOP")));
     }
 
     @Test

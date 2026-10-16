@@ -233,12 +233,15 @@ public class OpenApiConfig {
             components = new Components();
             openApi.setComponents(components);
         }
-        components.addSchemas(EndpointType.class.getSimpleName(), enumSchema(EndpointType.values()));
-        components.addSchemas(ZoneType.class.getSimpleName(), enumSchema(ZoneType.values()));
+        components.addSchemas(EndpointType.class.getSimpleName(), enumSchema(
+                EndpointType.values(), "OTTO endpoint type"));
+        components.addSchemas(ZoneType.class.getSimpleName(), enumSchema(
+                ZoneType.values(), "Robot navigation zone type"));
     }
 
-    private Schema<String> enumSchema(Enum<?>[] values) {
+    private Schema<String> enumSchema(Enum<?>[] values, String description) {
         return new StringSchema()
+                .description(description)
                 ._enum(java.util.Arrays.stream(values).map(Enum::name).toList());
     }
 
