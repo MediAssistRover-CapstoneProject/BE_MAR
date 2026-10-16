@@ -9,6 +9,7 @@ import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.responses.ApiResponses;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -61,6 +62,10 @@ class OpenApiConfigTest {
                 "ValidationError", "Unauthorized", "Forbidden", "ResourceNotFound", "Conflict",
                 "LegacyExecutionRetired", "BusinessRuleViolation");
         assertThat(openApi.getComponents().getSchemas()).containsKey("ApiErrorResponse");
+        assertThat(openApi.getComponents().getSchemas().get("EndpointType").getEnum())
+                .isEqualTo(List.of("WAYPOINT", "CHARGER", "PARK", "STAGING"));
+        assertThat(openApi.getComponents().getSchemas().get("ZoneType").getEnum())
+                .isEqualTo(List.of("KEEP_OUT", "SPEED", "NO_STOP"));
     }
 
     private PathItem item(PathItem.HttpMethod method) {

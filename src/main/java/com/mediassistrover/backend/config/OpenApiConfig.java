@@ -1,5 +1,7 @@
 package com.mediassistrover.backend.config;
 
+import com.mediassistrover.backend.enums.EndpointType;
+import com.mediassistrover.backend.enums.ZoneType;
 import com.mediassistrover.backend.exception.ApiErrorResponse;
 import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.oas.models.Components;
@@ -67,6 +69,7 @@ public class OpenApiConfig {
     OpenApiCustomizer phase9ContractCustomizer() {
         return openApi -> {
             registerErrorContract(openApi);
+            registerClosedEnumContracts(openApi);
             registerPatientStaffTags(openApi);
             if (openApi.getPaths() == null) {
                 return;
@@ -221,6 +224,22 @@ public class OpenApiConfig {
         components.addResponses("Conflict", errorResponse("Idempotency conflict or concurrent update"));
         components.addResponses("LegacyExecutionRetired", errorResponse("Legacy schema 2 execution is unavailable for this workflow"));
         components.addResponses("BusinessRuleViolation", errorResponse("Request violates a workflow or domain rule"));
+    }
+
+    private void registerClosedEnumContracts(OpenAPI openApi) {
+        Components components = openApi.getComponents();
+        if (components == null) {
+            components = new Components();
+            openApi.setComponents(components);
+        }
+        components.addSchemas(EndpointType.class.getSimpleName(), enumSchema(EndpointType.values()));
+        components.addSchemas(ZoneType.class.getSimpleName(), enumSchema(ZoneType.values()));
+    }
+
+    private Schema<String> enumSchema(Enum<?>[] values) {
+        return new Schema<String>()
+                .type("string")
+                ._enum(java.util.Arrays.stream(values).map(Enum::name).toList());
     }
 
     private ApiResponse errorResponse(String description) {
