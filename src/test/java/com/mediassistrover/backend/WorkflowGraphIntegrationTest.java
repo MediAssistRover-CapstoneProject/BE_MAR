@@ -30,14 +30,15 @@ class WorkflowGraphIntegrationTest extends MySqlIntegrationTest {
         if(createdWorkflowId==null&&adminAccountId==null)return;
         jdbc.execute("SET FOREIGN_KEY_CHECKS=0");
         try{
-            if(adminAccountId!=null)jdbc.update("DELETE FROM AuditLog WHERE account_id=?",adminAccountId);
+            if(adminAccountId!=null)jdbc.update("DELETE FROM AuditLog WHERE account_id=UNHEX(REPLACE(?,'-',''))",adminAccountId.toString());
             if(createdWorkflowId!=null){
-                jdbc.update("DELETE FROM StepTransition WHERE workflow_id=?",createdWorkflowId);
-                jdbc.update("DELETE FROM Step WHERE workflow_id=?",createdWorkflowId);
-                jdbc.update("DELETE FROM Task WHERE workflow_id=?",createdWorkflowId);
-                jdbc.update("DELETE FROM Workflow WHERE workflow_id=?",createdWorkflowId);
+                String workflowId=createdWorkflowId.toString();
+                jdbc.update("DELETE FROM StepTransition WHERE workflow_id=UNHEX(REPLACE(?,'-',''))",workflowId);
+                jdbc.update("DELETE FROM Step WHERE workflow_id=UNHEX(REPLACE(?,'-',''))",workflowId);
+                jdbc.update("DELETE FROM Task WHERE workflow_id=UNHEX(REPLACE(?,'-',''))",workflowId);
+                jdbc.update("DELETE FROM Workflow WHERE workflow_id=UNHEX(REPLACE(?,'-',''))",workflowId);
             }
-            if(adminAccountId!=null)jdbc.update("DELETE FROM Account WHERE account_id=?",adminAccountId);
+            if(adminAccountId!=null)jdbc.update("DELETE FROM Account WHERE account_id=UNHEX(REPLACE(?,'-',''))",adminAccountId.toString());
         }finally{jdbc.execute("SET FOREIGN_KEY_CHECKS=1");}
     }
 
