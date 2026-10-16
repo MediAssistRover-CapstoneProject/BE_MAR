@@ -29,6 +29,7 @@ public class MqttStepDispatchService {
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     private final com.mediassistrover.backend.ai.AiSensingService ai;
     private final MqttRolloutService rollout;
+    private final StepExecutionPolicy executionPolicy;
 
     public void requireActionSupported(Step step) {
         if (!properties.isEnabled() || !properties.isDispatchEnabled() || properties.getRobotIds().isEmpty()
@@ -41,8 +42,6 @@ public class MqttStepDispatchService {
         if(step.getStepType()==StepType.EXECUTE_SENSING && com.mediassistrover.backend.ai.AiSensingService.TYPES.contains(params.path("sensing_type").asText()))ai.requireEnabled();
         if (step.getStepType()==StepType.EXECUTE_SENSING && !Set.of("ROBOT_HEALTH","SIDE_CLEARANCE","MAPPING","CROWD_DENSITY","RESTRICTED_ZONE").contains(params.path("sensing_type").asText()))
             throw new BusinessRuleException("Sensing action is outside the integrated Pi contract; keep workflow DRAFT");
-        if (step.getStepType()==StepType.WAIT && !"DURATION".equals(params.path("wait_type").asText()))
-            throw new BusinessRuleException("Only WAIT/DURATION is executed by Pi");
     }
 
     @Transactional
@@ -52,7 +51,7 @@ public class MqttStepDispatchService {
         Job job=step.getJobTask().getJob();
         if (!job.isBeOrchestrated() || job.getStatus()!=JobStatus.RUNNING || job.getSelectedJobStep()==null
                 || !job.getSelectedJobStep().getJobStepId().equals(step.getJobStepId()) || step.getStatus()!=JobStepStatus.PENDING
-                || StepExecutionPolicy.isServer(step,step.getResolvedInputsJson())) throw new BusinessRuleException("Dispatch requires selected PENDING Pi step");
+                || executionPolicy.isServer(step,step.getResolvedInputsJson())) throw new BusinessRuleException("Dispatch requires selected PENDING MQTT step");
         if(step.getInterruptionReason()!=null || job.getCancelRequestedAt()!=null && !step.isMappingCleanup())return;
         // Configuration/catalog changes after commit must not reinterpret an existing operation.
         if (commands.findByJobStepId(step.getJobStepId()).isPresent()) return;
@@ -91,7 +90,7 @@ public class MqttStepDispatchService {
         // Metadata permitted in BE templates is never sent as GPIO/authorization or unrelated business data.
         if ("CONTROL_HARDWARE".equals(step.getStepTypeSnapshot())) {params.remove(List.of("maxAttempts","service_request_id"));
             if ("LOCK".equals(params.path("action").asText())) params.put("action","LOCK_COMPARTMENT");}
-        inputs.validatePiParams(step.getStep(),params);
+        inputs.validateMqttParams(step.getStep(),params);
         UUID commandId=UUID.randomUUID();Instant now=Instant.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
         ObjectNode command=wire.object().put("protocolVersion","1.0").put("contract","MAR-STEP-2").put("messageType","COMMAND")
                 .put("commandId",commandId.toString()).put("correlationId",commandId.toString()).put("robotId",session.getRobotId().toString())

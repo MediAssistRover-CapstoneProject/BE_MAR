@@ -50,6 +50,9 @@ public class MqttRuntimeEvents {
                 && Set.of(JobStepStatus.SUCCEEDED,JobStepStatus.FAILED,JobStepStatus.TIMED_OUT,JobStepStatus.CANCELLED).contains(step.getStatus());
         if(!selected && !(stoppedVisit && (cancelAck || Set.of("STEP_ERROR","STEP_RESULT").contains(e.messageType()))))throw new BusinessRuleException("Event is not for the selected graph visit");
         JsonNode p=e.payload();Instant now=Instant.now(clock);String previous=step.getStatus().name();
+        if(Set.of("STEP_RESULT","STEP_ERROR").contains(e.messageType()) && p.has("stepType")
+                && !step.getStepTypeSnapshot().equals(p.path("stepType").asText()))
+            throw new BusinessRuleException(e.messageType()+" StepType does not match the dispatched JobStep");
         switch (e.messageType()) {
             case "COMMAND_ACK" -> {
                 if(cancelAck) {cancelAck(job,step,command,correlated,p,e,lateTerminal);break;}
@@ -98,6 +101,7 @@ public class MqttRuntimeEvents {
         if (!p.path("result").isObject()) throw new BusinessRuleException("Journal completion lacks step output");
         outputs.validate(step,p.path("result"),reportedAt);
         ai.completed(step,command,p.path("result"),reportedAt);
+        applyBackendState(step,p.path("result"));
         step.setResultJson(p.path("result").deepCopy());step.setStatus(JobStepStatus.SUCCEEDED);step.setEndedAt(Instant.now(clock));command.setState("COMPLETED");
         command.setPhysicalStopConfirmed(p.path("physicalStopConfirmed").isBoolean()?p.path("physicalStopConfirmed").asBoolean():null);
         if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step) && p.path("physicalStopConfirmed").asBoolean())mapping.completed(step,p.path("result"),true);
@@ -175,6 +179,14 @@ public class MqttRuntimeEvents {
     private void remember(RobotCommandOutbox command,MqttWire.Envelope e) {command.setResultEnvelopeJson(wireNode(e));}
     private JsonNode wireNode(MqttWire.Envelope e) {
         return wire.tree(e);
+    }
+    private void applyBackendState(JobStep step,JsonNode result) {
+        if(!"SET_CONTEXT".equals(step.getStepTypeSnapshot()))return;
+        Job job=step.getJobTask().getJob();
+        com.fasterxml.jackson.databind.node.ObjectNode context=job.getContextJson()!=null && job.getContextJson().isObject()
+                ?((com.fasterxml.jackson.databind.node.ObjectNode)job.getContextJson()).deepCopy():wire.object();
+        result.path("updated").fields().forEachRemaining(entry->context.set(entry.getKey(),entry.getValue().deepCopy()));
+        job.setContextJson(context);
     }
     private boolean physical(JobStep step) {return Set.of("MOVE","CONTROL_HARDWARE").contains(step.getStepTypeSnapshot()) || com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step);}
 }

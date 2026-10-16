@@ -8,6 +8,8 @@ import com.mediassistrover.backend.mqtt.*;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.service.*;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -51,7 +53,7 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
         properties.setEnabled(false);properties.setDispatchEnabled(false);properties.getRobotIds().clear();connection.disconnected();
     }
     private MqttTestFixture fixture(StepType type,String sensing) {
-        fixture=tx.execute(status->MqttTestFixture.create(entityManager,json,type,sensing));properties.getRobotIds().add(fixture.robotId);
+        fixture=tx.execute(status->MqttTestFixture.create(entityManager,json,type,sensing));properties.getRobotIds().add(fixture.robotId);properties.getEnabledStepTypes().add(type.name());
         tx.executeWithoutResult(status->wakeups.request(jobs.findById(fixture.jobId).orElseThrow()));orchestrator.advance(fixture.jobId);return fixture;
     }
     private void receive(ObjectNode raw) {router.route(MqttTopics.topic(fixture.robotId,"events"),wire.bytes(raw),1,false);}
@@ -61,9 +63,35 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
     private void confirmProfile() {if(fixture.type!=StepType.MOVE)return;var robot=robots.findById(fixture.robotId).orElseThrow();var device=new com.mediassistrover.backend.security.DevicePrincipal(robot.getRobotId(),robot.getRobotCode(),robot.getDeviceTokenVersion(),"test",Instant.now().plusSeconds(300));var manifest=profiles.manifest(device);profiles.confirm(new NavigationProfileService.Confirm(fixture.transportId,fixture.producerId,fixture.mapId,manifest.profile().path("map_asset_sha256").asText(),manifest.profileHash()),device);}
     private ObjectNode ack(boolean accepted) {return fixture.event(json,"COMMAND_ACK",json.createObjectNode().put("commandId",fixture.commandId.toString()).put("commandType","EXECUTE_STEP").put("accepted",accepted).put("status","ACCEPTED"));}
     private ObjectNode start() {return fixture.event(json,"STEP_STARTED",json.createObjectNode().put("attemptNo",1).put("stepType",fixture.type.name()).set("resolvedInputs",commands.findById(fixture.commandId).orElseThrow().getPayloadJson().path("step").path("params")));}
-    private ObjectNode result(boolean stopped) {var p=json.createObjectNode().put("status","SUCCEEDED").put("retryable",false).put("physicalStopConfirmed",stopped);p.putNull("errorCode");p.putNull("details");p.set("result",fixture.output(json));return fixture.event(json,"STEP_RESULT",p);}
-    private ObjectNode error(String status,Boolean stopped) {var p=json.createObjectNode().put("status",status).put("errorCode","TEST_ERROR").put("retryable",false);p.putNull("details");if(stopped!=null)p.put("physicalStopConfirmed",stopped);return fixture.event(json,"STEP_ERROR",p);}
+    private ObjectNode result(boolean stopped) {var p=json.createObjectNode().put("stepType",fixture.type.name()).put("status","SUCCEEDED").put("retryable",false).put("physicalStopConfirmed",stopped);p.putNull("errorCode");p.putNull("details");p.set("result",fixture.output(json));return fixture.event(json,"STEP_RESULT",p);}
+    private ObjectNode error(String status,Boolean stopped) {var p=json.createObjectNode().put("stepType",fixture.type.name()).put("status",status).put("errorCode","TEST_ERROR").put("errorMessage","test error").put("retryable",false);p.putNull("details");if(stopped!=null)p.put("physicalStopConfirmed",stopped);return fixture.event(json,"STEP_ERROR",p);}
     private Job currentJob() {return jobs.findById(fixture.jobId).orElseThrow();}
+
+    @ParameterizedTest @EnumSource(StepType.class)
+    void everyStepTypeDispatchesAndAcceptsAValidatedResultExactlyOnce(StepType type) {
+        fixture(type,type==StepType.EXECUTE_SENSING?"ROBOT_HEALTH":null);RobotCommandOutbox command=dispatch();
+        assertThat(command.getPayloadJson().path("step").path("stepType").asText()).isEqualTo(type.name());
+        assertThat(command.getPayloadJson().path("step").path("params")).isEqualTo(steps.findById(fixture.piStepId).orElseThrow().getResolvedInputsJson());
+        receive(ack(true));receive(start());ObjectNode completion=result(true);receive(completion);
+        long eventCount=events.count();long generation=work.findById(fixture.jobId).orElseThrow().getRequestedGeneration();receive(completion);
+        JobStep completed=steps.findById(fixture.piStepId).orElseThrow();assertThat(completed.getStatus()).isEqualTo(JobStepStatus.SUCCEEDED);
+        assertThat(events.count()).isEqualTo(eventCount);assertThat(work.findById(fixture.jobId).orElseThrow().getRequestedGeneration()).isEqualTo(generation);
+        if(type==StepType.SET_CONTEXT)assertThat(currentJob().getContextJson().path("remote_value").asInt()).isEqualTo(1);
+    }
+
+    @ParameterizedTest @EnumSource(StepType.class)
+    void everyStepTypeAcceptsStepError(StepType type) {
+        fixture(type,type==StepType.EXECUTE_SENSING?"ROBOT_HEALTH":null);dispatch();receive(error("FAILED",true));
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.FAILED);
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getErrorCode()).isEqualTo("TEST_ERROR");
+    }
+
+    @Test void mqttDisabledServerStepUsesItsExistingLocalExecutionPath() {
+        fixture=tx.execute(status->MqttTestFixture.create(entityManager,json,StepType.INTERACT,null));properties.getRobotIds().add(fixture.robotId);
+        tx.executeWithoutResult(status->wakeups.request(jobs.findById(fixture.jobId).orElseThrow()));orchestrator.advance(fixture.jobId);orchestrator.advance(fixture.jobId);
+        assertThat(commands.findByJobStepId(fixture.piStepId)).isEmpty();
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.RUNNING);
+    }
 
     @Test void helloNeedsHeartbeatAndRetainedPresenceCannotAuthorizeDispatch() {
         fixture(StepType.WAIT,null);

@@ -15,6 +15,7 @@ public class ServerStepExecutionService {
     private final List<ServerStepHandler> handlers;
     private final RuntimeStepCompletionService completion;
     private final Clock clock;
+    private final StepExecutionPolicy executionPolicy;
 
     @Transactional
     public void execute(JobStep step) {
@@ -22,7 +23,7 @@ public class ServerStepExecutionService {
         if (!job.isBeOrchestrated() || job.getStatus()!=JobStatus.RUNNING
                 || job.getSelectedJobStep()==null || !job.getSelectedJobStep().getJobStepId().equals(step.getJobStepId()))
             throw new BusinessRuleException("Server execution requires the selected BE JobStep");
-        if (!StepExecutionPolicy.isServer(step,step.getResolvedInputsJson())) throw new BusinessRuleException("Step requires Pi execution");
+        if (!executionPolicy.isServer(step,step.getResolvedInputsJson())) throw new BusinessRuleException("Step requires MQTT execution");
         if (step.getStatus()!=JobStepStatus.PENDING) throw new BusinessRuleException("Server step must be PENDING");
         step.setStatus(JobStepStatus.RUNNING); step.setStartedAt(Instant.now(clock));
         var execution=executePrepared(step);

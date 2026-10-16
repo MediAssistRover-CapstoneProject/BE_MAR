@@ -11,14 +11,15 @@ import java.util.*;
 
 /** Small committed graph used by DB tests and the real TLS broker test. */
 final class MqttTestFixture {
-    UUID robotId,workflowId,jobId,piStepId,endStepId,mapId,endpointId,floorId,hospitalId,accountId,commandId;
+    UUID robotId,workflowId,jobId,piStepId,endStepId,mapId,endpointId,floorId,hospitalId,accountId,serviceRequestId,commandId;
     UUID transportId=UUID.randomUUID(),producerId=UUID.randomUUID();long sequence;
     StepType type;String sensing;String operationKey;
     static MqttTestFixture create(EntityManager em,ObjectMapper json,StepType type,String sensing) {
         var f=new MqttTestFixture();f.type=type;f.sensing=sensing;String code=UUID.randomUUID().toString();Instant now=Instant.now();
-        FacilityMap map=null;
-        if (type==StepType.MOVE) {
-            Account actor=Account.builder().accountCode("MQ-"+code).username("mq-"+code).fullName("MQTT test").role(Role.ADMIN).authProvider(AuthProvider.LOCAL).status(AccountStatus.ACTIVE).passwordHash("unused").build();em.persist(actor);f.accountId=actor.getAccountId();
+        FacilityMap map=null;Account actor=null;
+        boolean delivery=Set.of(StepType.AUTHENTICATE,StepType.HANDLE_PAYLOAD).contains(type);
+        if (type==StepType.MOVE || delivery) {
+            actor=Account.builder().accountCode("MQ-"+code).username("mq-"+code).fullName("MQTT test").role(Role.ADMIN).authProvider(AuthProvider.LOCAL).status(AccountStatus.ACTIVE).passwordHash("unused").build();em.persist(actor);f.accountId=actor.getAccountId();
             HospitalInformation info=HospitalInformation.builder().updatedBy(actor).infoCategory("GENERAL").title("MQTT test").content("Test").languageCode("vi-VN").keywordsJson(json.createArrayNode()).status(HospitalInformationStatus.PUBLISHED).build();em.persist(info);f.hospitalId=info.getHospitalInformationId();
             Floor floor=Floor.builder().hospitalInformation(info).floorCode("F-"+code).floorName("Test").displayOrder(1).active(true).build();em.persist(floor);f.floorId=floor.getFloorId();
             map=FacilityMap.builder().floor(floor).mapCode("M-"+code).mapName("Test").versionNo(1).widthM(BigDecimal.TEN).heightM(BigDecimal.TEN)
@@ -27,6 +28,15 @@ final class MqttTestFixture {
             Endpoint endpoint=Endpoint.builder().map(map).endpointCode("E-"+code).endpointName("Test").endpointType(EndpointType.WAYPOINT).xM(BigDecimal.ONE).yM(BigDecimal.ONE).yawRad(BigDecimal.ZERO).active(true).accessible(true).build();em.persist(endpoint);f.endpointId=endpoint.getEndpointId();
         }
         Robot robot=Robot.builder().robotCode("MQ-"+code).robotName("Test").model("Test").status(RobotStatus.IDLE).protocolVersion(1).currentMap(map).mapAssetHash(map==null?null:map.getAssetHash()).capabilitiesJson(json.createArrayNode()).build();em.persist(robot);f.robotId=robot.getRobotId();
+        ServiceRequest request=null;
+        if(delivery) {
+            ObjectNode requestData=json.createObjectNode();requestData.putArray("items").addObject().put("item_code","MED-1").put("quantity",1);
+            request=ServiceRequest.builder().requestedByAccount(actor).requestCode("REQ-"+code).requestType(ServiceRequestType.DELIVERY).sourceType(RequestSourceType.STAFF_UI)
+                    .priority(50).status(ServiceRequestStatus.QUEUED).requestDataJson(requestData).idempotencyKey("mq-"+code).requestedAt(now).build();em.persist(request);em.flush();f.serviceRequestId=request.getServiceRequestId();
+            DeliveryRequest deliveryRequest=DeliveryRequest.builder().serviceRequest(request).map(map).pickupEndpoint(em.find(Endpoint.class,f.endpointId))
+                    .targetMode(TargetMode.ENDPOINT).recipientName("MQTT test").requiresConfirmation(true).build();em.persist(deliveryRequest);
+            em.persist(DeliveryItem.builder().deliveryRequest(deliveryRequest).itemCode("MED-1").itemName("Medicine").itemCategory("MEDICINE").quantity(1).unit("BOX").build());
+        }
         Workflow workflow=Workflow.builder().workflowCode("MQ-"+code).workflowName("Test").serviceType("TEST").versionNo(1).schemaVersion(3).graphVersion(3).maxDurationSec(600).maxTotalVisits(10)
                 .inputSchemaJson(json.createObjectNode()).inputUiJson(json.createObjectNode()).defaultInputsJson(json.createObjectNode()).outputMappingJson(json.createObjectNode()).requiredCapabilitiesJson(json.createArrayNode())
                 .status(WorkflowStatus.DRAFT).definitionHash("a".repeat(64)).compiledDefinitionJson(json.createObjectNode()).build();em.persist(workflow);f.workflowId=workflow.getWorkflowId();
@@ -37,7 +47,13 @@ final class MqttTestFixture {
             case EXECUTE_SENSING -> params.put("sensing_type",sensing);
             case CONTROL_HARDWARE -> params.put("compartment_id","CART_MAIN").put("action","LOCK_COMPARTMENT");
             case MOVE -> params.put("map_id",f.mapId.toString()).put("endpoint_id",f.endpointId.toString()).put("mode","NORMAL").put("max_speed_mps",0.05);
-            default -> throw new IllegalArgumentException();
+            case INTERACT -> params.put("prompt_key","WELCOME").put("action","DISPLAY").set("data",json.createObjectNode());
+            case DATA_SERVICE -> params.put("service_key","QUERY_HOSPITAL_INFORMATION").put("question","Visiting hours?").put("language_code","vi-VN");
+            case AUTHENTICATE -> params.put("purpose","DELIVERY_SENDER").put("service_request_id",f.serviceRequestId.toString());
+            case HANDLE_PAYLOAD -> {params.put("action","LOAD").put("service_request_id",f.serviceRequestId.toString()).put("compartment_id","CART_MAIN");params.putArray("items").addObject().put("item_code","MED-1").put("quantity",1);}
+            case NOTIFY -> params.put("notification_type","TEST").put("severity","INFO").put("require_ack",false).set("data",json.createObjectNode());
+            case CHECK_CONDITION -> params.set("expression",json.createObjectNode().put("path","/inputs/flag").put("operator","EQ").put("value",true));
+            case SET_CONTEXT -> params.putArray("operations").addObject().put("path","/vars/remote_value").put("value",1);
         }
         Step pi=definition(workflow,task,type,"PI",1,params,json);em.persist(pi);workflow.setStartStep(pi);
         ObjectNode set=json.createObjectNode();set.putArray("operations").addObject().put("path","/vars/done").put("value",true);
@@ -45,8 +61,9 @@ final class MqttTestFixture {
         em.persist(StepTransition.builder().workflow(workflow).fromStep(pi).toStep(end).outcome(TransitionOutcome.SUCCESS).priority(1).defaultTransition(true).build());
         for (TransitionOutcome outcome:List.of(TransitionOutcome.FAILURE,TransitionOutcome.TIMEOUT)) em.persist(StepTransition.builder().workflow(workflow).fromStep(pi).outcome(outcome).priority(1).defaultTransition(true).terminalStatus(TerminalStatus.FAILED).build());
         em.persist(StepTransition.builder().workflow(workflow).fromStep(end).outcome(TransitionOutcome.SUCCESS).priority(1).defaultTransition(true).terminalStatus(TerminalStatus.SUCCEEDED).build());
-        Job job=Job.builder().workflow(workflow).robot(robot).map(map).jobCode("MQ-"+code).status(JobStatus.QUEUED).priority(50).beOrchestrated(true).schemaVersion(3).graphVersion(3).protocolVersion(1)
-                .inputJson(json.createObjectNode()).contextJson(json.createObjectNode()).workflowHash("a".repeat(64)).queuedAt(now).build();em.persist(job);f.jobId=job.getJobId();
+        ObjectNode jobInput=json.createObjectNode().put("flag",true);if(delivery)jobInput.set("items",request.getRequestDataJson().path("items").deepCopy());
+        Job job=Job.builder().workflow(workflow).serviceRequest(request).robot(robot).map(map).jobCode("MQ-"+code).status(JobStatus.QUEUED).priority(50).beOrchestrated(true).schemaVersion(3).graphVersion(3).protocolVersion(1)
+                .inputJson(jobInput).contextJson(json.createObjectNode()).workflowHash("a".repeat(64)).queuedAt(now).build();em.persist(job);f.jobId=job.getJobId();
         JobTask runtime=JobTask.builder().job(job).task(task).sequenceNo(1).taskNameSnapshot("Test").status(JobTaskStatus.PENDING).configSnapshotJson(json.createObjectNode()).build();em.persist(runtime);
         for (Step step:List.of(pi,end)) {
             JobStep js=JobStep.builder().jobTask(runtime).step(step).visitNo(1).executionSequenceNo(step.getSequenceNo()).stepCodeSnapshot(step.getStepCode()).stepTypeSnapshot(step.getStepType().name())
@@ -60,7 +77,7 @@ final class MqttTestFixture {
     }
     ObjectNode hello(ObjectMapper json) {
         ObjectNode payload=json.createObjectNode().put("contract","MAR-STEP-2").put("runtimeVersion","0.7.0").put("simulation",true).put("unlockPolicy","DISABLED").put("mappingEnabled",false);
-        payload.putArray("enabledStepTypes").add("WAIT").add("MOVE").add("CONTROL_HARDWARE").add("EXECUTE_SENSING");payload.putArray("capabilities");payload.putArray("states");payload.putNull("mappingSession");
+        var enabled=payload.putArray("enabledStepTypes");for(StepType stepType:StepType.values())enabled.add(stepType.name());payload.putArray("capabilities");payload.putArray("states");payload.putNull("mappingSession");
         return system(json,"HELLO",payload);
     }
     ObjectNode heartbeat(ObjectMapper json) {
@@ -76,6 +93,13 @@ final class MqttTestFixture {
     }
     ObjectNode output(ObjectMapper json) {
         if (type==StepType.WAIT) {var result=json.createObjectNode().put("completed",true).put("wake_reason","DURATION").put("elapsed_sec",2);result.putNull("event");return result;}
+        if(type==StepType.INTERACT)return json.createObjectNode().put("completed",true).put("prompt_key","WELCOME").put("action","DISPLAY").put("source","UI").putNull("actor_account_id").put("completed_at",Instant.now().toString());
+        if(type==StepType.DATA_SERVICE){var data=json.createObjectNode().put("found",false).put("answer","Unavailable").put("language_code","vi-VN").put("count",0).putNull("source").put("fallback_code","INFORMATION_UNAVAILABLE");data.putArray("items");return json.createObjectNode().put("request_id",operationKey).set("data",data);}
+        if(type==StepType.AUTHENTICATE)return json.createObjectNode().put("verified",true).put("verification_id",UUID.randomUUID().toString()).put("actor_account_id",accountId.toString()).put("purpose","DELIVERY_SENDER").put("service_request_id",serviceRequestId.toString()).put("verified_at",Instant.now().minusSeconds(1).toString()).put("valid_until",Instant.now().plusSeconds(300).toString());
+        if(type==StepType.HANDLE_PAYLOAD){var result=json.createObjectNode().put("confirmed",true).put("action","LOAD").put("service_request_id",serviceRequestId.toString()).put("compartment_id","CART_MAIN");result.putArray("items").addObject().put("item_code","MED-1").put("quantity",1);return result.put("actor_account_id",accountId.toString()).put("confirmed_at",Instant.now().toString()).put("source","STAFF_MANUAL");}
+        if(type==StepType.NOTIFY)return json.createObjectNode().put("alert_id",UUID.randomUUID().toString()).put("notification_type","TEST").put("persisted",true).put("requires_ack",false);
+        if(type==StepType.CHECK_CONDITION)return json.createObjectNode().put("value",true);
+        if(type==StepType.SET_CONTEXT)return json.createObjectNode().set("updated",json.createObjectNode().put("remote_value",1));
         try {
             JsonNode cases=json.readTree(java.nio.file.Path.of("docs/schemas/fixtures/contract-cases.json").toFile());
             for (JsonNode c:cases) if(c.path("valid").asBoolean() && c.path("schema").asText().equals("pi-step-outputs.schema.json") && c.path("instance").path("stepType").asText().equals(type.name())) {
@@ -99,6 +123,11 @@ final class MqttTestFixture {
         em.createNativeQuery("UPDATE Workflow SET start_step_id=NULL WHERE workflow_id=:id").setParameter("id",f.workflowId).executeUpdate();
         for (String table:List.of("StepTransition","Step","Task","Workflow")) em.createNativeQuery("DELETE FROM "+table+" WHERE workflow_id=:id").setParameter("id",f.workflowId).executeUpdate();
         if (f.mapId!=null) {
+            if(f.serviceRequestId!=null) {
+                em.createNativeQuery("DELETE FROM DeliveryItem WHERE delivery_request_id=:request").setParameter("request",f.serviceRequestId).executeUpdate();
+                em.createNativeQuery("DELETE FROM DeliveryRequest WHERE service_request_id=:request").setParameter("request",f.serviceRequestId).executeUpdate();
+                em.createNativeQuery("DELETE FROM ServiceRequest WHERE service_request_id=:request").setParameter("request",f.serviceRequestId).executeUpdate();
+            }
             em.createNativeQuery("DELETE FROM Endpoint WHERE map_id=:id").setParameter("id",f.mapId).executeUpdate();
             em.createNativeQuery("DELETE FROM Map WHERE map_id=:id").setParameter("id",f.mapId).executeUpdate();
             em.createNativeQuery("DELETE FROM Floor WHERE floor_id=:id").setParameter("id",f.floorId).executeUpdate();
