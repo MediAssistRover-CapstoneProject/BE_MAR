@@ -40,7 +40,7 @@ class FacilityIntegrationTest extends MySqlIntegrationTest {
     @BeforeEach
     void cleanAndCreateAdmin() {
         jdbcTemplate.execute("SET FOREIGN_KEY_CHECKS=0");
-        for (String table : new String[]{"RobotLocationHistory","RobotStatusHistory","Robot","EndpointGroupMember","Endpoint","Room","EndpointGroup","Zone","Map","Floor","HospitalInformation","AuditLog","RevokedToken","RefreshToken","StaffProfile","Account"}) {
+        for (String table : new String[]{"RobotLocationHistory","RobotStatusHistory","Robot","EndpointGroupMember","Endpoint","Room","EndpointGroup","Zone","Map","Floor","HospitalInformationArticle","HospitalInformation","AuditLog","RevokedToken","RefreshToken","StaffProfile","Account"}) {
             jdbcTemplate.execute("TRUNCATE TABLE `" + table + "`");
         }
         jdbcTemplate.execute("SET FOREIGN_KEY_CHECKS=1");
@@ -69,10 +69,14 @@ class FacilityIntegrationTest extends MySqlIntegrationTest {
                 .andExpect(status().isCreated());
 
         mockMvc.perform(get("/api/v1/public/hospital-information"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].updatedByAccountId").doesNotExist())
+                .andExpect(jsonPath("$.content[0].status").doesNotExist());
         mockMvc.perform(get("/api/v1/public/zones"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
-                .andExpect(jsonPath("$.content[0].zoneCode").value("PUBLIC"));
+                .andExpect(jsonPath("$.content[0].zoneCode").value("PUBLIC"))
+                .andExpect(jsonPath("$.content[0].polygonJson").doesNotExist())
+                .andExpect(jsonPath("$.content[0].cameraSourceRef").doesNotExist());
 
         UUID secondMapId = createMap(floorId, "MAP-F1", 2);
         UUID groupId = createGroup(mapId);
@@ -83,6 +87,36 @@ class FacilityIntegrationTest extends MySqlIntegrationTest {
                                 .formatted(groupId, endpointId)))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.error").value("BUSINESS_RULE_VIOLATION"));
+
+        UUID publicEndpointId = createEndpoint(mapId);
+        mockMvc.perform(post("/api/v1/endpoint-group-members").header("Authorization", bearer(adminToken))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"endpointGroupId\":\"%s\",\"endpointId\":\"%s\",\"sequenceNo\":1,\"active\":true}"
+                                .formatted(groupId, publicEndpointId)))
+                .andExpect(status().isCreated());
+        mockMvc.perform(get("/api/v1/public/endpoints").param("mapId", mapId.toString())
+                        .param("endpointType", "CHECKPOINT").param("accessible", "true").param("q", "Endpoint"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].xM").doesNotExist())
+                .andExpect(jsonPath("$.content[0].description").doesNotExist());
+        mockMvc.perform(get("/api/v1/public/endpoint-groups/{id}/members", groupId))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].endpointId").value(publicEndpointId.toString()));
+        mockMvc.perform(get("/api/v1/public/endpoint-groups/{id}", groupId))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.selectionPolicy").doesNotExist())
+                .andExpect(jsonPath("$.allowFallback").doesNotExist());
+
+        UUID articleId = createAndPublishArticle(hospitalId);
+        mockMvc.perform(get("/api/v1/public/hospital-information/{hospitalId}/articles", hospitalId)
+                        .param("q", "pharmacy").param("category", "PROCESS").param("languageCode", "vi-VN"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].updatedByAccountId").doesNotExist())
+                .andExpect(jsonPath("$.content[0].rowVersion").doesNotExist());
+        mockMvc.perform(get("/api/v1/public/hospital-information/{hospitalId}/articles/{articleId}", hospitalId, articleId))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.answer").value("Go to pharmacy counter"));
+
+        UUID privateHospital = createHospitalProfile(false, true);
+        mockMvc.perform(get("/api/v1/public/hospital-information/{id}", privateHospital))
+                .andExpect(status().isNotFound());
     }
 
     @Test
@@ -156,6 +190,20 @@ class FacilityIntegrationTest extends MySqlIntegrationTest {
     private UUID createEndpoint(UUID mapId) throws Exception {
         String body="{\"mapId\":\"%s\",\"endpointCode\":\"EP-1\",\"endpointName\":\"Endpoint 1\",\"endpointType\":\"CHECKPOINT\",\"xM\":1,\"yM\":2,\"yawRad\":0,\"active\":true,\"accessible\":true,\"publicVisible\":true}".formatted(mapId);
         return UUID.fromString(response(post("/api/v1/endpoints").header("Authorization",bearer(adminToken)).contentType(MediaType.APPLICATION_JSON).content(body),201).get("endpointId").asText());
+    }
+
+    private UUID createAndPublishArticle(UUID hospitalId) throws Exception {
+        String body = """
+                {"articleCode":"PHARMACY_GUIDE","category":"PROCESS","canonicalQuestion":"Where is pharmacy?",
+                 "title":"Pharmacy guide","answer":"Go to pharmacy counter","languageCode":"vi-VN",
+                 "keywordsJson":["pharmacy"],"publicVisible":true}
+                """;
+        JsonNode created = response(post("/api/v1/hospital-information/{hospitalId}/articles", hospitalId)
+                .header("Authorization", bearer(adminToken)).contentType(MediaType.APPLICATION_JSON).content(body), 201);
+        UUID id = UUID.fromString(created.get("articleId").asText());
+        response(post("/api/v1/hospital-information/{hospitalId}/articles/{articleId}/publish", hospitalId, id)
+                .header("Authorization", bearer(adminToken)), 200);
+        return id;
     }
 
     private JsonNode response(org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request, int status) throws Exception {

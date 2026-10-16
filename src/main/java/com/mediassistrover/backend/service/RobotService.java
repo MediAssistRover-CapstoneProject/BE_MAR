@@ -7,6 +7,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 import java.util.UUID;
+import java.time.Instant;
+import com.mediassistrover.backend.security.AccountPrincipal;
 
 public interface RobotService {
     RobotResponse create(RobotCreateRequest request,UUID actorId,RequestMetadata metadata);
@@ -16,8 +18,8 @@ public interface RobotService {
     DeviceSecretResponse provisionSecret(UUID id,UUID actorId,RequestMetadata metadata);
     DeviceSecretResponse rotateSecret(UUID id,UUID actorId,RequestMetadata metadata);
     RobotResponse maintenance(UUID id,String reason,UUID actorId,RequestMetadata metadata);
-    RobotResponse reconcile(UUID id,String reason,UUID actorId,RequestMetadata metadata);
+    RobotResponse reconcile(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
     Page<RobotStatusHistoryResponse> statusHistory(UUID id,Pageable pageable);
-    Page<RobotLocationResponse> locationHistory(UUID id,Pageable pageable);
+    Page<RobotLocationResponse> locationHistory(UUID id,Instant from,Instant to,Pageable pageable);
     int markHeartbeatTimeoutsOffline();
 }

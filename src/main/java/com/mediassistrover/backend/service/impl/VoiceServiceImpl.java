@@ -12,10 +12,13 @@ import com.mediassistrover.backend.exception.ResourceNotFoundException;
 import com.mediassistrover.backend.mapper.VoiceMapper;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.DevicePrincipal;
+import com.mediassistrover.backend.security.AccountPrincipal;
 import com.mediassistrover.backend.service.VoiceService;
+import com.mediassistrover.backend.validation.StaffOperationalScopePolicy;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,6 +42,7 @@ public class VoiceServiceImpl implements VoiceService {
     private final RobotRepository robotRepository;
     private final ServiceRequestRepository serviceRequestRepository;
     private final VoiceMapper mapper;
+    private final StaffOperationalScopePolicy staffScope;
     private final Clock clock;
 
     @Override
@@ -185,27 +189,82 @@ public class VoiceServiceImpl implements VoiceService {
     }
 
     @Override
-    public InteractionResponse getInteraction(UUID id) {
-        return mapper.toResponse(interaction(id));
+    public InteractionResponse getInteraction(UUID id, AccountPrincipal principal) {
+        staffScope.requireCurrentStaffOrAdmin(principal);
+        VoiceInteraction entity = interaction(id);
+        InteractionResponse response = mapper.toResponse(entity);
+        if (principal.role() == Role.ADMIN || interactionRawDataAvailable(entity, principal)) {
+            return response;
+        }
+        return new InteractionResponse(response.voiceInteractionId(), null, response.robotId(),
+                response.languageCode(), response.status(), response.startedAt(), response.endedAt(),
+                response.detectedIntent(), null, null);
     }
 
     @Override
-    public Page<InteractionResponse> listInteractions(UUID robotId, VoiceInteractionStatus status,
-                                                       Instant from, Instant to, Pageable pageable) {
+    public Page<InteractionMetadataResponse> listInteractions(UUID robotId, VoiceInteractionStatus status,
+                                                               Instant from, Instant to,
+                                                               AccountPrincipal principal, Pageable pageable) {
+        staffScope.requireCurrentStaffOrAdmin(principal);
         validateWindow(from, to);
-        return interactionRepository.search(robotId, status, from, to, pageable).map(mapper::toResponse);
+        return interactionRepository.search(robotId, status, from, to, pageable)
+                .map(entity -> interactionMetadata(entity, principal));
     }
 
     @Override
-    public CommandResponse getCommand(UUID id) {
-        return mapper.toResponse(command(id));
+    public CommandResponse getCommand(UUID id, AccountPrincipal principal) {
+        staffScope.requireCurrentStaffOrAdmin(principal);
+        VoiceCommand entity = command(id);
+        if (principal.role() != Role.ADMIN) {
+            if (entity.getServiceRequest() == null) {
+                throw new AccessDeniedException("Voice command is not linked to an operational request");
+            }
+            staffScope.requireServiceRequestAccess(entity.getServiceRequest(), principal);
+        }
+        return mapper.toResponse(entity);
     }
 
     @Override
-    public Page<CommandResponse> listCommands(UUID interactionId, VoiceCommandStatus status,
-                                               Instant from, Instant to, Pageable pageable) {
+    public Page<CommandMetadataResponse> listCommands(UUID interactionId, VoiceCommandStatus status,
+                                                       Instant from, Instant to,
+                                                       AccountPrincipal principal, Pageable pageable) {
+        staffScope.requireCurrentStaffOrAdmin(principal);
         validateWindow(from, to);
-        return commandRepository.search(interactionId, status, from, to, pageable).map(mapper::toResponse);
+        return commandRepository.search(interactionId, status, from, to, pageable)
+                .map(entity -> commandMetadata(entity, principal));
+    }
+
+    private InteractionMetadataResponse interactionMetadata(VoiceInteraction entity, AccountPrincipal principal) {
+        boolean rawDataAvailable = principal.role() == Role.ADMIN || interactionRawDataAvailable(entity, principal);
+        return new InteractionMetadataResponse(entity.getVoiceInteractionId(), entity.getRobot().getRobotId(),
+                entity.getLanguageCode(), entity.getStatus(), entity.getStartedAt(), entity.getEndedAt(),
+                entity.getDetectedIntent(), rawDataAvailable);
+    }
+
+    private CommandMetadataResponse commandMetadata(VoiceCommand entity, AccountPrincipal principal) {
+        boolean rawDataAvailable = principal.role() == Role.ADMIN || commandRawDataAvailable(entity, principal);
+        UUID requestId = rawDataAvailable && entity.getServiceRequest() != null
+                ? entity.getServiceRequest().getServiceRequestId() : null;
+        return new CommandMetadataResponse(entity.getVoiceCommandId(),
+                entity.getVoiceInteraction().getVoiceInteractionId(), requestId, entity.getSequenceNo(),
+                entity.getIntentCode(), entity.getConfidenceScore(), entity.getCommandType(), entity.getStatus(),
+                entity.getReceivedAt(), entity.getProcessedAt(), rawDataAvailable);
+    }
+
+    private boolean interactionRawDataAvailable(VoiceInteraction entity, AccountPrincipal principal) {
+        return commandRepository.findByVoiceInteractionVoiceInteractionIdOrderBySequenceNoAsc(
+                        entity.getVoiceInteractionId()).stream()
+                .anyMatch(command -> commandRawDataAvailable(command, principal));
+    }
+
+    private boolean commandRawDataAvailable(VoiceCommand entity, AccountPrincipal principal) {
+        if (entity.getServiceRequest() == null) return false;
+        try {
+            staffScope.requireServiceRequestAccess(entity.getServiceRequest(), principal);
+            return true;
+        } catch (AccessDeniedException ignored) {
+            return false;
+        }
     }
 
     private void validateEnvelope(PiEnvelope<?> envelope, DevicePrincipal principal, String expectedType) {

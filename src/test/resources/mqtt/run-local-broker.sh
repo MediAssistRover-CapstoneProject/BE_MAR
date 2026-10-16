@@ -25,15 +25,13 @@ user be-test
 topic read mar/robots/+/events
 topic read mar/robots/+/heartbeat
 topic read mar/robots/+/presence
-topic read mar/robots/+/mapping/preview
-topic read mar/robots/+/profile-acks
+topic read mar/robots/+/map-preview
 topic write mar/robots/+/commands
 topic write mar/robots/+/event-acks
 pattern write mar/robots/%u/events
 pattern write mar/robots/%u/heartbeat
 pattern write mar/robots/%u/presence
-pattern write mar/robots/%u/mapping/preview
-pattern write mar/robots/%u/profile-acks
+pattern write mar/robots/%u/map-preview
 pattern read mar/robots/%u/commands
 pattern read mar/robots/%u/event-acks
 ACL

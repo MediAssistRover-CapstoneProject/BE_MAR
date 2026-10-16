@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mediassistrover.backend.entity.*;
 import com.mediassistrover.backend.enums.*;
 import com.mediassistrover.backend.exception.BusinessRuleException;
+import com.mediassistrover.backend.exception.LegacyExecutionRetiredException;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.AccountPrincipal;
 import com.mediassistrover.backend.service.*;
@@ -231,7 +232,8 @@ class DeliveryOperationAuthorizationIntegrationTest extends MySqlIntegrationTest
     @Test void legacyDeliveryApisCannotBypassSchema3EvenWithoutAJobStepId() {
         fixture();AuthVerification v=authenticate(AuthVerificationPurpose.DELIVERY_SENDER);
         var request=new com.mediassistrover.backend.dto.delivery.request.DeliveryRequests.Confirm(v.getVerificationId(),null,null,true,true,null);
-        assertThatThrownBy(()->deliveryApi.confirmPickup(delivery.getServiceRequestId(),request,actor,metadata)).hasMessageContaining("Schema 3");
+        assertThatThrownBy(()->deliveryApi.confirmPickup(delivery.getServiceRequestId(),request,actor,metadata))
+                .isInstanceOf(LegacyExecutionRetiredException.class).hasMessageContaining("Schema 3");
         assertThat(delivery.getPickedUpAt()).isNull();
     }
     @Test void officialUnlockRemainsBlockedByTheUnconfirmedPiContract() {

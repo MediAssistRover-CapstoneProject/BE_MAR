@@ -17,7 +17,6 @@ public class MqttInboundRouter {
     private final MqttInboxStore store;
     private final MqttInboxProcessor processor;
     private final MqttDurablePublisher publisher;
-    private final com.mediassistrover.backend.service.NavigationProfileService navigationProfiles;
     public void receive(String topic,byte[] bytes,int qos,boolean retained) {
         try {route(topic,bytes,qos,retained);}
         catch (BusinessRuleException | IllegalArgumentException ex) {log.warn("MQTT inbound rejected on {}: {}",topic,ex.getMessage());}
@@ -32,14 +31,10 @@ public class MqttInboundRouter {
         if ("presence".equals(lane.lane())) {
             if(qos!=1)throw new BusinessRuleException("Presence requires QoS 1");
             if (raw.has("messageType")) throw new BusinessRuleException("Presence has no event envelope");
-            if (!raw.path("online").asBoolean()) sessions.offline(lane.robotId(),UUID.fromString(raw.path("transportSessionId").asText()));return;
-        }
-        if ("profile-acks".equals(lane.lane())) {
-            if (retained || qos!=1 || !"NAV_PROFILE_ACK".equals(type)) throw new BusinessRuleException("Invalid navigation profile ACK lane");
-            navigationProfiles.confirmMqtt(lane.robotId(),raw);return;
+            if (!retained && !raw.path("online").asBoolean()) sessions.offline(lane.robotId(),UUID.fromString(raw.path("transportSessionId").asText()));return;
         }
         if (retained || qos!=("events".equals(lane.lane())?1:0)) throw new BusinessRuleException("MQTT topic QoS/retain contract mismatch");
-        if ("mapping/preview".equals(lane.lane())) {
+        if ("map-preview".equals(lane.lane())) {
             if (!"MAP_PREVIEW".equals(type)) throw new BusinessRuleException("Invalid preview messageType");
             sessions.preview(lane.robotId(),UUID.fromString(raw.path("transportSessionId").asText()),raw.path("payload"));return;
         }

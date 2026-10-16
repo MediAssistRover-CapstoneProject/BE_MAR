@@ -2,7 +2,15 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mediassistrover.invalid/contracts/phase0/mqtt-pi-message.schema.json",
   "title": "Pi events heartbeat presence preview",
-  "$comment": "MAR-STEP-2 with MQTT navigation profile synchronization.",
+  "$comment": "Reconstructed from Markdown handoff. Unverified against original Pi schemas/code. Reference only; runtime remains schema 2.",
+  "x-provenance": {
+    "status": "RECONSTRUCTED_UNVERIFIED_PI",
+    "sources": [
+      "../01_Giao_tiep_va_toan_bo_field.md",
+      "../02_Input_Output_11_Step_Type.md"
+    ],
+    "baselineDate": "2026-10-12"
+  },
   "$defs": {
     "HELLO": {
       "type": "object",
@@ -1504,110 +1512,6 @@
         "payload"
       ],
       "additionalProperties": false
-    },
-    {
-      "type": "object",
-      "properties": {
-        "messageType": {
-          "const": "NAV_PROFILE_ACK"
-        },
-        "robotId": {
-          "type": "string",
-          "format": "uuid",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        },
-        "transportSessionId": {
-          "type": "string",
-          "format": "uuid",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        },
-        "producerSessionId": {
-          "type": "string",
-          "format": "uuid",
-          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        },
-        "profileHash": {
-          "type": "string",
-          "pattern": "^[0-9a-f]{64}$"
-        },
-        "accepted": {
-          "type": "boolean"
-        },
-        "mapId": {
-          "oneOf": [
-            {
-              "type": "string",
-              "format": "uuid",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "mapAssetHash": {
-          "oneOf": [
-            {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "errorCode": {
-          "oneOf": [
-            {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "messageType",
-        "robotId",
-        "transportSessionId",
-        "producerSessionId",
-        "profileHash",
-        "accepted",
-        "mapId",
-        "mapAssetHash",
-        "errorCode"
-      ],
-      "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "accepted": {
-                "const": true
-              }
-            }
-          },
-          "then": {
-            "properties": {
-              "mapId": {
-                "type": "string",
-                "format": "uuid",
-                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-              },
-              "mapAssetHash": {
-                "type": "string",
-                "pattern": "^[0-9a-f]{64}$"
-              },
-              "errorCode": {
-                "type": "null"
-              }
-            }
-          }
-        }
-      ]
     }
   ]
 }

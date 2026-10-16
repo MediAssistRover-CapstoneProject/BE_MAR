@@ -9,6 +9,7 @@ import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.exception.ConflictException;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.DevicePrincipal;
+import com.mediassistrover.backend.security.AccountPrincipal;
 import com.mediassistrover.backend.security.JwtTokenService;
 import com.mediassistrover.backend.service.VoiceService;
 import org.junit.jupiter.api.*;
@@ -108,7 +109,7 @@ class Phase12IntegrationTest extends MySqlIntegrationTest {
         assertThat(commandRepository.findById(commandId).orElseThrow().getStatus())
                 .isEqualTo(VoiceCommandStatus.EXECUTED);
         assertThat(voiceService.listInteractions(robot.getRobotId(), VoiceInteractionStatus.COMPLETED,
-                null, null, PageRequest.of(0, 10)).getTotalElements()).isEqualTo(1);
+                null, null, AccountPrincipal.fromAccount(admin), PageRequest.of(0, 10)).getTotalElements()).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT DATA_TYPE FROM information_schema.columns WHERE table_schema=DATABASE() " +
                 "AND table_name='VoiceInteraction' AND column_name='voice_interaction_id'", String.class))
                 .isEqualTo("binary");
@@ -147,15 +148,53 @@ class Phase12IntegrationTest extends MySqlIntegrationTest {
 
     @Test
     void allowsAuthorizedHistoryReadAndProtectsDeviceRoutes() throws Exception {
+        UUID interactionId = UUID.randomUUID();
+        UUID commandId = UUID.randomUUID();
+        voiceService.startInteraction(envelope(interactionId, "VOICE_INTERACTION_STARTED",
+                new InteractionStartPayload("vi-VN", Instant.now().minusSeconds(30))), device);
+        voiceService.recordCommand(envelope(commandId, "VOICE_COMMAND",
+                new CommandPayload(interactionId, null, 1, "secret raw text", "secret normalized text",
+                        "INFORMATION", new BigDecimal("0.9900"), "INFORMATION",
+                        objectMapper.createObjectNode().put("secret", "value"), VoiceCommandStatus.EXECUTED,
+                        Instant.now().minusSeconds(20), Instant.now().minusSeconds(10))), device);
+        voiceService.completeInteraction(interactionId, envelope(UUID.randomUUID(), "VOICE_INTERACTION_COMPLETED",
+                new InteractionCompletionPayload(VoiceInteractionStatus.COMPLETED, Instant.now(),
+                        "INFORMATION", "secret transcript", "s3://voice/secret.ogg")), device);
+
         String adminToken = jwtTokenService.issueAccessToken(admin).value();
         String staffToken = jwtTokenService.issueAccessToken(staff).value();
 
         mockMvc.perform(get("/api/v1/voice/interactions")
                         .header("Authorization", "Bearer " + adminToken))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].transcriptSummary").doesNotExist())
+                .andExpect(jsonPath("$.content[0].audioUri").doesNotExist());
         mockMvc.perform(get("/api/v1/voice/interactions")
                         .header("Authorization", "Bearer " + staffToken))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].rawDataAvailable").value(false));
+        mockMvc.perform(get("/api/v1/voice/interactions/{id}", interactionId)
+                        .header("Authorization", "Bearer " + staffToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transcriptSummary").doesNotExist())
+                .andExpect(jsonPath("$.audioUri").doesNotExist());
+        mockMvc.perform(get("/api/v1/voice/interactions/{id}", interactionId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.transcriptSummary").value("secret transcript"));
+        mockMvc.perform(get("/api/v1/voice/commands")
+                        .header("Authorization", "Bearer " + staffToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].rawText").doesNotExist())
+                .andExpect(jsonPath("$.content[0].parameters").doesNotExist())
+                .andExpect(jsonPath("$.content[0].rawDataAvailable").value(false));
+        mockMvc.perform(get("/api/v1/voice/commands/{id}", commandId)
+                        .header("Authorization", "Bearer " + staffToken))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/api/v1/voice/commands/{id}", commandId)
+                        .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.rawText").value("secret raw text"));
         mockMvc.perform(post("/api/v1/pi/voice/interactions")
                         .header("Authorization", "Bearer " + adminToken)
                         .contentType("application/json")

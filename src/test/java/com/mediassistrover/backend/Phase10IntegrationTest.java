@@ -6,7 +6,6 @@ import com.mediassistrover.backend.entity.*;
 import com.mediassistrover.backend.enums.*;
 import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.exception.ConflictException;
-import com.mediassistrover.backend.exception.ResourceNotFoundException;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.JwtTokenService;
 import com.mediassistrover.backend.service.RequestMetadata;
@@ -16,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.security.access.AccessDeniedException;
 
 import java.time.Instant;
 import java.util.List;
@@ -117,11 +117,15 @@ class Phase10IntegrationTest extends MySqlIntegrationTest {
         assertThat(shiftService.listOwn(staffAccount.getAccountId(), null, PageRequest.of(0, 10)).getTotalElements())
                 .isEqualTo(1);
         assertThatThrownBy(() -> shiftService.getOwn(created.shiftId(), otherStaffAccount.getAccountId()))
-                .isInstanceOf(ResourceNotFoundException.class);
+                .isInstanceOf(AccessDeniedException.class);
 
         String staffToken = jwtTokenService.issueAccessToken(staffAccount).value();
         mockMvc.perform(get("/api/v1/staff/shifts").header("Authorization", "Bearer " + staffToken))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].shiftCode").value("SHIFT-P10-04"));
+        String otherStaffToken = jwtTokenService.issueAccessToken(otherStaffAccount).value();
+        mockMvc.perform(get("/api/v1/staff/shifts/{id}", created.shiftId())
+                        .header("Authorization", "Bearer " + otherStaffToken))
+                .andExpect(status().isForbidden());
         mockMvc.perform(get("/api/v1/admin/shifts").header("Authorization", "Bearer " + staffToken))
                 .andExpect(status().isForbidden());
     }

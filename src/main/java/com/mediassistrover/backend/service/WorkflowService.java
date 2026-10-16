@@ -15,6 +15,8 @@ public interface WorkflowService {
     WorkflowDetailResponse get(UUID id);
     Page<WorkflowResponse> list(WorkflowStatus status,Pageable pageable);
     List<WorkflowDetailResponse> published();
+    Page<PublishedWorkflowSummaryResponse> published(String serviceType,Pageable pageable);
+    WorkflowDetailResponse published(UUID id);
     TaskResponse addTask(UUID workflowId,TaskRequest request,UUID actorId,RequestMetadata metadata);
     TaskResponse updateTask(UUID workflowId,UUID taskId,TaskRequest request,UUID actorId,RequestMetadata metadata);
     void deleteTask(UUID workflowId,UUID taskId,UUID actorId,RequestMetadata metadata);

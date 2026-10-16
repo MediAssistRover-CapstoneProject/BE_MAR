@@ -43,6 +43,7 @@ class WorkflowIntegrationTest extends MySqlIntegrationTest {
                     .andExpect(status().isOk()).andExpect(jsonPath("$.stepCount").value(count));
         }
         mockMvc.perform(get("/api/v1/admin/workflows/step-types").header("Authorization",bearer(staffToken))).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(11));
+        mockMvc.perform(get("/api/v1/workflows/step-types").header("Authorization",bearer(staffToken))).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(11));
         mockMvc.perform(patch("/api/v1/admin/workflows/step-types/MOVE/enabled").header("Authorization",bearer(adminToken)).contentType(MediaType.APPLICATION_JSON).content("{\"enabled\":false}")).andExpect(status().isNotFound());
     }
 
@@ -64,9 +65,17 @@ class WorkflowIntegrationTest extends MySqlIntegrationTest {
         mockMvc.perform(put("/api/v1/admin/workflows/{id}",workflowId).header("Authorization",bearer(adminToken)).contentType(MediaType.APPLICATION_JSON).content(workflowBody())).andExpect(status().isUnprocessableEntity());
         mockMvc.perform(get("/api/v1/admin/workflows/{id}",workflowId).header("Authorization",bearer(staffToken))).andExpect(status().isForbidden());
         mockMvc.perform(get("/api/v1/admin/workflows/published/{id}",workflowId).header("Authorization",bearer(staffToken))).andExpect(status().isOk()).andExpect(jsonPath("$.workflow.status").value("PUBLISHED"));
+        mockMvc.perform(get("/api/v1/workflows/published").param("serviceType","TEST").header("Authorization",bearer(staffToken)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
+                .andExpect(jsonPath("$.content[0].workflowId").value(workflowId.toString()))
+                .andExpect(jsonPath("$.content[0].definitionHash").doesNotExist())
+                .andExpect(jsonPath("$.content[0].publishedByAccountId").doesNotExist());
+        mockMvc.perform(get("/api/v1/workflows/published/{id}",workflowId).header("Authorization",bearer(staffToken)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.workflow.status").value("PUBLISHED"));
         mockMvc.perform(get("/api/v1/pi/workflows/{id}",workflowId).header("Authorization",bearer(deviceToken))).andExpect(status().isOk()).andExpect(jsonPath("$.workflow.definitionHash").value(hash));
         JsonNode clone=response(post("/api/v1/admin/workflows/{id}/clone",workflowId).header("Authorization",bearer(adminToken)).contentType(MediaType.APPLICATION_JSON).content("{\"workflowName\":\"Cloned Workflow\"}"),201);UUID cloneId=UUID.fromString(clone.path("workflow").path("workflowId").asText());createdWorkflows.add(cloneId);assertThat(clone.path("workflow").path("versionNo").asInt()).isEqualTo(2);assertThat(clone.path("workflow").path("status").asText()).isEqualTo("DRAFT");assertThat(clone.path("steps").size()).isEqualTo(1);
         response(post("/api/v1/admin/workflows/{id}/archive",workflowId).header("Authorization",bearer(adminToken)),200);
+        mockMvc.perform(get("/api/v1/workflows/published/{id}",workflowId).header("Authorization",bearer(staffToken))).andExpect(status().isNotFound());
         mockMvc.perform(get("/api/v1/pi/workflows/{id}",workflowId).header("Authorization",bearer(deviceToken))).andExpect(status().isNotFound());
     }
 

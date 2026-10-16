@@ -17,6 +17,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import java.util.UUID;
+import java.time.Instant;
 import com.mediassistrover.backend.dto.job.request.WorkflowEventRequest;
 import com.mediassistrover.backend.dto.job.response.WorkflowEventResponse;
 @RestController @RequestMapping("/api/v1/jobs") @RequiredArgsConstructor @Validated
@@ -26,7 +27,7 @@ public class JobController {
     @GetMapping(value="/{id}/stream",produces=org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE)
     public org.springframework.web.servlet.mvc.method.annotation.SseEmitter stream(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor){return uiEvents.subscribe(id,actor);}
     private final JobService service; private final com.mediassistrover.backend.service.WorkflowEventService workflowEventService;
-    @GetMapping public PageResponse<JobResponse> list(@RequestParam(required=false)JobStatus status,@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size,@AuthenticationPrincipal AccountPrincipal a){return PageResponse.from(service.list(status,a,PageRequest.of(page,size,Sort.by(Sort.Direction.DESC,"queuedAt"))));}
+    @GetMapping public PageResponse<JobResponse> list(@RequestParam(required=false)JobStatus status,@RequestParam(required=false)UUID workflowId,@RequestParam(required=false)UUID requestId,@RequestParam(required=false)UUID robotId,@RequestParam(required=false)Instant from,@RequestParam(required=false)Instant to,@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size,@AuthenticationPrincipal AccountPrincipal a){return PageResponse.from(service.list(status,workflowId,requestId,robotId,from,to,a,PageRequest.of(page,size,Sort.by(Sort.Direction.DESC,"queuedAt"))));}
     @GetMapping("/{id}") public JobDetailResponse get(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal a){return service.get(id,a);}
     @GetMapping("/{id}/events") public PageResponse<JobEventResponse> events(@PathVariable UUID id,@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="50")@Min(1)@Max(200)int size,@AuthenticationPrincipal AccountPrincipal a){return PageResponse.from(service.events(id,a,PageRequest.of(page,size,Sort.by(Sort.Direction.ASC,"occurredAt"))));}
     @PostMapping("/{id}/cancel") public JobResponse cancel(@PathVariable UUID id,@Valid @RequestBody CancelJobRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.cancel(id,b,a,RequestMetadataFactory.from(r));}
