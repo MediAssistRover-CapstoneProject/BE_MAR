@@ -29,8 +29,7 @@ class EndpointZoneTypeContractTest {
         assertThatThrownBy(() -> objectMapper.readValue("\"PICKUP\"", EndpointType.class))
                 .hasMessageContaining("PICKUP");
         assertThat(EndpointRequest.class.getRecordComponents()[5].getType()).isEqualTo(EndpointType.class);
-        assertThat(EndpointRequest.class.getDeclaredField("endpointType").getAnnotation(Schema.class).allowableValues())
-                .containsExactly("WAYPOINT", "CHARGER", "PARK", "STAGING");
+        assertThat(EndpointType.class.getAnnotation(Schema.class).enumAsRef()).isTrue();
         assertStringEnumPersistence(Endpoint.class, "endpointType");
     }
 
@@ -42,8 +41,7 @@ class EndpointZoneTypeContractTest {
         assertThatThrownBy(() -> objectMapper.readValue("\"RESTRICTED\"", ZoneType.class))
                 .hasMessageContaining("RESTRICTED");
         assertThat(ZoneRequest.class.getRecordComponents()[3].getType()).isEqualTo(ZoneType.class);
-        assertThat(ZoneRequest.class.getDeclaredField("zoneType").getAnnotation(Schema.class).allowableValues())
-                .containsExactly("KEEP_OUT", "SPEED", "NO_STOP");
+        assertThat(ZoneType.class.getAnnotation(Schema.class).enumAsRef()).isTrue();
         assertStringEnumPersistence(Zone.class, "zoneType");
     }
 

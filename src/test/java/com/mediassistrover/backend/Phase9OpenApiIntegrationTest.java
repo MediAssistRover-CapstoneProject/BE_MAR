@@ -62,13 +62,15 @@ class Phase9OpenApiIntegrationTest extends MySqlIntegrationTest {
     void publishesEndpointAndZoneEnumsAsClosedStringContracts() throws Exception {
         mvc.perform(get("/v3/api-docs"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.components.schemas.EndpointRequest.properties.endpointType.type")
-                        .value("string"))
-                .andExpect(jsonPath("$.components.schemas.EndpointRequest.properties.endpointType.enum")
+                .andExpect(jsonPath("$.components.schemas.EndpointRequest.properties.endpointType.$ref")
+                        .value("#/components/schemas/EndpointType"))
+                .andExpect(jsonPath("$.components.schemas.EndpointType.type").value("string"))
+                .andExpect(jsonPath("$.components.schemas.EndpointType.enum")
                         .value(List.of("WAYPOINT", "CHARGER", "PARK", "STAGING")))
-                .andExpect(jsonPath("$.components.schemas.ZoneRequest.properties.zoneType.type")
-                        .value("string"))
-                .andExpect(jsonPath("$.components.schemas.ZoneRequest.properties.zoneType.enum")
+                .andExpect(jsonPath("$.components.schemas.ZoneRequest.properties.zoneType.$ref")
+                        .value("#/components/schemas/ZoneType"))
+                .andExpect(jsonPath("$.components.schemas.ZoneType.type").value("string"))
+                .andExpect(jsonPath("$.components.schemas.ZoneType.enum")
                         .value(List.of("KEEP_OUT", "SPEED", "NO_STOP")));
     }
 
