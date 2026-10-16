@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.mediassistrover.backend.enums.EndpointType;
 import com.mediassistrover.backend.enums.SelectionPolicy;
 import com.mediassistrover.backend.enums.ZoneType;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.*;
 
 import java.math.BigDecimal;
@@ -63,7 +64,9 @@ public final class FacilityRequests {
             @NotNull UUID mapId,
             @NotBlank @Size(max = 64) String zoneCode,
             @NotBlank @Size(max = 160) String zoneName,
-            @NotNull ZoneType zoneType,
+            @NotNull
+            @Schema(allowableValues = {"KEEP_OUT", "SPEED", "NO_STOP"})
+            ZoneType zoneType,
             @NotNull JsonNode polygonJson,
             @DecimalMin(value = "0", inclusive = false) BigDecimal speedLimitMps,
             @PositiveOrZero Integer capacityLimit,
@@ -91,7 +94,9 @@ public final class FacilityRequests {
             UUID roomId,
             @NotBlank @Size(max = 64) String endpointCode,
             @NotBlank @Size(max = 160) String endpointName,
-            @NotNull EndpointType endpointType,
+            @NotNull
+            @Schema(allowableValues = {"WAYPOINT", "CHARGER", "PARK", "STAGING"})
+            EndpointType endpointType,
             @NotNull BigDecimal xM,
             @NotNull BigDecimal yM,
             @NotNull @DecimalMin("-3.141593") @DecimalMax("3.141593") BigDecimal yawRad,

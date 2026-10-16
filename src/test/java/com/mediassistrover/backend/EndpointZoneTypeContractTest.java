@@ -9,6 +9,7 @@ import com.mediassistrover.backend.enums.EndpointType;
 import com.mediassistrover.backend.enums.ZoneType;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
+import io.swagger.v3.oas.annotations.media.Schema;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -28,6 +29,8 @@ class EndpointZoneTypeContractTest {
         assertThatThrownBy(() -> objectMapper.readValue("\"PICKUP\"", EndpointType.class))
                 .hasMessageContaining("PICKUP");
         assertThat(EndpointRequest.class.getRecordComponents()[5].getType()).isEqualTo(EndpointType.class);
+        assertThat(EndpointRequest.class.getDeclaredField("endpointType").getAnnotation(Schema.class).allowableValues())
+                .containsExactly("WAYPOINT", "CHARGER", "PARK", "STAGING");
         assertStringEnumPersistence(Endpoint.class, "endpointType");
     }
 
@@ -39,6 +42,8 @@ class EndpointZoneTypeContractTest {
         assertThatThrownBy(() -> objectMapper.readValue("\"RESTRICTED\"", ZoneType.class))
                 .hasMessageContaining("RESTRICTED");
         assertThat(ZoneRequest.class.getRecordComponents()[3].getType()).isEqualTo(ZoneType.class);
+        assertThat(ZoneRequest.class.getDeclaredField("zoneType").getAnnotation(Schema.class).allowableValues())
+                .containsExactly("KEEP_OUT", "SPEED", "NO_STOP");
         assertStringEnumPersistence(Zone.class, "zoneType");
     }
 
