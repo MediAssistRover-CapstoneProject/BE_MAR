@@ -11,6 +11,7 @@ import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.media.Content;
 import io.swagger.v3.oas.models.media.MediaType;
 import io.swagger.v3.oas.models.media.Schema;
+import io.swagger.v3.oas.models.media.StringSchema;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.responses.ApiResponses;
@@ -237,8 +238,7 @@ public class OpenApiConfig {
     }
 
     private Schema<String> enumSchema(Enum<?>[] values) {
-        return new Schema<String>()
-                .type("string")
+        return new StringSchema()
                 ._enum(java.util.Arrays.stream(values).map(Enum::name).toList());
     }
 

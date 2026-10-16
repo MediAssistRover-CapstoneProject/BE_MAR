@@ -1,5 +1,7 @@
 package com.mediassistrover.backend.config;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import io.swagger.v3.core.util.Json;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
@@ -66,6 +68,14 @@ class OpenApiConfigTest {
                 .isEqualTo(List.of("WAYPOINT", "CHARGER", "PARK", "STAGING"));
         assertThat(openApi.getComponents().getSchemas().get("ZoneType").getEnum())
                 .isEqualTo(List.of("KEEP_OUT", "SPEED", "NO_STOP"));
+
+        JsonNode document = Json.mapper().valueToTree(openApi);
+        assertThat(document.at("/components/schemas/EndpointType/type").asText()).isEqualTo("string");
+        assertThat(document.at("/components/schemas/EndpointType/enum"))
+                .isEqualTo(Json.mapper().valueToTree(List.of("WAYPOINT", "CHARGER", "PARK", "STAGING")));
+        assertThat(document.at("/components/schemas/ZoneType/type").asText()).isEqualTo("string");
+        assertThat(document.at("/components/schemas/ZoneType/enum"))
+                .isEqualTo(Json.mapper().valueToTree(List.of("KEEP_OUT", "SPEED", "NO_STOP")));
     }
 
     private PathItem item(PathItem.HttpMethod method) {
