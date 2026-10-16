@@ -29,14 +29,52 @@ final class MqttTestFixture {
         }
         Robot robot=Robot.builder().robotCode("MQ-"+code).robotName("Test").model("Test").status(RobotStatus.IDLE).protocolVersion(1).currentMap(map).mapAssetHash(map==null?null:map.getAssetHash()).capabilitiesJson(json.createArrayNode()).build();em.persist(robot);f.robotId=robot.getRobotId();
         ServiceRequest request=null;
-        if(delivery) {
-            ObjectNode requestData=json.createObjectNode();requestData.putArray("items").addObject().put("item_code","MED-1").put("quantity",1);
-            request=ServiceRequest.builder().requestedByAccount(actor).requestCode("REQ-"+code).requestType(ServiceRequestType.DELIVERY).sourceType(RequestSourceType.STAFF_UI)
-                    .priority(50).status(ServiceRequestStatus.QUEUED).requestDataJson(requestData).idempotencyKey("mq-"+code).requestedAt(now).build();em.persist(request);em.flush();f.serviceRequestId=request.getServiceRequestId();
-            DeliveryRequest deliveryRequest=DeliveryRequest.builder().serviceRequest(request).map(map).pickupEndpoint(em.find(Endpoint.class,f.endpointId))
-                    .targetMode(TargetMode.ENDPOINT).recipientName("MQTT test").requiresConfirmation(true).build();em.persist(deliveryRequest);
-            em.persist(DeliveryItem.builder().deliveryRequest(deliveryRequest).itemCode("MED-1").itemName("Medicine").itemCategory("MEDICINE").quantity(1).unit("BOX").build());
-        }
+if(delivery) {
+    ObjectNode requestData=json.createObjectNode();
+    requestData.putArray("items")
+            .addObject()
+            .put("item_code","MED-1")
+            .put("quantity",1);
+
+    request=ServiceRequest.builder()
+            .requestedByAccount(actor)
+            .requestCode("REQ-"+code)
+            .requestType(ServiceRequestType.DELIVERY)
+            .sourceType(RequestSourceType.STAFF_UI)
+            .priority(50)
+            .status(ServiceRequestStatus.QUEUED)
+            .requestDataJson(requestData)
+            .idempotencyKey("mq-"+code)
+            .requestedAt(now)
+            .build();
+
+    em.persist(request);
+    em.flush();
+    f.serviceRequestId=request.getServiceRequestId();
+
+    Endpoint deliveryEndpoint = em.find(Endpoint.class, f.endpointId);
+
+    DeliveryRequest deliveryRequest = DeliveryRequest.builder()
+            .serviceRequest(request)
+            .map(map)
+            .pickupEndpoint(deliveryEndpoint)
+            .deliveryEndpoint(deliveryEndpoint)
+            .targetMode(TargetMode.ENDPOINT)
+            .recipientName("MQTT test")
+            .requiresConfirmation(true)
+            .build();
+
+    em.persist(deliveryRequest);
+
+    em.persist(DeliveryItem.builder()
+            .deliveryRequest(deliveryRequest)
+            .itemCode("MED-1")
+            .itemName("Medicine")
+            .itemCategory("MEDICINE")
+            .quantity(1)
+            .unit("BOX")
+            .build());
+}
         Workflow workflow=Workflow.builder().workflowCode("MQ-"+code).workflowName("Test").serviceType("TEST").versionNo(1).schemaVersion(3).graphVersion(3).maxDurationSec(600).maxTotalVisits(10)
                 .inputSchemaJson(json.createObjectNode()).inputUiJson(json.createObjectNode()).defaultInputsJson(json.createObjectNode()).outputMappingJson(json.createObjectNode()).requiredCapabilitiesJson(json.createArrayNode())
                 .status(WorkflowStatus.DRAFT).definitionHash("a".repeat(64)).compiledDefinitionJson(json.createObjectNode()).build();em.persist(workflow);f.workflowId=workflow.getWorkflowId();
