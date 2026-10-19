@@ -20,7 +20,10 @@ public interface FacilityMapper {
     @Mapping(target = "floorId", source = "floor.floorId")
     @Mapping(target = "defaultEndpointGroupId", source = "defaultEndpointGroup.endpointGroupId") RoomResponse toResponse(Room entity);
     @Mapping(target = "mapId", source = "map.mapId") @Mapping(target = "zoneId", source = "zone.zoneId")
-    @Mapping(target = "roomId", source = "room.roomId") EndpointResponse toResponse(Endpoint entity);
+    @Mapping(target = "roomId", source = "room.roomId")
+    @Mapping(target = "xM", expression = "java(entity.getXM())")
+    @Mapping(target = "yM", expression = "java(entity.getYM())")
+    EndpointResponse toResponse(Endpoint entity);
     @Mapping(target = "mapId", source = "map.mapId") EndpointGroupResponse toResponse(EndpointGroup entity);
     @Mapping(target = "endpointGroupId", source = "endpointGroup.endpointGroupId")
     @Mapping(target = "endpointId", source = "endpoint.endpointId") @Mapping(target = "mapId", source = "map.mapId")
