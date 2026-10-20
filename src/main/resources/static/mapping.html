@@ -14,11 +14,15 @@
 <label>Job ID<input id="job" placeholder="Hoặc dán jobId đã tạo trên Swagger"></label><button id="watch">Theo dõi nhiệm vụ</button><button id="unwatch">Ngừng theo dõi</button>
 </details>
 <div id="notice" role="status"></div>
+<button id="recover" disabled>Đóng job lỗi đã có bằng chứng dừng</button>
 <div class="row"><section class="main panel"><h2>Bản đồ đang quét</h2><img id="mapImage" class="map" alt="Chưa nhận dữ liệu bản đồ" hidden><small id="mapTime">Đang chờ dữ liệu mới từ Pi.</small></section>
-<aside class="side"><section class="panel"><h2>Camera robot</h2><img id="cameraImage" class="camera" alt="Chưa nhận ảnh camera" hidden><small id="cameraTime">Chưa có ảnh.</small></section>
-<section class="panel"><h2>Di chuyển</h2><p>Mỗi lần bấm gửi một lệnh tối đa 400 ms. Robot tự dừng khi lệnh hết hạn.</p>
+<aside class="side"><section class="panel"><h2>Camera robot</h2><img id="cameraImage" class="camera" alt="Chưa nhận ảnh camera" hidden><img id="cameraStreamImage" class="camera" alt="Video trực tiếp từ robot" hidden><small id="cameraTime">Chưa có ảnh.</small>
+<details><summary>Video trực tiếp cùng mạng</summary><label>URL video từ robot<input id="cameraStreamUrl" type="url" placeholder="http://IP_PI:8081/stream?topic=/ascamera/camera_publisher/rgb0/image"></label><button id="startCameraStream">Xem video trực tiếp</button><button id="stopCameraStream">Dùng ảnh MQTT</button><small>Video trực tiếp cần laptop truy cập được Pi. Ảnh MQTT vẫn dùng khi robot ở mạng khác.</small></details></section>
+<section class="panel"><h2>Di chuyển</h2><p>Bấm một lần để chạy trong thời gian đã chọn. Trang gia hạn lệnh ngắn; có thể Dừng bất kỳ lúc nào.</p>
+<label>Thời gian chạy (giây)<input id="jogSeconds" type="number" min="0.4" max="10" step="0.2" value="4"></label>
+<label>Tốc độ tiến<select id="jogSpeed"><option value="0.05">0,05 m/s</option><option value="0.08" selected>0,08 m/s</option><option value="0.10">0,10 m/s</option></select></label><small id="jogStatus">Chưa chạy.</small>
 <button data-x="0.05" data-z="0" disabled>Tiến</button><button data-x="0" data-z="0.2" disabled>Quay trái</button><button data-x="0" data-z="-0.2" disabled>Quay phải</button><button id="stop" disabled>Dừng di chuyển</button>
-<small>Giới hạn 0,05 m/s và 0,2 rad/s. Không hỗ trợ lùi/ngang với cấu hình xe kéo hiện tại.</small><pre id="receipt">Chưa gửi lệnh.</pre>
+<small>Pi giới hạn theo profile phần cứng và tăng tốc dần. Không hỗ trợ lùi/ngang với cấu hình xe kéo hiện tại.</small><pre id="receipt">Chưa gửi lệnh.</pre>
 <button id="save" disabled>Lưu bản đồ và kết thúc</button><small>Pi phải được cấu hình HTTPS upload để hoàn tất lưu bản đồ vào hệ thống.</small></section></aside></div>
 <section class="panel"><h2>Phát giọng nói</h2><small>Giọng thông báo được tổng hợp bằng AI.</small>
 <p>Dùng Robot ID và token ở trên. Kết thúc nhiệm vụ quét trước khi tạo nhiệm vụ phát loa riêng.</p>
@@ -31,21 +35,73 @@
 <details class="panel"><summary>Trạng thái nhiệm vụ</summary><pre id="state"></pre></details>
 <script>
 'use strict';
-const $=id=>document.getElementById(id);let job='',session='',mapping=false,timer=null,busy=false,polling=false;const images={};
+const $=id=>document.getElementById(id);let job='',session='',mapping=false,timer=null,busy=false,polling=false,cameraStreaming=false,recovery=false;const images={};
 function notice(message){$('notice').textContent=message}
-async function api(path,body,raw=false){const token=$('token').value.trim().replace(/^Bearer\s+/i,'');if(!token)throw Error('Cần access token ADMIN.');const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(5000)});if(!r.ok){const t=await r.text();const error=Error(r.status+' '+t.slice(0,300));error.status=r.status;throw error}return raw?r:r.status===204?null:r.json()}
-function buttons(){document.querySelectorAll('[data-x]').forEach(b=>b.disabled=!mapping||busy);$('save').disabled=!mapping||busy;$('stop').disabled=!session||busy}
-function clearImage(id,label,text){$(id).hidden=true;$(label).textContent=text;if(images[id]){URL.revokeObjectURL(images[id]);delete images[id]}}
-async function picture(route,id,label){const r=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/'+route,undefined,true);if(r.status===204){clearImage(id,label,'Chưa có ảnh mới hoặc dữ liệu đã quá 10 giây.');return}const blob=await r.blob();const url=URL.createObjectURL(blob);if(images[id])URL.revokeObjectURL(images[id]);images[id]=url;$(id).src=url;$(id).hidden=false;$(label).textContent='Bản '+r.headers.get('X-Frame-Revision')+' • '+r.headers.get('X-Captured-At')}
-async function poll(){if(!job||polling)return;polling=true;try{const state=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-session?includePreview=false');session=state.mapping_session_id;mapping=state.state==='MAPPING'&&state.potentially_open&&state.job_status==='RUNNING';notice(state.job_status==='RECOVERY_REQUIRED'?'Nhiệm vụ cần khôi phục. Đã khóa nút di chuyển; không tạo thêm nhiệm vụ.':mapping?'Đang quét bản đồ.':'Trạng thái nhiệm vụ: '+state.job_status+' / '+state.state);const p=state.preview;const summary={...state,preview:p?{revision:p.revision,width:p.width,height:p.height,resolution:p.resolution,captured_at:p.captured_at,pose:p.pose}:null};$('state').textContent=JSON.stringify(summary,null,2);buttons();await Promise.all([picture('mapping-preview.png','mapImage','mapTime'),picture('camera-preview.jpg','cameraImage','cameraTime')]);const receipt=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control');if(receipt)$('receipt').textContent=JSON.stringify(receipt,null,2)}catch(e){mapping=false;buttons();if(e.status===404){try{const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));$('state').textContent=JSON.stringify(detail,null,2);if(['QUEUED','ACCEPTED','RUNNING'].includes(detail.job.status)){notice('Đang chờ Pi mở phiên quét.');return}}catch(lookup){notice(lookup.message)}}notice(e.message);clearImage('mapImage','mapTime','Mất kết nối hoặc chưa có phiên quét.');clearImage('cameraImage','cameraTime','Không có ảnh mới.')}finally{polling=false}}
-function watch(){if(timer)clearInterval(timer);job=$('job').value.trim();if(!job){notice('Cần jobId.');return}session='';mapping=false;buttons();poll();timer=setInterval(poll,1000)}
-async function control(x,z){if(!session)throw Error('Chưa có phiên quét.');return api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control',{mappingSessionId:session,linearX:x,angularZ:z,durationMs:400})}
-document.querySelectorAll('[data-x]').forEach(b=>b.onclick=async()=>{if(busy||!mapping)return;busy=true;buttons();try{$('receipt').textContent=JSON.stringify(await control(Number(b.dataset.x),Number(b.dataset.z)),null,2);notice('Đã gửi yêu cầu. Xem PI_ACCEPTED/PI_REJECTED ở phần phản hồi.')}catch(e){notice(e.message)}finally{busy=false;buttons()}});
-$('stop').onclick=async()=>{busy=true;buttons();try{$('receipt').textContent=JSON.stringify(await control(0,0),null,2);notice('Đã gửi yêu cầu dừng.')}catch(e){notice(e.message)}finally{busy=false;buttons()}};
-$('save').onclick=async()=>{busy=true;buttons();try{await control(0,0);await api('/api/v1/jobs/'+encodeURIComponent(job)+'/events',{eventId:crypto.randomUUID(),eventType:'MAPPING_SAVE_REQUESTED',correlationKey:session,occurredAt:new Date().toISOString(),data:{}});mapping=false;notice('Đã yêu cầu lưu. Theo dõi các bước lưu và dừng. Chỉ hoàn tất khi Job SUCCEEDED; kiểm tra output của COMMIT_MAP để lấy map_id.')}catch(e){notice(e.message)}finally{busy=false;buttons()}};
+
+class TimedJog {
+  constructor(send,onState){this.send=send;this.onState=onState;this.active=false;this.generation=0;this.renewTimer=null;this.stopTimer=null;this.commandId=null}
+  start(x,z,totalMs){
+    if(this.active)throw Error('Dừng chuyển động hiện tại trước khi gửi hướng mới.');
+    if(!Number.isFinite(totalMs)||totalMs<400||totalMs>10000)throw Error('Thời gian chạy phải từ 0,4 đến 10 giây.');
+    this.active=true;this.commandId=null;const generation=++this.generation;
+    this.onState('Đang gia hạn lệnh; thời gian chọn '+(totalMs/1000)+' giây.');
+    this.stopTimer=setTimeout(()=>this.stop('Đã hết thời gian chạy.').catch(()=>{}),totalMs);
+    this.renew(x,z,generation);
+  }
+  async renew(x,z,generation){
+    if(!this.active||generation!==this.generation)return;
+    const started=performance.now();
+    try{
+      const receipt=await this.send(x,z);
+      if(!this.active||generation!==this.generation)return;
+      this.commandId=receipt?.commandId;
+      this.onState('Đang gia hạn lệnh. Bấm Dừng để kết thúc sớm.',receipt);
+      this.renewTimer=setTimeout(()=>this.renew(x,z,generation),Math.max(0,300-(performance.now()-started)));
+    }catch(error){if(this.active&&generation===this.generation)await this.stop('Đã ngừng gia hạn: '+error.message).catch(()=>{})}
+  }
+  async stop(message='Đã ngừng gia hạn và gửi lệnh dừng.'){
+    this.active=false;const generation=++this.generation;
+    clearTimeout(this.renewTimer);clearTimeout(this.stopTimer);
+    this.onState(message);
+    try{const receipt=await this.send(0,0);if(generation===this.generation)this.onState(message,receipt);return receipt}
+    catch(error){if(generation===this.generation)this.onState('Đã ngừng gia hạn; chưa xác nhận được lệnh dừng: '+error.message);throw error}
+  }
+}
+const controlSessionId=crypto.randomUUID();let controlSequence=0;
+const jog=new TimedJog(control,(message,receipt)=>{$('jogStatus').textContent=message;if(receipt)$('receipt').textContent=JSON.stringify(receipt,null,2);buttons()});
+
+async function api(path,body,raw=false,options={}){const token=$('token').value.trim().replace(/^Bearer\s+/i,'');if(!token)throw Error('Cần access token ADMIN.');const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,...(body===undefined?{}:{'Content-Type':'application/json'}),...(options.headers??{})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(options.timeoutMs??5000),keepalive:options.keepalive??false});if(!r.ok){const t=await r.text();const error=Error(r.status+' '+t.slice(0,300));error.status=r.status;throw error}return raw?r:r.status===204?null:r.json()}
+function buttons(){document.querySelectorAll('[data-x]').forEach(b=>b.disabled=!mapping||busy||jog.active);$('save').disabled=!mapping||busy||jog.active;$('stop').disabled=!session;$('create').disabled=busy||mapping||recovery||jog.active;$('recover').disabled=busy||!recovery;$('speak').disabled=busy||mapping||jog.active}
+function clearImage(id,label,text){if(id==='cameraImage'&&cameraStreaming)return;$(id).hidden=true;$(label).textContent=text;if(images[id]){URL.revokeObjectURL(images[id]);delete images[id]}}
+async function picture(route,id,label){if(id==='cameraImage'&&cameraStreaming)return;const r=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/'+route,undefined,true);if(id==='cameraImage'&&cameraStreaming)return;if(r.status===204){clearImage(id,label,'Chưa có ảnh mới hoặc dữ liệu đã quá 10 giây.');return}const blob=await r.blob();if(id==='cameraImage'&&cameraStreaming)return;const url=URL.createObjectURL(blob);if(images[id])URL.revokeObjectURL(images[id]);images[id]=url;$(id).src=url;$(id).hidden=false;$(label).textContent='Bản '+r.headers.get('X-Frame-Revision')+' • '+r.headers.get('X-Captured-At')}
+function stopCameraStream(){cameraStreaming=false;$('cameraStreamImage').hidden=true;$('cameraStreamImage').removeAttribute('src');$('cameraTime').textContent='Đã chuyển về ảnh MQTT.'}
+$('startCameraStream').onclick=()=>{try{const url=new URL($('cameraStreamUrl').value.trim());if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Error('Cần URL video HTTP/HTTPS, không kèm mật khẩu.');if(location.protocol==='https:'&&url.protocol!=='https:')throw Error('Trang HTTPS cần URL video HTTPS; hoặc dùng trang HTTP khi thử cùng mạng.');clearImage('cameraImage','cameraTime','Đang kết nối video trực tiếp…');cameraStreaming=true;$('cameraStreamImage').src=url.href;$('cameraStreamImage').hidden=false}catch(e){notice(e.message)}};
+$('stopCameraStream').onclick=stopCameraStream;
+$('cameraStreamImage').onload=()=>{if(cameraStreaming)$('cameraTime').textContent='Video trực tiếp từ topic camera của Pi.'};
+$('cameraStreamImage').onerror=()=>{if(cameraStreaming){stopCameraStream();$('cameraTime').textContent='Không kết nối được video. Kiểm tra URL/Pi; đang dùng lại ảnh MQTT.'}};
+window.addEventListener('pagehide',stopCameraStream);
+async function poll(){if(!job||polling)return;polling=true;try{const state=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-session?includePreview=false');session=state.mapping_session_id;recovery=state.job_status==='RECOVERY_REQUIRED';mapping=state.state==='MAPPING'&&state.potentially_open&&state.job_status==='RUNNING';if(!mapping&&jog.active)await jog.stop('Nhiệm vụ không còn cho phép di chuyển.').catch(()=>{});notice(state.job_status==='RECOVERY_REQUIRED'?'Nhiệm vụ cần khôi phục. Đã khóa nút di chuyển; không tạo thêm nhiệm vụ.':mapping?'Đang quét bản đồ.':'Trạng thái nhiệm vụ: '+state.job_status+' / '+state.state);const p=state.preview;const summary={...state,preview:p?{revision:p.revision,width:p.width,height:p.height,resolution:p.resolution,captured_at:p.captured_at,pose:p.pose}:null};$('state').textContent=JSON.stringify(summary,null,2);buttons();await Promise.all([picture('mapping-preview.png','mapImage','mapTime'),picture('camera-preview.jpg','cameraImage','cameraTime')]);const receipt=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control');if(receipt){$('receipt').textContent=JSON.stringify(receipt,null,2);if(jog.active&&receipt.commandId===jog.commandId&&['PI_REJECTED','NO_PI_ACK','PUBLISH_FAILED'].includes(receipt.status))await jog.stop('Pi chưa thực hiện lệnh: '+(receipt.errorCode||receipt.status)).catch(()=>{})}}catch(e){mapping=false;if(jog.active)await jog.stop('Mất kết nối theo dõi nhiệm vụ.').catch(()=>{});buttons();if(e.status===404){try{const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));$('state').textContent=JSON.stringify(detail,null,2);if(['QUEUED','ACCEPTED','RUNNING'].includes(detail.job.status)){notice('Đang chờ Pi mở phiên quét.');return}}catch(lookup){notice(lookup.message)}}notice(e.message);clearImage('mapImage','mapTime','Mất kết nối hoặc chưa có phiên quét.');clearImage('cameraImage','cameraTime','Không có ảnh mới.')}finally{polling=false}}
+async function watch(){if(jog.active)await jog.stop().catch(()=>{});if(timer)clearInterval(timer);job=$('job').value.trim();if(!job){notice('Cần jobId.');return}session='';mapping=false;recovery=false;buttons();poll();timer=setInterval(poll,1000)}
+async function control(x,z){if(!session)throw Error('Chưa có phiên quét.');return api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control',{mappingSessionId:session,linearX:x,angularZ:z,durationMs:600,controlSessionId,controlSequence:++controlSequence,requestedAt:new Date().toISOString()},false,{timeoutMs:1200,keepalive:x===0&&z===0})}
+document.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{if(busy||!mapping||jog.active)return;try{const x=Number(b.dataset.x)===0?0:Number($('jogSpeed').value);if(!Number.isFinite(x)||x<0||x>.1)throw Error('Tốc độ không hợp lệ.');jog.start(x,Number(b.dataset.z),Number($('jogSeconds').value)*1000)}catch(e){notice(e.message)}});
+$('stop').onclick=async()=>{try{await jog.stop();notice('Đã gửi yêu cầu dừng.')}catch(e){notice(e.message)}};
+$('save').onclick=async()=>{busy=true;buttons();try{await jog.stop();await api('/api/v1/jobs/'+encodeURIComponent(job)+'/events',{eventId:crypto.randomUUID(),eventType:'MAPPING_SAVE_REQUESTED',correlationKey:session,occurredAt:new Date().toISOString(),data:{}});mapping=false;notice('Đã yêu cầu lưu. Theo dõi các bước lưu và dừng. Chỉ hoàn tất khi Job SUCCEEDED; kiểm tra output của COMMIT_MAP để lấy map_id.')}catch(e){notice(e.message)}finally{busy=false;buttons()}};
 $('create').onclick=async()=>{try{const result=await api('/api/v1/mapping-jobs',{workflowId:$('workflow').value.trim(),robotId:$('robot').value.trim(),floorId:$('floor').value.trim(),mapName:$('mapName').value.trim()});$('job').value=result.jobId;notice('Đã tạo '+result.jobCode);watch()}catch(e){notice(e.message)}};
-$('watch').onclick=watch;$('unwatch').onclick=()=>{clearInterval(timer);timer=null;mapping=false;buttons();notice('Đã ngừng theo dõi. Nhiệm vụ trên BE vẫn còn; lệnh di chuyển tự hết hạn.');clearImage('mapImage','mapTime','Đã ngừng theo dõi.');clearImage('cameraImage','cameraTime','Đã ngừng theo dõi.')};
-document.addEventListener('visibilitychange',()=>{if(document.hidden){mapping=false;buttons()}});
+$('recover').onclick=async()=>{busy=true;buttons();try{
+  if(jog.active)await jog.stop();
+  const evidence=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/operations/recovery');
+  const command=evidence.commands.find(c=>c.jobStepId===evidence.jobStepId&&c.commandType==='EXECUTE_STEP');
+  if(!evidence.recoveryRequired||!command||(command.physicalStopConfirmed!==true&&command.operatorReconciled!==true))throw Error('BE chưa có xác nhận dừng hoặc biên nhận kiểm tra tại Pi cho operation này. Không thể tự đóng chỉ bằng heartbeat.');
+  const result=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/operations/'+encodeURIComponent(evidence.jobStepId)+'/reconcile',{
+    commandId:command.commandId,operationKey:evidence.operationKey,transportSessionId:evidence.transportSessionId,
+    evidence:command.physicalStopConfirmed===true?'PI_STOP_CONFIRMED':'STAFF_INSPECTED_STOP',confirmedStopped:true,outcome:'CONFIRM_CANCELLED',note:'Dong job mapping gian doan sau khi Pi da gui bang chung dung hoac bien nhan kiem tra tai robot va journal terminal'
+  },false,{headers:{'Idempotency-Key':crypto.randomUUID()}});
+  recovery=false;mapping=false;$('receipt').textContent=JSON.stringify(result,null,2);notice('Đã đóng job lỗi. Đợi Pi kết nối HELLO mới và dispatchReady=true trước khi tạo nhiệm vụ.');
+}catch(e){notice(e.message);$('receipt').textContent=e.message}finally{busy=false;buttons()}};
+$('watch').onclick=watch;$('unwatch').onclick=()=>{if(jog.active)jog.stop('Đã ngừng theo dõi và ngừng gia hạn.').catch(()=>{});clearInterval(timer);timer=null;mapping=false;buttons();notice('Đã ngừng theo dõi. Nhiệm vụ trên BE vẫn còn; lệnh di chuyển tự hết hạn.');clearImage('mapImage','mapTime','Đã ngừng theo dõi.');clearImage('cameraImage','cameraTime','Đã ngừng theo dõi.')};
+document.addEventListener('visibilitychange',()=>{if(document.hidden){mapping=false;if(jog.active)jog.stop('Trang đã ẩn; đã ngừng gia hạn.').catch(()=>{});buttons()}});
+window.addEventListener('blur',()=>{if(jog.active)jog.stop('Cửa sổ mất focus; đã ngừng gia hạn.').catch(()=>{})});
+window.addEventListener('pagehide',()=>{if(jog.active)jog.stop().catch(()=>{})});
 
 let speechJob='';
 async function prepareWorkflow(file,code,field){
@@ -63,6 +119,11 @@ async function prepareWorkflow(file,code,field){
 $('prepareSpeech').onclick=async()=>{const b=$('prepareSpeech');b.disabled=true;try{await prepareWorkflow('speech-workflow.json','WF_ROBOT_SPEECH_DEMO','speechWorkflow');notice('Workflow phát loa đã sẵn sàng.')}catch(e){notice(e.message)}finally{b.disabled=false}};
 $('prepareMapping').onclick=async()=>{const b=$('prepareMapping');b.disabled=true;try{await prepareWorkflow('mapping-workflow.json','WF_MAPPING','workflow');notice('Workflow quét và lưu đã sẵn sàng.')}catch(e){notice(e.message)}finally{b.disabled=false}};
 $('speak').onclick=async()=>{const b=$('speak');b.disabled=true;try{
+  if(mapping||jog.active)throw Error('Kết thúc nhiệm vụ quét trước khi tạo nhiệm vụ phát loa riêng.');
+  const phrase={text:$('speechText').value,languageCode:$('speechLanguage').value,speedWpm:150};
+  const deadline=Date.now()+150000;let prepared=false;
+  while(Date.now()<deadline){const result=await api('/api/v1/pi/speech/prepare',phrase);if(result.state==='READY'){prepared=true;break}if(result.state!=='PENDING')throw Error('TTS chưa sẵn sàng: '+result.code);$('speechReceipt').textContent='Đang chuẩn bị giọng đọc…';await new Promise(resolve=>setTimeout(resolve,2000))}
+  if(!prepared)throw Error('Hết thời gian chuẩn bị giọng đọc; chưa gửi lệnh tới robot.');
   const result=await api('/api/v1/speech-jobs',{workflowId:$('speechWorkflow').value.trim(),robotId:$('robot').value.trim(),text:$('speechText').value,languageCode:$('speechLanguage').value});
   speechJob=result.jobId;$('speechStatus').disabled=false;$('speechReceipt').textContent=JSON.stringify(result,null,2);
   notice('BE đã tạo nhiệm vụ phát loa. Bấm Xem kết quả để kiểm tra phản hồi Pi.');

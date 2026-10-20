@@ -51,6 +51,11 @@ public class MqttOperationRecoveryService {
                     .put("commandType",command.getCommandType()).put("state",command.getState()).put("sendAttempts",command.getSendAttempts())
                     .put("createdAt",command.getCreatedAt().toString());
             row.set("physicalStopConfirmed",wire.tree(command.getPhysicalStopConfirmed()));
+            JsonNode receipt=command.getResultEnvelopeJson();
+            boolean operatorReconciled=receipt!=null && "OPERATOR_RECONCILED".equals(receipt.path("messageType").asText())
+                    && inbox.findById(UUID.fromString(receipt.path("messageId").asText()))
+                    .map(r->Boolean.TRUE.equals(r.getAccepted())).orElse(false);
+            row.put("operatorReconciled",operatorReconciled);
             if(command.getLastPublishAt()!=null)row.put("lastPublishedAt",command.getLastPublishAt().toString());
             if(command.getAcknowledgedAt()!=null)row.put("acknowledgedAt",command.getAcknowledgedAt().toString());
             if(!Boolean.TRUE.equals(command.getPhysicalStopConfirmed()))uncertain=true;

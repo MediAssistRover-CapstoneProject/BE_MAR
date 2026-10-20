@@ -105,6 +105,28 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
         assertThatThrownBy(()->artifacts.upload(session().getSessionId(),UUID.randomUUID(),manifest.path("asset_hash").asText(),MappingArchiveReader.hash(archive),new ByteArrayInputStream(archive),device())).hasMessageContaining("not issued");
         var d=device();assertThatThrownBy(()->artifacts.upload(session().getSessionId(),session().getArtifactId(),manifest.path("asset_hash").asText(),MappingArchiveReader.hash(archive),new ByteArrayInputStream(archive),new DevicePrincipal(UUID.randomUUID(),d.robotCode(),d.tokenVersion(),d.jti(),d.expiresAt()))).hasMessageContaining("Current device");assertThat(artifactRows.findById(session().getArtifactId())).isEmpty();}
     @Test void savedLocallyIsNotACommittedMap(){waiting();saveRequested();issue();startIssued();receive(result("SAVE",false,true));advance();assertThat(selected().getStepTypeSnapshot()).isEqualTo("DATA_SERVICE");assertThatThrownBy(this::advance).hasMessageContaining("durable upload receipt");assertThat(artifactRows.findById(session().getArtifactId())).isEmpty();}
+    @Test void closedLocalSaveHeartbeatBeforeErrorStillRunsStopCleanup() {
+        waiting();saveRequested();issue();startIssued();
+        var raw=fixture.heartbeat(json);var p=(ObjectNode)raw.path("payload");
+        p.putNull("currentMapId");p.putNull("mapAssetHash");
+        p.set("mappingSession",json.createObjectNode().put("session_id",session().getSessionId().toString())
+                .put("job_id",fixture.jobId.toString()).put("session_open",false).put("state","SAVED_LOCAL"));
+        router.route(MqttTopics.topic(fixture.robotId,"heartbeat"),wire.bytes(raw),0,false);
+        assertThat(status()).isEqualTo(JobStatus.RUNNING);assertThat(session().isPotentiallyOpen()).isTrue();
+        receive(fixture.event(json,"STEP_ERROR",json.createObjectNode().put("status","FAILED")
+                .put("errorCode","MAP_UPLOAD_UNAUTHORIZED").put("retryable",false).put("physicalStopConfirmed",true).putNull("details")));
+        advance();assertThat(selected().isMappingCleanup()).isTrue();
+        complete("STOP");advance();
+        assertThat(status()).isEqualTo(JobStatus.FAILED);assertThat(session().isPotentiallyOpen()).isFalse();
+    }
+    @Test void foreignClosedSaveHeartbeatStillRequiresRecovery() {
+        waiting();saveRequested();issue();startIssued();
+        var raw=fixture.heartbeat(json);var p=(ObjectNode)raw.path("payload");p.putNull("currentMapId");p.putNull("mapAssetHash");
+        p.set("mappingSession",json.createObjectNode().put("session_id",UUID.randomUUID().toString())
+                .put("job_id",fixture.jobId.toString()).put("session_open",false).put("state","SAVED_LOCAL"));
+        router.route(MqttTopics.topic(fixture.robotId,"heartbeat"),wire.bytes(raw),0,false);
+        assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(session().isPotentiallyOpen()).isTrue();
+    }
     @Test void claimedUploadWithoutReceiptEntersRecovery(){waiting();saveRequested();issue();startIssued();receive(result("SAVE",true,true));assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(session().isPotentiallyOpen()).isTrue();}
     @Test void durableRolloutHaltStillDispatchesCleanupStopForAnOpenMappingSession(){waiting();var before=rollout.state();
         try{rollout.change(new MqttRolloutService.Change(before.mode(),true,before.revision(),"Halt for mapping acceptance"),actor());
@@ -120,6 +142,29 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
     @Test void foreignSessionHeartbeatHoldsRecoveryAndEmptyMappingObjectIsIdle(){create();assertThat(status()).isEqualTo(JobStatus.RUNNING);issue();startIssued();receive(result("START",false,true));var hb=fixture.heartbeat(json);var p=(ObjectNode)hb.path("payload");p.putNull("currentMapId");p.putNull("mapAssetHash");p.set("mappingSession",json.createObjectNode().put("session_id",UUID.randomUUID().toString()).put("job_id",fixture.jobId.toString()).put("session_open",true).put("state","MAPPING"));router.route(MqttTopics.topic(fixture.robotId,"heartbeat"),wire.bytes(hb),0,false);assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);}
     @Test void wrongUiCorrelationDoesNotResumeWait(){waiting();assertThatThrownBy(()->workflowEvents.publish(fixture.jobId,new WorkflowEventRequest(UUID.randomUUID(),"MAPPING_SAVE_REQUESTED",UUID.randomUUID().toString(),Instant.now(),json.createObjectNode()),actor(),new RequestMetadata(null,null,null))).hasMessageContaining("correlation");assertThat(selected().getStatus()).isEqualTo(JobStepStatus.RUNNING);}
     @Test void lostEstablishedMappingSessionRequiresRecovery(){waiting();heartbeat(false);assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(session().isPotentiallyOpen()).isTrue();}
+    @Test void freshSlamPoseIsAcceptedWithoutNavigationMapOrLocationHistory(){waiting();
+        var hb=fixture.heartbeat(json);var p=(ObjectNode)hb.path("payload");p.putNull("currentMapId");p.putNull("mapAssetHash");
+        p.set("mappingSession",json.createObjectNode().put("session_id",session().getSessionId().toString()).put("job_id",fixture.jobId.toString()).put("session_open",true).put("state","MAPPING"));
+        var pose=((ObjectNode)p.path("telemetry")).putObject("map_pose").put("fresh",true).put("age_sec",.05);
+        pose.putObject("value").putNull("map_id").put("mapping_session_id",session().getSessionId().toString()).put("x_m",.2).put("y_m",.3).put("yaw_rad",0);
+        router.route(MqttTopics.topic(fixture.robotId,"heartbeat"),wire.bytes(hb),0,false);
+        assertThat(status()).isEqualTo(JobStatus.RUNNING);
+        long count=tx.execute(s->((Number)em.createNativeQuery("SELECT COUNT(*) FROM RobotLocationHistory WHERE robot_id=:id").setParameter("id",fixture.robotId).getSingleResult()).longValue());
+        assertThat(count).isZero();
+        ((ObjectNode)pose.path("value")).put("mapping_session_id",UUID.randomUUID().toString());
+        assertThatThrownBy(()->router.route(MqttTopics.topic(fixture.robotId,"heartbeat"),wire.bytes(hb),0,false)).hasMessageContaining("SLAM map_pose");
+    }
+    @Test void closedAndStationaryPiAllowsReconcilingMappingWaitWithoutInventingOperation(){waiting();heartbeat(false);
+        assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);
+        assertThatThrownBy(()->jobService.reconcile(fixture.jobId,new JobRequests.ReconcileJobRequest("Close interrupted survey",JobRequests.ReconcileOutcome.CONFIRM_CANCELLED),actor(),new RequestMetadata(null,null,null))).hasMessageContaining("fresh stationary odometry");
+        var hello=fixture.hello(json);((ObjectNode)hello.path("payload")).put("mappingEnabled",true).set("mappingSession",json.createObjectNode());receive(hello);
+        var hb=fixture.heartbeat(json);var p=(ObjectNode)hb.path("payload");p.putNull("currentMapId");p.putNull("mapAssetHash");p.set("mappingSession",json.createObjectNode());
+        ((ObjectNode)p.path("telemetry")).putObject("odom_speed").put("value",0).put("age_sec",.1);
+        router.route(MqttTopics.topic(fixture.robotId,"heartbeat"),wire.bytes(hb),0,false);
+        jobService.reconcile(fixture.jobId,new JobRequests.ReconcileJobRequest("Closed Pi survey after protocol fix",JobRequests.ReconcileOutcome.CONFIRM_CANCELLED),actor(),new RequestMetadata(null,null,null));
+        assertThat(status()).isEqualTo(JobStatus.CANCELLED);assertThat(session().isPotentiallyOpen()).isFalse();
+        assertThat(selected().getStatus()).isEqualTo(JobStepStatus.CANCELLED);
+    }
     @Test void visitLimitReservesTheUnvisitedStopWithoutExceedingMaxVisits(){waiting();tx.executeWithoutResult(s->em.find(Workflow.class,fixture.workflowId).setMaxTotalVisits(3));saveRequested();
         assertThat(selected().isMappingCleanup()).isTrue();assertThat(selected().getVisitNo()).isEqualTo(1);complete("STOP");advance();assertThat(status()).isEqualTo(JobStatus.FAILED);
         assertThat(steps.findByJobId(fixture.jobId).stream().filter(s->s.getSelectedAt()!=null).count()).isEqualTo(3);}

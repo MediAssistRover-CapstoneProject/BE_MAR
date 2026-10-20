@@ -21,6 +21,24 @@ class OpenApiConfigTest {
     private final OpenApiConfig config = new OpenApiConfig();
 
     @Test
+    void reusableErrorsIncludeNestedFieldViolationSchema() {
+        OpenAPI openApi=config.mediAssistRoverOpenApi();
+        config.phase9ContractCustomizer().customise(openApi);
+        JsonNode document=Json.mapper().valueToTree(openApi);
+        assertThat(document.at("/components/schemas/FieldViolation/properties/field").isMissingNode()).isFalse();
+        assertThat(document.at("/components/schemas/FieldViolation/properties/message").isMissingNode()).isFalse();
+        assertLocalReferences(document,document);
+    }
+
+    private void assertLocalReferences(JsonNode node,JsonNode document) {
+        if(node.isObject() && node.has("$ref")) {
+            String ref=node.path("$ref").asText();
+            if(ref.startsWith("#/"))assertThat(document.at(ref.substring(1)).isMissingNode()).as(ref).isFalse();
+        }
+        if(node.isContainerNode())node.forEach(child->assertLocalReferences(child,document));
+    }
+
+    @Test
     void customizesAnonymousDeviceAndUserOperationsWithoutAGlobalSecurityDefault() {
         OpenAPI openApi = config.mediAssistRoverOpenApi()
                 .paths(new Paths()

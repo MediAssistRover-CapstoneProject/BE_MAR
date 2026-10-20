@@ -114,7 +114,9 @@ class MqttCancellationRecoveryIntegrationTest extends MySqlIntegrationTest {
         assertThatThrownBy(()->recovery.reconcile(f.jobId,f.piStepId,"inspect",body(MqttOperationRecoveryRequest.Evidence.STAFF_INSPECTED_STOP),admin,null)).hasMessageContaining("OPERATOR_RECONCILED");}
 
     @Test void staffInspectionAfterLocalOperatorReconcileIsIdempotentAndRequiresNewHello(){fixture(StepType.MOVE);dispatch(true);error("FAILED",null,f.commandId);
+        assertThat(recovery.evidence(f.jobId,admin).path("commands").get(0).path("operatorReconciled").asBoolean()).isFalse();
         receive(f.event(json,"OPERATOR_RECONCILED",json.createObjectNode().put("reason","Checked motor and cart").put("status","CANCELLED")));hello("CANCELLED");var body=body(MqttOperationRecoveryRequest.Evidence.STAFF_INSPECTED_STOP);
+        assertThat(recovery.evidence(f.jobId,admin).path("commands").get(0).path("operatorReconciled").asBoolean()).isTrue();
         JsonNode receipt=recovery.reconcile(f.jobId,f.piStepId,"inspection-1",body,admin,new RequestMetadata("127.0.0.1","test","recovery"));
         assertThat(job().getStatus()).isEqualTo(JobStatus.CANCELLED);assertThat(commands.findById(f.commandId).orElseThrow().getPhysicalStopConfirmed()).isNull();assertThat(commands.findById(f.commandId).orElseThrow().getState()).isEqualTo("RESOLVED_BY_STAFF");
         assertThat(sessions.findById(f.robotId).orElseThrow().isClosed()).isTrue();assertThat(robots.findById(f.robotId).orElseThrow().getStatus()).isEqualTo(RobotStatus.STARTING);

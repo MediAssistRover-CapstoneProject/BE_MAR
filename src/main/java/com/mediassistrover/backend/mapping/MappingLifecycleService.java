@@ -132,10 +132,19 @@ public class MappingLifecycleService {
         if(!reportsOpen(reported)) {
             var open=sessions.findByRobotIdAndPotentiallyOpenTrue(robotId);
             if(open.isEmpty() || open.stream().allMatch(s->"STARTING".equals(s.getState())))return true;
-            // A heartbeat is not a STOP receipt. Loss of an established SLAM session requires reconciliation.
+            // SAVE failure may close the Pi session before its durable STEP_ERROR
+            // reaches BE. Wait for that result while the exact SAVE is in flight;
+            // the heartbeat itself never closes the BE session or releases robot.
             return commands.findByRobotIdAndStateIn(robotId,List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED")).stream()
-                    .anyMatch(c->c.getSendAttempts()>0 && "STOP".equals(c.getPayloadJson().path("step").path("params").path("action").asText())
-                            && open.stream().anyMatch(s->s.getJobId().equals(c.getJobId())));
+                    .anyMatch(c->{
+                        String action=c.getPayloadJson().path("step").path("params").path("action").asText();
+                        if(c.getSendAttempts()<1)return false;
+                        return open.stream().anyMatch(s->s.getJobId().equals(c.getJobId()) &&
+                            ("STOP".equals(action) || "SAVE".equals(action) && "SAVING".equals(s.getState()) && reported!=null &&
+                             s.getSessionId().toString().equals(reported.path("session_id").asText()) &&
+                             s.getJobId().toString().equals(reported.path("job_id").asText()) &&
+                             Set.of("SAVED_LOCAL","SAVED","ABORTED","STOPPED").contains(reported.path("state").asText())));
+                    });
         }
         MappingSession session;
         try{session=sessions.findById(UUID.fromString(reported.path("session_id").asText())).orElse(null);}catch(IllegalArgumentException ex){return false;}

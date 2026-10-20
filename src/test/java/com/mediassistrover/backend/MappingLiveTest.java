@@ -53,16 +53,25 @@ class MappingLiveTest {
         ack.put("messageType","MAPPING_CONTROL_ACK").put("producerSessionId",link.getProducerSessionId().toString()).put("accepted",true).putNull("errorCode").put("receivedAt",now.toString());contracts.live(ack);
         ack.put("transportSessionId",UUID.randomUUID().toString());controls.acknowledge(robot,ack);assertThat(controls.status(jobId).status()).isEqualTo("MQTT_PUBLISHED");
         ack.put("transportSessionId",tid.toString());controls.acknowledge(robot,ack);assertThat(controls.status(jobId).status()).isEqualTo("PI_ACCEPTED");
-        assertThat(sent.expiresAt()).isEqualTo(now.plusMillis(750));
+        assertThat(sent.expiresAt()).isEqualTo(now.plusMillis(1500));
     }
     @Test void rejectsMoveOutsideWaitAndStopRemainsAvailableDuringSave() {
         session.setState("SAVING");job.getSelectedJobStep().setStepTypeSnapshot("EXECUTE_SENSING");
         assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,.05,0.,400))).hasMessageContaining("Move only");
         assertThatCode(()->controls.send(jobId,new MappingControlService.Request(sid,0.,0.,400))).doesNotThrowAnyException();
     }
+    @Test void realtimeJavaClockSerializesControlWithMillisecondPrecision() {
+        var nanos=Clock.fixed(Instant.parse("2026-10-20T15:30:40.225096447Z"),ZoneOffset.UTC);
+        var service=new MappingControlService(jobs,sessions,links,registry,mqtt,properties,transport,wire,contracts,nanos);
+        var receipt=service.send(jobId,new MappingControlService.Request(sid,.05,0.,400));
+        assertThat(receipt.issuedAt()).isEqualTo(Instant.parse("2026-10-20T15:30:40.225Z"));
+        assertThat(receipt.expiresAt()).isEqualTo(Instant.parse("2026-10-20T15:30:41.725Z"));
+        assertThat(published.path("issuedAt").asText()).isEqualTo("2026-10-20T15:30:40.225Z");
+        contracts.live(published);
+    }
     @Test void rejectsDisconnectedForeignSessionAndOutOfRangeVelocity() {
         assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(UUID.randomUUID(),.05,0.,400))).hasMessageContaining("does not belong");
-        for(double speed:new double[]{-.01,.06,Double.NaN,Double.POSITIVE_INFINITY})
+        for(double speed:new double[]{-.01,.11,Double.NaN,Double.POSITIVE_INFINITY})
             assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,speed,0.,400))).hasMessageContaining("Invalid");
         when(registry.fresh(link)).thenReturn(false);
         assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,.05,0.,400))).hasMessageContaining("not ready");
@@ -72,6 +81,27 @@ class MappingLiveTest {
         controls.send(jobId,new MappingControlService.Request(sid,.05,0.,400));
         assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,.05,0.,400))).hasMessageContaining("250 ms");
         controls.send(jobId,new MappingControlService.Request(sid,0.,0.,400));assertThat(published.path("linearX").asDouble()).isZero();
+    }
+    @Test void jogEnvelopeAllowsBoundedSpeedAndSixHundredMsLease() {
+        controls.send(jobId,new MappingControlService.Request(sid,.08,.25,600));
+        contracts.live(published);
+        assertThat(published.path("linearX").asDouble()).isEqualTo(.08);
+        assertThat(published.path("durationMs").asInt()).isEqualTo(600);
+        assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,.08,0.,4000)))
+                .hasMessageContaining("Invalid");
+    }
+    @Test void stopSequencePreventsAnOlderHttpMoveArrivingAfterStop() {
+        UUID ui=UUID.randomUUID();
+        controls.send(jobId,new MappingControlService.Request(sid,0.,0.,600,ui,2L,now));
+        assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,.08,0.,600,ui,1L,now)))
+                .hasMessageContaining("Stale UI control sequence");
+        assertThat(published.path("linearX").asDouble()).isZero();
+        verify(transport,times(1)).publish(anyString(),any(),eq(0));
+    }
+    @Test void staleBrowserRequestCannotStartMotion() {
+        assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,.08,0.,600,UUID.randomUUID(),1L,now.minusSeconds(2))))
+                .hasMessageContaining("Stale UI control request");
+        verify(transport,never()).publish(anyString(),any(),anyInt());
     }
     ObjectNode map(byte[] grid) throws Exception {
         var bytes=new ByteArrayOutputStream();try(var zip=new DeflaterOutputStream(bytes)){zip.write(grid);}
@@ -96,5 +126,15 @@ class MappingLiveTest {
         payload.put("width",5);assertThatThrownBy(()->previews.acceptCamera(robot,payload)).hasMessageContaining("dimensions");
         payload.put("width",4).put("captured_at",now.minusSeconds(20).toString()).put("revision",2);previews.acceptCamera(robot,payload);
         assertThat(previews.cameraImage(sid).revision()).isEqualTo(1);
+    }
+    @Test void actualPythonPreviewMatchesJavaSchemaAndRendersPng() throws Exception {
+        String fixture=System.getenv("MAR_PI_PREVIEW_FIXTURE");
+        org.junit.jupiter.api.Assumptions.assumeTrue(fixture!=null,"Set MAR_PI_PREVIEW_FIXTURE to Python MappingManager output");
+        ObjectNode envelope=wire.parse(Files.readAllBytes(Path.of(fixture)));
+        contracts.inbound(envelope);
+        assertThat(envelope.path("payload").path("pose").path("value").size()).isEqualTo(3);
+        var payload=(ObjectNode)envelope.path("payload");payload.put("captured_at",now.toString());
+        previews.accept(robot,payload);
+        assertThat(ImageIO.read(new ByteArrayInputStream(previews.mapImage(sid).bytes())).getWidth()).isEqualTo(2);
     }
 }

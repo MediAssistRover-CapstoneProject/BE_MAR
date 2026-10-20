@@ -32,10 +32,18 @@ public class MappingControlService {
     // Epoch-based start also advances across normal BE restarts. Pi rejects old sequences.
     private final AtomicLong sequence=new AtomicLong(System.currentTimeMillis()*1000);
     private final Map<UUID,Receipt> latest=new ConcurrentHashMap<>();
+    private record ClientKey(UUID robot,UUID mapping,UUID client) { }
+    private record ClientCursor(long sequence,Instant seenAt) { }
+    private final Map<ClientKey,ClientCursor> clientOrder=new ConcurrentHashMap<>();
     public record Request(@NotNull UUID mappingSessionId,
-            @NotNull @DecimalMin("0.0") @DecimalMax("0.05") Double linearX,
-            @NotNull @DecimalMin("-0.2") @DecimalMax("0.2") Double angularZ,
-            @Min(100) @Max(400) int durationMs) { }
+            @NotNull @DecimalMin("0.0") @DecimalMax("0.10") Double linearX,
+            @NotNull @DecimalMin("-0.3") @DecimalMax("0.3") Double angularZ,
+            @Min(100) @Max(600) int durationMs,
+            UUID controlSessionId,@Min(1) Long controlSequence,Instant requestedAt) {
+        public Request(UUID mappingSessionId,Double linearX,Double angularZ,int durationMs) {
+            this(mappingSessionId,linearX,angularZ,durationMs,null,null,null);
+        }
+    }
     public record Receipt(UUID commandId,UUID jobId,UUID mappingSessionId,UUID transportSessionId,
             long sequenceNo,Instant issuedAt,Instant expiresAt,String status,String errorCode,Instant receivedAt) { }
 
@@ -48,7 +56,7 @@ public class MappingControlService {
             throw new BusinessRuleException("Mapping session is closed or does not belong to Job");
         boolean stop=input.linearX()!=null && input.angularZ()!=null && input.linearX()==0 && input.angularZ()==0;
         if(input.linearX()==null || input.angularZ()==null || !Double.isFinite(input.linearX()) || !Double.isFinite(input.angularZ())
-                || input.linearX()<0 || input.linearX()>.05 || Math.abs(input.angularZ())>.2 || input.durationMs()<100 || input.durationMs()>400)
+                || input.linearX()<0 || input.linearX()>.10 || Math.abs(input.angularZ())>.3 || input.durationMs()<100 || input.durationMs()>600)
             throw new BusinessRuleException("Invalid mapping velocity or duration");
         JobStep selected=job.getSelectedJobStep();
         if(!stop && (job.getStatus()!=JobStatus.RUNNING || job.getCancelRequestedAt()!=null || !"MAPPING".equals(session.getState())
@@ -59,12 +67,29 @@ public class MappingControlService {
         RobotMqttSession link=robotSessions.findById(robot).orElse(null);
         if(!mqtt.manages(robot) || !transport.connected() || !registry.fresh(link)
                 || !link.getHelloJson().path("mappingEnabled").asBoolean())throw new BusinessRuleException("Pi mapping connection is not ready");
-        Instant now=Instant.now(clock);
+        // Keep manual-control timestamps compatible with Python 3.10 robots.
+        // Durable commands pass through DB precision; this QoS 0 lane does not.
+        Instant now=Instant.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+        if(input.requestedAt()!=null && (input.requestedAt().isBefore(now.minusMillis(1500)) || input.requestedAt().isAfter(now.plusSeconds(5))))
+            throw new BusinessRuleException("Stale UI control request; check laptop/server time");
+        if((input.controlSessionId()==null)!=(input.controlSequence()==null))
+            throw new BusinessRuleException("controlSessionId and controlSequence must be supplied together");
+        if(input.controlSequence()!=null) {
+            if(input.controlSequence()<1 || input.controlSequence()>9_007_199_254_740_991L)
+                throw new BusinessRuleException("Invalid UI control sequence");
+            clientOrder.entrySet().removeIf(entry->entry.getValue().seenAt().isBefore(now.minusSeconds(3600)));
+            ClientKey key=new ClientKey(robot,session.getSessionId(),input.controlSessionId());
+            if(!clientOrder.containsKey(key) && clientOrder.size()>=256)throw new BusinessRuleException("Too many UI control sessions");
+            clientOrder.compute(key,(ignored,prior)->{
+                if(prior!=null && input.controlSequence()<=prior.sequence())throw new BusinessRuleException("Stale UI control sequence");
+                return new ClientCursor(input.controlSequence(),now);
+            });
+        }
         Receipt prior=latest.get(robot);
         if(!stop && prior!=null && prior.issuedAt().isAfter(now.minusMillis(240)))
             throw new BusinessRuleException("Wait at least 250 ms between movement commands");
         var receipt=new Receipt(UUID.randomUUID(),jobId,session.getSessionId(),link.getTransportSessionId(),sequence.incrementAndGet(),
-                now,now.plusMillis(750),"QUEUED",null,null);
+                now,now.plusMillis(1500),"QUEUED",null,null);
         var command=wire.object().put("messageType","MAPPING_CONTROL").put("robotId",robot.toString())
                 .put("transportSessionId",link.getTransportSessionId().toString()).put("jobId",jobId.toString())
                 .put("mappingSessionId",session.getSessionId().toString()).put("commandId",receipt.commandId().toString())
