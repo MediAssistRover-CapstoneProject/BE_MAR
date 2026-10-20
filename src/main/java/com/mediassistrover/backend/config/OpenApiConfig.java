@@ -221,7 +221,7 @@ public class OpenApiConfig {
             components = new Components();
             openApi.setComponents(components);
         }
-        ModelConverters.getInstance().read(ApiErrorResponse.class)
+        ModelConverters.getInstance().readAll(ApiErrorResponse.class)
                 .forEach(components::addSchemas);
         components.addResponses("ValidationError", errorResponse("Request validation failed"));
         components.addResponses("Unauthorized", errorResponse("Missing, invalid or expired credential"));

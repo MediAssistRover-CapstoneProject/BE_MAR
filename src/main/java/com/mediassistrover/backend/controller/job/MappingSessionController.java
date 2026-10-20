@@ -29,9 +29,10 @@ public class MappingSessionController {
         return sessions.findByJobId(jobId).orElseThrow(()->new ResourceNotFoundException("Job has no mapping session"));
     }
     @GetMapping("/{jobId}/mapping-session") public JsonNode detail(@PathVariable UUID jobId,@RequestParam(defaultValue="true") boolean includePreview,@AuthenticationPrincipal AccountPrincipal actor) {
-        var s=session(jobId,actor);
+        var job=snapshots.snapshot(jobId,actor).job();
+        var s=sessions.findByJobId(jobId).orElseThrow(()->new ResourceNotFoundException("Job has no mapping session"));
         var result=json.createObjectNode().put("mapping_session_id",s.getSessionId().toString()).put("artifact_id",s.getArtifactId().toString())
-                .put("state",s.getState()).put("potentially_open",s.isPotentiallyOpen());if(includePreview)result.set("preview",previews.latest(s.getSessionId()));return result;
+                .put("state",s.getState()).put("job_status",job.status().name()).put("potentially_open",s.isPotentiallyOpen());if(includePreview)result.set("preview",previews.latest(s.getSessionId()));return result;
     }
     @PostMapping("/{jobId}/mapping-control") @PreAuthorize("hasRole('ADMIN')") @ResponseStatus(HttpStatus.ACCEPTED)
     @Operation(summary="Manual mapping pulse; zero velocities stop. HTTP 202 does not prove robot movement.")

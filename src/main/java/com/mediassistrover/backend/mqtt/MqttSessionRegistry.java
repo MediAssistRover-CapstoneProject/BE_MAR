@@ -154,7 +154,8 @@ public class MqttSessionRegistry {
         if (previous!=next && !histories.existsById(e.messageId())) histories.save(RobotStatusHistory.builder().robotStatusHistoryId(e.messageId()).robot(robot)
                 .previousStatus(previous).newStatus(next).reason("MQTT_HEARTBEAT").recordedAt(now).build());
         JsonNode pose=telemetry.path("map_pose");
-        if(pose.path("fresh").asBoolean())validateFreshMapPose(pose,map,mappingOpen);
+        if(pose.path("fresh").asBoolean())validateFreshMapPose(pose,map,
+                mappingOpen?p.path("mappingSession").path("session_id").asText():null);
         if (map!=null && !mappingOpen && active.stream().noneMatch(j->mapping.open(j.getJobId())) && pose.path("fresh").asBoolean() && !locations.existsById(e.messageId())) {
             JsonNode value=pose.path("value");locations.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map)
                     .frameId("map").source("MQTT_HEARTBEAT_MAP_POSE")
@@ -167,12 +168,16 @@ public class MqttSessionRegistry {
         applicationEvents.publishEvent(new com.mediassistrover.backend.service.RobotRealtimeEventStream.Changed(e.robotId()));
     }
 
-    private void validateFreshMapPose(JsonNode pose,FacilityMap map,boolean mappingOpen) {
+    private void validateFreshMapPose(JsonNode pose,FacilityMap map,String mappingSessionId) {
         JsonNode value=pose.path("value"),age=pose.path("age_sec");
-        if(mappingOpen||map==null)throw new BusinessRuleException("Fresh map_pose requires an assigned navigation map");
+        if(mappingSessionId!=null) {
+            if(!value.isObject() || !value.path("map_id").isNull()
+                    || !mappingSessionId.equals(value.path("mapping_session_id").asText()))
+                throw new BusinessRuleException("SLAM map_pose must belong to the reported mapping session, with map_id=null");
+        } else if(map==null)throw new BusinessRuleException("Fresh map_pose requires an assigned navigation map");
         if(!age.isNumber()||age.decimalValue().compareTo(BigDecimal.ZERO)<0||age.decimalValue().compareTo(BigDecimal.ONE)>0)
             throw new BusinessRuleException("Fresh map_pose age_sec must be between 0 and 1");
-        if(!value.isObject()||!map.getMapId().toString().equals(value.path("map_id").asText()))
+        if(mappingSessionId==null && (!value.isObject()||!map.getMapId().toString().equals(value.path("map_id").asText())))
             throw new BusinessRuleException("map_pose map_id does not match currentMapId");
         for(String field:List.of("x_m","y_m","yaw_rad"))if(!value.path(field).isNumber())
             throw new BusinessRuleException("map_pose "+field+" must be numeric");
