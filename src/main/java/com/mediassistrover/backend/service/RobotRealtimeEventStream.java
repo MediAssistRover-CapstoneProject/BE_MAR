@@ -30,5 +30,7 @@ public class RobotRealtimeEventStream {
     }
     @TransactionalEventListener(phase=TransactionPhase.AFTER_COMMIT)
     public void changed(Changed event){for(Subscription subscription:subscribers.getOrDefault(event.robotId(),new CopyOnWriteArrayList<>()))send(event.robotId(),subscription);}
+    /** Periodic state event doubles as SSE keepalive and exposes heartbeat/pose freshness transitions. */
+    public void heartbeat(){subscribers.forEach((robotId,list)->list.forEach(subscription->send(robotId,subscription)));}
     private void send(UUID robotId,Subscription subscription){synchronized(subscription){try{subscription.emitter().send(SseEmitter.event().name("robot-state").data(snapshots.snapshot(robotId)));}catch(Exception ex){subscribers.computeIfPresent(robotId,(id,list)->{list.remove(subscription);return list.isEmpty()?null:list;});subscription.emitter().complete();}}}
 }

@@ -13,7 +13,7 @@ public final class ServiceRequestResponses {
             String requestCode,ServiceRequestType requestType,RequestSourceType sourceType,int priority,
             ServiceRequestStatus status,String requestNote,JsonNode requestDataJson,String idempotencyKey,
             Instant requestedAt,Instant scheduledAt,Instant cancelledAt,Instant completedAt,long rowVersion,Instant updatedAt) {}
-    public record NavigationResponse(ServiceRequestResponse request,UUID mapId,UUID roomId,UUID originEndpointId,UUID destinationEndpointId,
+    public record NavigationResponse(ServiceRequestResponse request,UUID mapId,UUID workflowId,UUID roomId,UUID originEndpointId,UUID destinationEndpointId,
             UUID destinationGroupId,UUID resolvedEndpointId,TargetMode targetMode,NavigationMode navigationMode,
             String accessibilityNeed,int passengerCount,String arrivalInstruction) {}
     public record EscortResponse(ServiceRequestResponse request,UUID mapId,UUID originRoomId,UUID destinationRoomId,

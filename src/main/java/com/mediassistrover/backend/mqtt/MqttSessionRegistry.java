@@ -154,8 +154,8 @@ public class MqttSessionRegistry {
         if (previous!=next && !histories.existsById(e.messageId())) histories.save(RobotStatusHistory.builder().robotStatusHistoryId(e.messageId()).robot(robot)
                 .previousStatus(previous).newStatus(next).reason("MQTT_HEARTBEAT").recordedAt(now).build());
         JsonNode pose=telemetry.path("map_pose");
-        if (map!=null && !mappingOpen && active.stream().noneMatch(j->mapping.open(j.getJobId())) && pose.path("fresh").asBoolean() && pose.path("age_sec").isNumber() && pose.path("age_sec").asDouble()>=0 && pose.path("age_sec").asDouble()<=1
-                && pose.path("value").path("map_id").asText().equals(map.getMapId().toString()) && !locations.existsById(e.messageId())) {
+        if(pose.path("fresh").asBoolean())validateFreshMapPose(pose,map,mappingOpen);
+        if (map!=null && !mappingOpen && active.stream().noneMatch(j->mapping.open(j.getJobId())) && pose.path("fresh").asBoolean() && !locations.existsById(e.messageId())) {
             JsonNode value=pose.path("value");locations.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map)
                     .frameId("map").source("MQTT_HEARTBEAT_MAP_POSE")
                     .xM(value.path("x_m").decimalValue()).yM(value.path("y_m").decimalValue()).yawRad(value.path("yaw_rad").decimalValue()).fresh(true)
@@ -165,6 +165,23 @@ public class MqttSessionRegistry {
         if (next==RobotStatus.ERROR) session.setDispatchReady(false);
         for (Job job:active) if (job.isBeOrchestrated() && job.getStatus()!=JobStatus.RECOVERY_REQUIRED) wakeups.request(job);
         applicationEvents.publishEvent(new com.mediassistrover.backend.service.RobotRealtimeEventStream.Changed(e.robotId()));
+    }
+
+    private void validateFreshMapPose(JsonNode pose,FacilityMap map,boolean mappingOpen) {
+        JsonNode value=pose.path("value"),age=pose.path("age_sec");
+        if(mappingOpen||map==null)throw new BusinessRuleException("Fresh map_pose requires an assigned navigation map");
+        if(!age.isNumber()||age.decimalValue().compareTo(BigDecimal.ZERO)<0||age.decimalValue().compareTo(BigDecimal.ONE)>0)
+            throw new BusinessRuleException("Fresh map_pose age_sec must be between 0 and 1");
+        if(!value.isObject()||!map.getMapId().toString().equals(value.path("map_id").asText()))
+            throw new BusinessRuleException("map_pose map_id does not match currentMapId");
+        for(String field:List.of("x_m","y_m","yaw_rad"))if(!value.path(field).isNumber())
+            throw new BusinessRuleException("map_pose "+field+" must be numeric");
+        BigDecimal limit=new BigDecimal("99999999.9999");
+        if(value.path("x_m").decimalValue().abs().compareTo(limit)>0||value.path("y_m").decimalValue().abs().compareTo(limit)>0)
+            throw new BusinessRuleException("map_pose coordinates exceed supported map bounds");
+        BigDecimal yaw=value.path("yaw_rad").decimalValue(),pi=new BigDecimal("3.141593");
+        if(yaw.compareTo(pi.negate())<0||yaw.compareTo(pi)>0)
+            throw new BusinessRuleException("map_pose yaw_rad must be between -3.141593 and 3.141593");
     }
 
     @Transactional(isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)

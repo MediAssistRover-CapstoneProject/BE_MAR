@@ -40,7 +40,10 @@ public class RobotRealtimeSnapshotService {
         Instant now=Instant.now(clock);Robot robot=robots.findById(robotId)
                 .orElseThrow(()->new ResourceNotFoundException("Robot not found: "+robotId));
         RobotMqttSession session=sessions.findById(robotId).orElse(null);
-        boolean heartbeatFresh=registry.fresh(session);Double heartbeatAge=session==null||session.getLastHeartbeatAt()==null?null:
+        boolean mqttConnected=registry.owned(session);
+        boolean heartbeatFresh=mqttConnected&&session.getLastHeartbeatAt()!=null
+                &&session.getLastHeartbeatAt().isAfter(now.minusSeconds(15));
+        Double heartbeatAge=session==null||session.getLastHeartbeatAt()==null?null:
                 Math.max(0,Duration.between(session.getLastHeartbeatAt(),now).toMillis()/1000.0);
         Job active=jobs.findByRobotRobotIdAndStatusIn(robotId,List.of(JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED))
                 .stream().min(Comparator.comparing(Job::getQueuedAt)).orElse(null);
@@ -54,8 +57,8 @@ public class RobotRealtimeSnapshotService {
                     value.getSource()==null?"LEGACY_LOCATION_HISTORY":value.getSource(),fresh,
                     value.getCapturedAt(),value.getReceivedAt());
         }).orElse(null);
-        return new Snapshot(now,mapper.toResponse(robot),heartbeatFresh,heartbeatFresh,heartbeatAge,
-                session!=null&&session.isDispatchReady()&&heartbeatFresh,session==null?"HELLO required":session.getFailureReason(),
+        return new Snapshot(now,mapper.toResponse(robot),mqttConnected,heartbeatFresh,heartbeatAge,
+                registry.fresh(session),session==null?"HELLO required":session.getFailureReason(),
                 active==null?null:active.getJobId(),selected==null?null:selected.getJobStepId(),
                 selected==null?null:selected.getStepTypeSnapshot(),selected==null?null:selected.getStepCodeSnapshot(),pose);
     }

@@ -137,10 +137,24 @@ class RequestJobIntegrationTest extends MySqlIntegrationTest {
     }
 
     @Test void deviceCancellationDuringRunningNavigationRequiresRecovery(){publish("NAVIGATION");FacilityMap map=facility();Endpoint endpoint=endpoint(map);robot=robot(map,"SCREEN-NAV");device=device(robot);
-        NavigationCreateRequest body=new NavigationCreateRequest(map.getMapId(),null,null,endpoint.getEndpointId(),null,TargetMode.ENDPOINT,NavigationMode.STANDARD,null,1,null,60,"Guide patient",objectMapper.createObjectNode());
+        NavigationCreateRequest body=new NavigationCreateRequest(map.getMapId(),null,null,null,endpoint.getEndpointId(),null,TargetMode.ENDPOINT,NavigationMode.STANDARD,null,1,null,60,"Guide patient",objectMapper.createObjectNode());
         NavigationResponse created=requestService.createDeviceNavigation(body,"device-nav-running",device,metadata());Job job=jobRepository.findByServiceRequestServiceRequestId(created.request().serviceRequestId()).getFirst();job.setStatus(JobStatus.RUNNING);job.setStartedAt(Instant.now());requestRepository.findById(created.request().serviceRequestId()).orElseThrow().setStatus(ServiceRequestStatus.IN_PROGRESS);jobRepository.saveAndFlush(job);
         var detail=requestService.cancelDeviceRequest(created.request().serviceRequestId(),"Stop now",null,device,metadata());
         assertThat(detail.status()).isEqualTo(ServiceRequestStatus.RECOVERY_REQUIRED);assertThat(detail.jobs().getFirst().status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(robotRepository.findById(robot.getRobotId()).orElseThrow().getStatus()).isEqualTo(RobotStatus.ERROR);
+    }
+
+    @Test void navigationCanPinAPublishedWorkflowAndFreeFormDataCannotOverrideEndpointIdentity(){Workflow workflow=publish("NAVIGATION");FacilityMap map=facility();Endpoint origin=endpoint(map),destination=endpoint(map);robot=robot(map,"NAV-PINNED");
+        JsonNode forged=objectMapper.createObjectNode().put("workflow_id",UUID.randomUUID().toString()).put("origin_endpoint_id",UUID.randomUUID().toString())
+                .put("endpoint_id",UUID.randomUUID().toString()).put("endpoint_group_id",UUID.randomUUID().toString()).put("note","preserved");
+        NavigationCreateRequest body=new NavigationCreateRequest(map.getMapId(),workflow.getWorkflowId(),null,origin.getEndpointId(),destination.getEndpointId(),null,
+                TargetMode.ENDPOINT,NavigationMode.STANDARD,null,1,null,60,"Pinned navigation",forged);
+        NavigationResponse created=requestService.createNavigation(body,"nav-pinned-workflow",principal,metadata());
+        assertThat(created.workflowId()).isEqualTo(workflow.getWorkflowId());assertThat(created.originEndpointId()).isEqualTo(origin.getEndpointId());assertThat(created.destinationEndpointId()).isEqualTo(destination.getEndpointId());
+        JsonNode saved=requestRepository.findById(created.request().serviceRequestId()).orElseThrow().getRequestDataJson();
+        assertThat(saved.path("workflow_id").asText()).isEqualTo(workflow.getWorkflowId().toString());assertThat(saved.path("origin_endpoint_id").asText()).isEqualTo(origin.getEndpointId().toString());
+        assertThat(saved.path("endpoint_id").asText()).isEqualTo(destination.getEndpointId().toString());assertThat(saved.has("endpoint_group_id")).isFalse();assertThat(saved.path("note").asText()).isEqualTo("preserved");
+        requestService.submit(created.request().serviceRequestId(),principal,metadata());
+        assertThat(jobRepository.findByServiceRequestServiceRequestId(created.request().serviceRequestId()).getFirst().getWorkflow().getWorkflowId()).isEqualTo(workflow.getWorkflowId());
     }
 
     @Test void requestRemainsQueuedWithoutRobotAndDispatcherAssignsItAfterRobotIsReleased(){
