@@ -73,6 +73,22 @@ class OperationsMaintenanceServiceTest {
     }
 
     @Test
+    void schema3MqttDurationWaitIsNeverCompletedOrTimedOutByLegacyScheduler() {
+        Instant now = Instant.parse("2026-10-06T03:00:00Z");
+        Job job = Job.builder().status(JobStatus.RUNNING).beOrchestrated(true).schemaVersion(3).build();
+        JobTask task = JobTask.builder().job(job).build();
+        JobStep step = JobStep.builder().jobTask(task).stepTypeSnapshot("WAIT")
+                .resolvedInputsJson(new ObjectMapper().createObjectNode()
+                        .put("wait_type", "DURATION").put("duration_sec", 5))
+                .status(JobStepStatus.RUNNING).startedAt(now.minusSeconds(30))
+                .timeoutSecSnapshot(10).build();
+        when(stepRepository.lockPotentialTimeouts(now.minusSeconds(1))).thenReturn(List.of(step));
+
+        assertThat(service().markTimedOutSteps(now)).isZero();
+        assertThat(step.getStatus()).isEqualTo(JobStepStatus.RUNNING);
+    }
+
+    @Test
     void tokenCleanupCombinesBothStoresAtInclusiveBoundary() {
         Instant now = Instant.parse("2026-10-06T03:00:00Z");
         when(revokedTokenRepository.deleteByExpiresAtLessThanEqual(now)).thenReturn(2L);

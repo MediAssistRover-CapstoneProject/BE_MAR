@@ -48,6 +48,13 @@ public class MqttSessionRegistry {
         return owned(session) && session.isHandshakeAcked() && session.isDispatchReady() && session.getLastHeartbeatAt()!=null
                 && session.getLastHeartbeatAt().isAfter(Instant.now(clock).minusSeconds(15));
     }
+    public boolean advertises(RobotMqttSession session, String stepType) {
+        if (session == null || session.getHelloJson() == null || stepType == null) return false;
+        for (JsonNode enabled : session.getHelloJson().path("enabledStepTypes")) {
+            if (stepType.equals(enabled.asText())) return true;
+        }
+        return false;
+    }
 
     /** Processor acquired active Job locks before this call; always lock Robot before Session. */
     public RobotMqttSession hello(MqttWire.Envelope e,List<Job> active) {

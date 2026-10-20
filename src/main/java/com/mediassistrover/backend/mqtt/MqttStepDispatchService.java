@@ -45,11 +45,16 @@ public class MqttStepDispatchService {
 
     public void requireActionSupported(Step step) {
 
+        if (!executionPolicy.requiresMqtt(step)) {
+            throw new BusinessRuleException(
+                    "Step " + step.getStepCode() + " is backend-owned and cannot use MQTT dispatch"
+            );
+        }
+
         if (!properties.isEnabled()
                 || !properties.isDispatchEnabled()
                 || properties.getRobotIds().isEmpty()
-                || !properties.getEnabledStepTypes()
-                .contains(step.getStepType().name())) {
+                || !properties.dispatches(step.getStepType())) {
 
             throw new BusinessRuleException(
                     "Step "
@@ -132,12 +137,6 @@ public class MqttStepDispatchService {
      * 1. EXECUTE_SENSING / MAPPING
      *    START, SAVE, STOP
      *
-     * 2. WAIT(EVENT)
-     *    MAPPING_SAVE_REQUESTED
-     *
-     * 3. DATA_SERVICE
-     *    COMMIT_MAP_ARTIFACT
-     *
      * Everything else remains blocked while the mapping
      * session is potentially open.
      */
@@ -156,15 +155,6 @@ public class MqttStepDispatchService {
             return true;
         }
 
-        JsonNode params =
-                step.getResolvedInputsJson();
-
-        if (params == null
-                || !params.isObject()) {
-
-            return false;
-        }
-
         /*
          * Mapping workflow:
          *
@@ -174,17 +164,7 @@ public class MqttStepDispatchService {
          *   ↓
          * SAVE
          */
-        if ("WAIT".equals(
-                step.getStepTypeSnapshot()
-        )) {
-
-            return "EVENT".equals(
-                    params.path("wait_type").asText()
-            )
-                    && "MAPPING_SAVE_REQUESTED".equals(
-                    params.path("event_type").asText()
-            );
-        }
+        // WAIT(EVENT) is backend-owned and can never enter MQTT dispatch.
 
         /*
          * Mapping workflow:
@@ -195,18 +175,10 @@ public class MqttStepDispatchService {
          *   ↓
          * STOP
          *
-         * Since DATA_SERVICE is also executed through Pi
-         * in the new architecture, this operation must be
-         * permitted while the session is still open.
+         * DATA_SERVICE remains backend-owned while the physical mapping
+         * session is open.
          */
-        if ("DATA_SERVICE".equals(
-                step.getStepTypeSnapshot()
-        )) {
-
-            return "COMMIT_MAP_ARTIFACT".equals(
-                    params.path("service_key").asText()
-            );
-        }
+        // DATA_SERVICE is backend-owned and can never enter MQTT dispatch.
 
         return false;
     }
@@ -284,21 +256,15 @@ public class MqttStepDispatchService {
         /*
          * IMPORTANT:
          *
-         * Previously this rejected every non-MAPPING StepType.
-         *
-         * That no longer works because WAIT(EVENT) and
-         * DATA_SERVICE are now also Pi/MQTT executed.
-         *
-         * Keep the mapping safety boundary but allow only
-         * the mapping workflow's required steps.
+         * Keep the mapping safety boundary narrow: backend-owned steps do
+         * not pass through this dispatcher, and only mapping robot actions
+         * may execute while the mapping session is open.
          */
         if (mapping.open(job.getJobId())
                 && !allowedDuringOpenMapping(step)) {
 
             throw new BusinessRuleException(
-                    "Open mapping permits only MAPPING START/SAVE/STOP, "
-                            + "WAIT(EVENT:MAPPING_SAVE_REQUESTED), "
-                            + "or DATA_SERVICE(COMMIT_MAP_ARTIFACT) Pi actions"
+                    "Open mapping permits only MAPPING START/SAVE/STOP Pi actions"
             );
         }
 
@@ -407,21 +373,7 @@ public class MqttStepDispatchService {
          * Pi must explicitly advertise every StepType that
          * BE may dispatch.
          */
-        boolean enabled = false;
-
-        for (JsonNode type :
-                session.getHelloJson()
-                        .path("enabledStepTypes")) {
-
-            if (step.getStepTypeSnapshot()
-                    .equals(type.asText())) {
-
-                enabled = true;
-                break;
-            }
-        }
-
-        if (!enabled) {
+        if (!registry.advertises(session, step.getStepTypeSnapshot())) {
 
             throw new BusinessRuleException(
                     "Pi does not enable selected StepType"
@@ -538,31 +490,11 @@ public class MqttStepDispatchService {
             }
         }
 
-       /*
- * WAIT(EVENT) may omit correlation_key in the workflow definition.
- * The BE normalizes it to operationKey before sending the final
- * MQTT command to Pi.
- *
- * If the workflow already resolved a real correlation_key
- * (for example mapping_session_id), never overwrite it.
- */
-if ("WAIT".equals(step.getStepTypeSnapshot())
-        && "EVENT".equals(params.path("wait_type").asText())
-        && (
-        !params.has("correlation_key")
-                || params.path("correlation_key").asText().isBlank()
-)) {
-
-    params.put(
-            "correlation_key",
-            step.getOperationKey()
-    );
-}
-
-inputs.validateMqttParams(
-        step.getStep(),
-        params
-);
+        // WAIT(EVENT) is completed only by the durable backend event mechanism.
+        inputs.validateMqttParams(
+                step.getStep(),
+                params
+        );
 
         UUID commandId =
                 UUID.randomUUID();

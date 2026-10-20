@@ -189,7 +189,7 @@ ssl://EMQX_ADDRESS:8883
 Vào **Access Control > Authentication > Add**:
 
 ```text
-Username: mar-backend
+Username: mar-be
 Password: một mật khẩu ngẫu nhiên mạnh
 ```
 
@@ -197,7 +197,7 @@ Lưu mật khẩu vào password manager.
 
 ### 8.2 ACL cho backend
 
-Vào **Access Control > Authorization/Client Authorization > Username**. Tạo các rule cho username `mar-backend`:
+Vào **Access Control > Authorization/Client Authorization > Username**. Tạo các rule cho username `mar-be`:
 
 | Permission | Action | Topic |
 |---|---|---|
@@ -227,10 +227,10 @@ MQTT_ENABLED=true
 MQTT_DISPATCH_ENABLED=false
 MQTT_BROKER_URI=ssl://CHANGE_ME_EMQX_ADDRESS:8883
 MQTT_CLIENT_ID=mar-backend-prod
-MQTT_USERNAME=mar-backend
+MQTT_USERNAME=mar-be
 MQTT_PASSWORD=CHANGE_ME_EMQX_BACKEND_PASSWORD
 MQTT_ROBOT_IDS=
-MQTT_ENABLED_STEP_TYPES=AUTHENTICATE,CONTROL_HARDWARE,MOVE,WAIT,INTERACT,HANDLE_PAYLOAD,DATA_SERVICE,SET_CONTEXT,CHECK_CONDITION,EXECUTE_SENSING,NOTIFY
+MQTT_ENABLED_STEP_TYPES=MOVE,CONTROL_HARDWARE,EXECUTE_SENSING,WAIT
 ```
 
 Railway sẽ redeploy. Trong EMQX Console, trang Clients/Sessions phải xuất hiện client `mar-backend-prod`. Nếu không kết nối:
@@ -301,7 +301,7 @@ Invoke-RestMethod `
 Trong **Authentication > Add**, tạo một user riêng cho Pi:
 
 ```text
-Username: giá trị UUID trong $RobotId
+Username: mar-pi-gazebo
 Password: một mật khẩu MQTT riêng cho robot
 ```
 
@@ -329,7 +329,7 @@ ROBOT_CODE=ROBOT001
 DEVICE_SECRET=CHANGE_ME_REST_DEVICE_SECRET
 MQTT_HOST=CHANGE_ME_EMQX_ADDRESS
 MQTT_PORT=8883
-MQTT_USERNAME=CHANGE_ME_ROBOT_UUID
+MQTT_USERNAME=mar-pi-gazebo
 MQTT_PASSWORD=CHANGE_ME_ROBOT_MQTT_PASSWORD
 MQTT_CLIENT_ID=pi-CHANGE_ME_ROBOT_UUID
 MQTT_CA_FILE=/etc/mediassist/emqx-ca.crt

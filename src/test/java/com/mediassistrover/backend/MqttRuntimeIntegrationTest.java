@@ -34,6 +34,7 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
     @Autowired JobEventRepository events; @Autowired WorkflowOrchestrationWorkRepository work;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired com.mediassistrover.backend.validation.WorkflowExecutionReadiness readiness;
+    @Autowired com.mediassistrover.backend.validation.StepExecutionPolicy executionPolicy;
     @Autowired jakarta.persistence.EntityManager entityManager;
     @Autowired NavigationProfileService profiles;
     @MockitoBean PahoMqttTransport transport;
@@ -67,8 +68,8 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
     private ObjectNode error(String status,Boolean stopped) {var p=json.createObjectNode().put("stepType",fixture.type.name()).put("status",status).put("errorCode","TEST_ERROR").put("errorMessage","test error").put("retryable",false);p.putNull("details");if(stopped!=null)p.put("physicalStopConfirmed",stopped);return fixture.event(json,"STEP_ERROR",p);}
     private Job currentJob() {return jobs.findById(fixture.jobId).orElseThrow();}
 
-    @ParameterizedTest @EnumSource(StepType.class)
-    void everyStepTypeDispatchesAndAcceptsAValidatedResultExactlyOnce(StepType type) {
+    @ParameterizedTest @EnumSource(value=StepType.class, names={"MOVE","CONTROL_HARDWARE","EXECUTE_SENSING","WAIT"})
+    void robotCandidateStepTypesDispatchAndAcceptAValidatedResultExactlyOnce(StepType type) {
         fixture(type,type==StepType.EXECUTE_SENSING?"ROBOT_HEALTH":null);RobotCommandOutbox command=dispatch();
         assertThat(command.getPayloadJson().path("step").path("stepType").asText()).isEqualTo(type.name());
         assertThat(command.getPayloadJson().path("step").path("params")).isEqualTo(steps.findById(fixture.piStepId).orElseThrow().getResolvedInputsJson());
@@ -79,8 +80,8 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
         if(type==StepType.SET_CONTEXT)assertThat(currentJob().getContextJson().path("remote_value").asInt()).isEqualTo(1);
     }
 
-    @ParameterizedTest @EnumSource(StepType.class)
-    void everyStepTypeAcceptsStepError(StepType type) {
+    @ParameterizedTest @EnumSource(value=StepType.class, names={"MOVE","CONTROL_HARDWARE","EXECUTE_SENSING","WAIT"})
+    void robotCandidateStepTypesAcceptStepError(StepType type) {
         fixture(type,type==StepType.EXECUTE_SENSING?"ROBOT_HEALTH":null);dispatch();receive(error("FAILED",true));
         assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.FAILED);
         assertThat(steps.findById(fixture.piStepId).orElseThrow().getErrorCode()).isEqualTo("TEST_ERROR");
@@ -91,6 +92,43 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
         tx.executeWithoutResult(status->wakeups.request(jobs.findById(fixture.jobId).orElseThrow()));orchestrator.advance(fixture.jobId);orchestrator.advance(fixture.jobId);
         assertThat(commands.findByJobStepId(fixture.piStepId)).isEmpty();
         assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.RUNNING);
+    }
+
+    @ParameterizedTest @EnumSource(value=StepType.class, names={"INTERACT","DATA_SERVICE","AUTHENTICATE","HANDLE_PAYLOAD","NOTIFY","CHECK_CONDITION","SET_CONTEXT"})
+    void backendOwnedStepTypesNeverCreateMqttCommandsEvenWhenMisconfigured(StepType type) {
+        fixture=tx.execute(status->MqttTestFixture.create(entityManager,json,type,null));
+        properties.getRobotIds().add(fixture.robotId);properties.getEnabledStepTypes().add(type.name());
+        tx.executeWithoutResult(status->wakeups.request(jobs.findById(fixture.jobId).orElseThrow()));
+        boolean serverOwned=tx.execute(status->{
+            JobStep step=steps.findById(fixture.piStepId).orElseThrow();
+            return executionPolicy.isServer(step,step.getResolvedInputsJson());
+        });
+        assertThat(serverOwned).isTrue();
+        for(int i=0;i<3;i++) {
+            try {
+                orchestrator.advance(fixture.jobId);
+            } catch(com.mediassistrover.backend.exception.BusinessRuleException expectedHandlerBlocker) {
+                // A backend handler may legitimately require domain fixture data (for example a NOTIFY recipient).
+                break;
+            }
+        }
+        assertThat(commands.findByJobStepId(fixture.piStepId)).isEmpty();
+    }
+
+    @ParameterizedTest @EnumSource(value=StepType.class, names={"CONTROL_HARDWARE","EXECUTE_SENSING","WAIT"})
+    void helloAdvertisingOnlyMoveBlocksEveryOtherRobotCandidate(StepType type) {
+        fixture(type,type==StepType.EXECUTE_SENSING?"ROBOT_HEALTH":null);
+        receive(fixture.hello(json,Set.of(StepType.MOVE)));heartbeat();
+        assertThatThrownBy(()->orchestrator.advance(fixture.jobId))
+                .hasMessageContaining("Pi does not enable selected StepType");
+        assertThat(commands.findByJobStepId(fixture.piStepId)).isEmpty();
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.PENDING);
+    }
+
+    @Test void helloAdvertisingOnlyMoveAllowsMoveAfterAllSafetyGates() {
+        fixture(StepType.MOVE,null);receive(fixture.hello(json,Set.of(StepType.MOVE)));heartbeat();confirmProfile();
+        orchestrator.advance(fixture.jobId);
+        assertThat(commands.findByJobStepId(fixture.piStepId)).isPresent();
     }
 
     @Test void helloNeedsHeartbeatAndRetainedPresenceCannotAuthorizeDispatch() {

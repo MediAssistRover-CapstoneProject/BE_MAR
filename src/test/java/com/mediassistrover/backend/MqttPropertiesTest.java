@@ -14,30 +14,42 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class MqttPropertiesTest {
 
-    private static final String ALL_TYPES =
-            Arrays.stream(StepType.values())
-                    .map(Enum::name)
-                    .collect(Collectors.joining(","));
+    private static final String ROBOT_TYPES =
+            "MOVE,CONTROL_HARDWARE,EXECUTE_SENSING,WAIT";
 
     private final ApplicationContextRunner context =
             new ApplicationContextRunner()
                     .withUserConfiguration(PropertiesConfiguration.class);
 
     @Test
-    void bindsAllElevenTypesWithMqttEnabled() {
+    void bindsExactlyTheFourRobotCandidateTypes() {
         context.withPropertyValues(
                         "app.mqtt.enabled=true",
-                        "app.mqtt.enabled-step-types=" + ALL_TYPES
+                        "app.mqtt.enabled-step-types=" + ROBOT_TYPES
                 )
                 .run(result -> {
                     assertThat(result).hasNotFailed();
 
                     assertThat(result.getBean(MqttProperties.class)
                                     .getEnabledStepTypes())
-                            .containsExactlyInAnyOrderElementsOf(
-                                    Arrays.stream(StepType.values())
-                                            .map(Enum::name)
-                                            .toList()
+                            .containsExactlyInAnyOrder(
+                                    "MOVE", "CONTROL_HARDWARE", "EXECUTE_SENSING", "WAIT"
+                            );
+                });
+    }
+
+    @Test
+    void rejectsBackendOwnedStepTypeDuringContextStartup() {
+        context.withPropertyValues(
+                        "app.mqtt.enabled=true",
+                        "app.mqtt.enabled-step-types=MOVE,INTERACT"
+                )
+                .run(result -> {
+                    assertThat(result).hasFailed();
+                    assertThat(result.getStartupFailure())
+                            .hasRootCauseMessage(
+                                    "MQTT enabled StepType must be one of MOVE, CONTROL_HARDWARE, "
+                                            + "EXECUTE_SENSING, WAIT; backend-owned StepType is not dispatchable: INTERACT"
                             );
                 });
     }

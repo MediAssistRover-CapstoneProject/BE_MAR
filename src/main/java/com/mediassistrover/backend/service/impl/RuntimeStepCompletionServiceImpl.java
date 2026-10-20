@@ -15,12 +15,16 @@ public class RuntimeStepCompletionServiceImpl implements RuntimeStepCompletionSe
     private final JobRepository jobRepository; private final com.mediassistrover.backend.service.OrchestrationWorkService wakeups;
     private final StepResultContractValidator validator; private final JobStepRepository stepRepository;
     private final JobEventRepository eventRepository; private final Clock clock;
+    private final com.mediassistrover.backend.validation.StepExecutionPolicy executionPolicy;
     @Override @org.springframework.transaction.annotation.Transactional public boolean complete(JobStep supplied,JsonNode result,Account actor,JobEventProducerType producer,String eventType,UUID eventId){
         Job job=jobRepository.lockById(supplied.getJobTask().getJob().getJobId()).orElseThrow();
         if(job.isBeOrchestrated() && (job.getStatus()!=JobStatus.RUNNING || job.getCancelRequestedAt()!=null
                 || job.getSelectedJobStep()==null || !job.getSelectedJobStep().getJobStepId().equals(supplied.getJobStepId())))
             throw new com.mediassistrover.backend.exception.BusinessRuleException("Completion requires the selected running JobStep");
         JobStep step=stepRepository.lockById(supplied.getJobStepId()).orElseThrow();
+        if (job.isBeOrchestrated() && !executionPolicy.isServer(step, step.getResolvedInputsJson()))
+            throw new com.mediassistrover.backend.exception.BusinessRuleException(
+                    "MQTT-owned JobStep cannot be completed by a backend executor");
         if(step.getStatus()==JobStepStatus.SUCCEEDED)return false;
         if(step.getStatus()!=JobStepStatus.RUNNING)return false;
         Instant now=Instant.now(clock);
