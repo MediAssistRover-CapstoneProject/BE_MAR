@@ -11,6 +11,7 @@ public class NavigationRequest {
     @MapsId @OneToOne(fetch=FetchType.LAZY) @JoinColumn(name="service_request_id") private ServiceRequest serviceRequest;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="map_id",nullable=false) private FacilityMap map;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="room_id") private Room room;
+    @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="origin_endpoint_id") private Endpoint originEndpoint;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="destination_endpoint_id") private Endpoint destinationEndpoint;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="destination_group_id") private EndpointGroup destinationGroup;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="resolved_endpoint_id") private Endpoint resolvedEndpoint;

@@ -33,6 +33,7 @@ public class MqttSessionRegistry {
     private final RobotNavigationProfileRepository navigationProfiles;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     private final com.mediassistrover.backend.mapping.MappingPreviewService mappingPreviews;
+    private final org.springframework.context.ApplicationEventPublisher applicationEvents;
     private static final List<JobStatus> OCCUPIED=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
 
     public boolean owned(RobotMqttSession session) {
@@ -156,12 +157,14 @@ public class MqttSessionRegistry {
         if (map!=null && !mappingOpen && active.stream().noneMatch(j->mapping.open(j.getJobId())) && pose.path("fresh").asBoolean() && pose.path("age_sec").isNumber() && pose.path("age_sec").asDouble()>=0 && pose.path("age_sec").asDouble()<=1
                 && pose.path("value").path("map_id").asText().equals(map.getMapId().toString()) && !locations.existsById(e.messageId())) {
             JsonNode value=pose.path("value");locations.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map)
+                    .frameId("map").source("MQTT_HEARTBEAT_MAP_POSE")
                     .xM(value.path("x_m").decimalValue()).yM(value.path("y_m").decimalValue()).yawRad(value.path("yaw_rad").decimalValue()).fresh(true)
                     .capturedAt(e.time().minusMillis((long)(pose.path("age_sec").asDouble()*1000))).receivedAt(now).build());
         }
         ObjectNode heartbeat=(ObjectNode)p.deepCopy();heartbeat.put("occurredAt",e.occurredAt());session.setHeartbeatJson(heartbeat);session.setLastHeartbeatAt(now);
         if (next==RobotStatus.ERROR) session.setDispatchReady(false);
         for (Job job:active) if (job.isBeOrchestrated() && job.getStatus()!=JobStatus.RECOVERY_REQUIRED) wakeups.request(job);
+        applicationEvents.publishEvent(new com.mediassistrover.backend.service.RobotRealtimeEventStream.Changed(e.robotId()));
     }
 
     @Transactional(isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
@@ -184,6 +187,7 @@ public class MqttSessionRegistry {
         session.setClosed(true);session.setDispatchReady(false);session.setFailureReason("MQTT session offline");
         for (Job job:active) if (mapping.open(job.getJobId()) || commands.findByRobotIdAndStateIn(session.getRobotId(),List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED")).stream().anyMatch(c->c.getJobId().equals(job.getJobId())))
             safety.recovery(job,"MQTT disconnected with an in-flight operation");
+        applicationEvents.publishEvent(new com.mediassistrover.backend.service.RobotRealtimeEventStream.Changed(session.getRobotId()));
     }
     public void preview(UUID robotId,UUID transport,JsonNode payload) {
         RobotMqttSession session=sessions.findById(robotId).orElse(null);

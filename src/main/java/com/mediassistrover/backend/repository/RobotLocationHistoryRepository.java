@@ -11,6 +11,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 public interface RobotLocationHistoryRepository extends JpaRepository<RobotLocationHistory, UUID> {
+    java.util.Optional<RobotLocationHistory> findFirstByRobotRobotIdOrderByCapturedAtDesc(UUID robotId);
     java.util.Optional<com.mediassistrover.backend.entity.RobotLocationHistory> findFirstByRobotRobotIdAndMapMapIdAndFreshTrueOrderByCapturedAtDesc(UUID robot,UUID map);
     Page<RobotLocationHistory> findByRobotRobotId(UUID robotId, Pageable pageable);
     @Query("select h from RobotLocationHistory h where h.robot.robotId=:robotId " +

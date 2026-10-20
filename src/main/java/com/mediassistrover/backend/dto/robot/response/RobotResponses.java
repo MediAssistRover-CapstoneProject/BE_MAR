@@ -17,6 +17,6 @@ public final class RobotResponses {
     public record RobotStatusHistoryResponse(UUID robotStatusHistoryId,UUID robotId,UUID jobId,
             RobotStatus previousStatus,RobotStatus newStatus,String reason,String errorCode,Instant recordedAt) { }
     public record RobotLocationResponse(UUID robotLocationHistoryId,UUID robotId,UUID mapId,UUID jobId,
-            BigDecimal xM,BigDecimal yM,BigDecimal yawRad,BigDecimal localizationConfidence,boolean fresh,
+            BigDecimal xM,BigDecimal yM,BigDecimal yawRad,BigDecimal localizationConfidence,String frameId,String source,boolean fresh,
             Instant capturedAt,Instant receivedAt) { }
 }

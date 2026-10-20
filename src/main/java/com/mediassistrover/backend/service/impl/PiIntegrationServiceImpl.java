@@ -45,7 +45,7 @@ public class PiIntegrationServiceImpl implements PiIntegrationService {
 
     @Override @Transactional
     public AckResponse location(PiEnvelope<LocationPayload> e,DevicePrincipal principal){validate(e,principal,"ROBOT_LOCATION");Robot robot=robot(principal.robotId());if(locationRepository.existsById(e.messageId()))return ack(e,true,robot,false,false,null);LocationPayload p=e.payload();FacilityMap map=facilityMap(p.mapId());if(robot.getCurrentMap()==null||!robot.getCurrentMap().getMapId().equals(map.getMapId()))throw new BusinessRuleException("Location map does not match the robot current map");
-        locationRepository.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map).job(job(e.jobId(),robot)).xM(p.xM()).yM(p.yM()).yawRad(p.yawRad()).localizationConfidence(p.localizationConfidence()).fresh(p.fresh()).capturedAt(p.capturedAt()).receivedAt(Instant.now(clock)).build());
+        locationRepository.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map).job(job(e.jobId(),robot)).xM(p.xM()).yM(p.yM()).yawRad(p.yawRad()).localizationConfidence(p.localizationConfidence()).frameId("map").source("PI_LOCATION_EVENT").fresh(p.fresh()).capturedAt(p.capturedAt()).receivedAt(Instant.now(clock)).build());
         return ack(e,false,robot,false,false,null);
     }
 
