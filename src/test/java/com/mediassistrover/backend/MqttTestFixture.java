@@ -114,8 +114,11 @@ if(delivery) {
         return Step.builder().workflow(w).task(t).stepType(type).stepCode(code).stepName(code).sequenceNo(seq).enabled(true).paramsJson(params).inputMappingJson(json.createObjectNode()).timeoutSec(60).maxAttempts(1).retryDelaySec(0).retryCodesJson(json.createArrayNode()).maxVisits(1).auditLevel(StepAuditLevel.FULL).build();
     }
     ObjectNode hello(ObjectMapper json) {
+        return hello(json, EnumSet.allOf(StepType.class));
+    }
+    ObjectNode hello(ObjectMapper json, Set<StepType> advertised) {
         ObjectNode payload=json.createObjectNode().put("contract","MAR-STEP-2").put("runtimeVersion","0.7.0").put("simulation",true).put("unlockPolicy","DISABLED").put("mappingEnabled",false);
-        var enabled=payload.putArray("enabledStepTypes");for(StepType stepType:StepType.values())enabled.add(stepType.name());payload.putArray("capabilities");payload.putArray("states");payload.putNull("mappingSession");
+        var enabled=payload.putArray("enabledStepTypes");for(StepType stepType:advertised)enabled.add(stepType.name());payload.putArray("capabilities");payload.putArray("states");payload.putNull("mappingSession");
         return system(json,"HELLO",payload);
     }
     ObjectNode heartbeat(ObjectMapper json) {
@@ -153,6 +156,8 @@ if(delivery) {
     static void cleanup(EntityManager em,MqttTestFixture f) {
         em.createNativeQuery("DELETE FROM MqttOperationRecoveryReceipt WHERE job_step_id IN (SELECT s.job_step_id FROM JobStep s JOIN JobTask t ON s.job_task_id=t.job_task_id WHERE t.job_id=:id)").setParameter("id",f.jobId).executeUpdate();
         em.createNativeQuery("DELETE FROM JobNavigationSelection WHERE selector_job_step_id IN (SELECT s.job_step_id FROM JobStep s JOIN JobTask t ON t.job_task_id=s.job_task_id WHERE t.job_id=:id)").setParameter("id",f.jobId).executeUpdate();
+        em.createNativeQuery("DELETE FROM AlertRecipient WHERE alert_id IN (SELECT alert_id FROM Alert WHERE job_step_id IN (SELECT s.job_step_id FROM JobStep s JOIN JobTask t ON s.job_task_id=t.job_task_id WHERE t.job_id=:id))").setParameter("id",f.jobId).executeUpdate();
+        em.createNativeQuery("DELETE FROM Alert WHERE job_step_id IN (SELECT s.job_step_id FROM JobStep s JOIN JobTask t ON s.job_task_id=t.job_task_id WHERE t.job_id=:id)").setParameter("id",f.jobId).executeUpdate();
         em.createNativeQuery("DELETE FROM AuditLog WHERE entity_id=:id").setParameter("id",f.jobId).executeUpdate();
         for (String sql:List.of("UPDATE Job SET selected_job_step_id=NULL WHERE job_id=:id","DELETE FROM RobotCommandOutbox WHERE job_id=:id","DELETE FROM JobEvent WHERE job_id=:id","DELETE FROM WorkflowOrchestrationWork WHERE job_id=:id",
                 "DELETE FROM JobStep WHERE job_task_id IN (SELECT job_task_id FROM JobTask WHERE job_id=:id)","DELETE FROM JobTask WHERE job_id=:id","DELETE FROM Job WHERE job_id=:id")) em.createNativeQuery(sql).setParameter("id",f.jobId).executeUpdate();

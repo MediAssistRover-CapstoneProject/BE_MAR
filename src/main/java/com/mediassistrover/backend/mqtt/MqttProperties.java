@@ -11,6 +11,14 @@ import java.util.*;
 
 @Component @ConfigurationProperties("app.mqtt") @Getter @Setter
 public class MqttProperties {
+    /** StepTypes that schema 3 may route to a robot. The allowlist may be a safe subset. */
+    public static final Set<StepType> ROBOT_STEP_TYPES =
+            Collections.unmodifiableSet(EnumSet.of(
+                    StepType.MOVE,
+                    StepType.CONTROL_HARDWARE,
+                    StepType.EXECUTE_SENSING,
+                    StepType.WAIT
+            ));
     private boolean enabled;
     private boolean dispatchEnabled;
     private boolean allowSimulation;
@@ -32,16 +40,23 @@ public class MqttProperties {
     }
     @PostConstruct
     private void validateStepTypes() {
-    for (String value : enabledStepTypes) {
-        try {
-            StepType.valueOf(value);
-        } catch (IllegalArgumentException ex) {
-            throw new IllegalArgumentException(
-                    "Unsupported MQTT enabled StepType: " + value
-            );
+        for (String value : enabledStepTypes) {
+            final StepType type;
+            try {
+                type = StepType.valueOf(value);
+            } catch (IllegalArgumentException ex) {
+                throw new IllegalArgumentException(
+                        "Unsupported MQTT enabled StepType: " + value
+                );
+            }
+            if (!ROBOT_STEP_TYPES.contains(type)) {
+                throw new IllegalArgumentException(
+                        "MQTT enabled StepType must be one of MOVE, CONTROL_HARDWARE, "
+                                + "EXECUTE_SENSING, WAIT; backend-owned StepType is not dispatchable: " + value
+                );
+            }
         }
     }
-}
     public void validateConnection() {
         validateStepTypes();
         if (!enabled) return;

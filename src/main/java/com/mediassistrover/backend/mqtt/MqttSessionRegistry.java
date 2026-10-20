@@ -33,6 +33,7 @@ public class MqttSessionRegistry {
     private final RobotNavigationProfileRepository navigationProfiles;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     private final com.mediassistrover.backend.mapping.MappingPreviewService mappingPreviews;
+    private final org.springframework.context.ApplicationEventPublisher applicationEvents;
     private static final List<JobStatus> OCCUPIED=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
 
     public boolean owned(RobotMqttSession session) {
@@ -47,6 +48,13 @@ public class MqttSessionRegistry {
     public boolean fresh(RobotMqttSession session) {
         return owned(session) && session.isHandshakeAcked() && session.isDispatchReady() && session.getLastHeartbeatAt()!=null
                 && session.getLastHeartbeatAt().isAfter(Instant.now(clock).minusSeconds(15));
+    }
+    public boolean advertises(RobotMqttSession session, String stepType) {
+        if (session == null || session.getHelloJson() == null || stepType == null) return false;
+        for (JsonNode enabled : session.getHelloJson().path("enabledStepTypes")) {
+            if (stepType.equals(enabled.asText())) return true;
+        }
+        return false;
     }
 
     /** Processor acquired active Job locks before this call; always lock Robot before Session. */
@@ -146,15 +154,34 @@ public class MqttSessionRegistry {
         if (previous!=next && !histories.existsById(e.messageId())) histories.save(RobotStatusHistory.builder().robotStatusHistoryId(e.messageId()).robot(robot)
                 .previousStatus(previous).newStatus(next).reason("MQTT_HEARTBEAT").recordedAt(now).build());
         JsonNode pose=telemetry.path("map_pose");
-        if (map!=null && !mappingOpen && active.stream().noneMatch(j->mapping.open(j.getJobId())) && pose.path("fresh").asBoolean() && pose.path("age_sec").isNumber() && pose.path("age_sec").asDouble()>=0 && pose.path("age_sec").asDouble()<=1
-                && pose.path("value").path("map_id").asText().equals(map.getMapId().toString()) && !locations.existsById(e.messageId())) {
+        if(pose.path("fresh").asBoolean())validateFreshMapPose(pose,map,mappingOpen);
+        if (map!=null && !mappingOpen && active.stream().noneMatch(j->mapping.open(j.getJobId())) && pose.path("fresh").asBoolean() && !locations.existsById(e.messageId())) {
             JsonNode value=pose.path("value");locations.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map)
+                    .frameId("map").source("MQTT_HEARTBEAT_MAP_POSE")
                     .xM(value.path("x_m").decimalValue()).yM(value.path("y_m").decimalValue()).yawRad(value.path("yaw_rad").decimalValue()).fresh(true)
                     .capturedAt(e.time().minusMillis((long)(pose.path("age_sec").asDouble()*1000))).receivedAt(now).build());
         }
         ObjectNode heartbeat=(ObjectNode)p.deepCopy();heartbeat.put("occurredAt",e.occurredAt());session.setHeartbeatJson(heartbeat);session.setLastHeartbeatAt(now);
         if (next==RobotStatus.ERROR) session.setDispatchReady(false);
         for (Job job:active) if (job.isBeOrchestrated() && job.getStatus()!=JobStatus.RECOVERY_REQUIRED) wakeups.request(job);
+        applicationEvents.publishEvent(new com.mediassistrover.backend.service.RobotRealtimeEventStream.Changed(e.robotId()));
+    }
+
+    private void validateFreshMapPose(JsonNode pose,FacilityMap map,boolean mappingOpen) {
+        JsonNode value=pose.path("value"),age=pose.path("age_sec");
+        if(mappingOpen||map==null)throw new BusinessRuleException("Fresh map_pose requires an assigned navigation map");
+        if(!age.isNumber()||age.decimalValue().compareTo(BigDecimal.ZERO)<0||age.decimalValue().compareTo(BigDecimal.ONE)>0)
+            throw new BusinessRuleException("Fresh map_pose age_sec must be between 0 and 1");
+        if(!value.isObject()||!map.getMapId().toString().equals(value.path("map_id").asText()))
+            throw new BusinessRuleException("map_pose map_id does not match currentMapId");
+        for(String field:List.of("x_m","y_m","yaw_rad"))if(!value.path(field).isNumber())
+            throw new BusinessRuleException("map_pose "+field+" must be numeric");
+        BigDecimal limit=new BigDecimal("99999999.9999");
+        if(value.path("x_m").decimalValue().abs().compareTo(limit)>0||value.path("y_m").decimalValue().abs().compareTo(limit)>0)
+            throw new BusinessRuleException("map_pose coordinates exceed supported map bounds");
+        BigDecimal yaw=value.path("yaw_rad").decimalValue(),pi=new BigDecimal("3.141593");
+        if(yaw.compareTo(pi.negate())<0||yaw.compareTo(pi)>0)
+            throw new BusinessRuleException("map_pose yaw_rad must be between -3.141593 and 3.141593");
     }
 
     @Transactional(isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
@@ -177,6 +204,7 @@ public class MqttSessionRegistry {
         session.setClosed(true);session.setDispatchReady(false);session.setFailureReason("MQTT session offline");
         for (Job job:active) if (mapping.open(job.getJobId()) || commands.findByRobotIdAndStateIn(session.getRobotId(),List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED")).stream().anyMatch(c->c.getJobId().equals(job.getJobId())))
             safety.recovery(job,"MQTT disconnected with an in-flight operation");
+        applicationEvents.publishEvent(new com.mediassistrover.backend.service.RobotRealtimeEventStream.Changed(session.getRobotId()));
     }
     public void preview(UUID robotId,UUID transport,JsonNode payload) {
         RobotMqttSession session=sessions.findById(robotId).orElse(null);

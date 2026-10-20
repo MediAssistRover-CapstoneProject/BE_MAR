@@ -18,6 +18,8 @@ public class RobotLocationHistory {
     @Column(name="y_m",nullable=false,precision=12,scale=4) private BigDecimal yM;
     @Column(name="yaw_rad",nullable=false,precision=10,scale=6) private BigDecimal yawRad;
     @Column(name="localization_confidence",precision=5,scale=4) private BigDecimal localizationConfidence;
+    @Column(name="frame_id",length=80) private String frameId;
+    @Column(name="source",length=80) private String source;
     @Column(name="is_fresh",nullable=false) private boolean fresh;
     @Column(name="captured_at",nullable=false) private Instant capturedAt;
     @Column(name="received_at",nullable=false) private Instant receivedAt;

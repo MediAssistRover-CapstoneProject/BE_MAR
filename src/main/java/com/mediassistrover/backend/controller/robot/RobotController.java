@@ -28,8 +28,12 @@ import java.time.Instant;
 @Tag(name="Robots",description="ADMIN quản lý; ADMIN/STAFF theo dõi")
 public class RobotController {
     private final RobotService service;
+    private final com.mediassistrover.backend.service.RobotRealtimeSnapshotService realtime;
+    private final com.mediassistrover.backend.service.RobotRealtimeEventStream realtimeEvents;
     @GetMapping public PageResponse<RobotResponse> list(@RequestParam(required=false)RobotStatus status,@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size){return PageResponse.from(service.list(status,PageRequest.of(page,size,Sort.by("robotCode"))));}
     @GetMapping("/{id}") public RobotResponse get(@PathVariable UUID id){return service.get(id);}
+    @GetMapping("/{id}/snapshot") public com.mediassistrover.backend.service.RobotRealtimeSnapshotService.Snapshot snapshot(@PathVariable UUID id){return realtime.snapshot(id);}
+    @GetMapping(value="/{id}/stream",produces=org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE) public org.springframework.web.servlet.mvc.method.annotation.SseEmitter stream(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor){return realtimeEvents.subscribe(id,actor);}
     @PostMapping @ResponseStatus(HttpStatus.CREATED) @PreAuthorize("hasRole('ADMIN')") public RobotResponse create(@Valid @RequestBody RobotCreateRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.create(b,a.accountId(),RequestMetadataFactory.from(r));}
     @PutMapping("/{id}") @PreAuthorize("hasRole('ADMIN')") public RobotResponse update(@PathVariable UUID id,@Valid @RequestBody RobotUpdateRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.update(id,b,a.accountId(),RequestMetadataFactory.from(r));}
     @PostMapping("/{id}/provision-secret") @PreAuthorize("hasRole('ADMIN')") @Operation(summary="Cấp device secret một lần",description="Secret chỉ xuất hiện trong response này và được lưu dạng BCrypt hash") public DeviceSecretResponse provision(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.provisionSecret(id,a.accountId(),RequestMetadataFactory.from(r));}

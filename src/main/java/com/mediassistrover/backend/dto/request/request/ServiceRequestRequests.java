@@ -9,7 +9,7 @@ import java.util.UUID;
 public final class ServiceRequestRequests {
     private ServiceRequestRequests() {}
     public record InformationCreateRequest(@Min(0) @Max(100) int priority,@Size(max=4000) String note,JsonNode data) {}
-    public record NavigationCreateRequest(@NotNull UUID mapId,UUID roomId,UUID destinationEndpointId,
+    public record NavigationCreateRequest(@NotNull UUID mapId,UUID workflowId,UUID roomId,UUID originEndpointId,UUID destinationEndpointId,
             UUID destinationGroupId,@NotNull TargetMode targetMode,@NotNull NavigationMode navigationMode,
             @Size(max=4000) String accessibilityNeed,@Min(1) @Max(20) int passengerCount,
             @Size(max=4000) String arrivalInstruction,@Min(0) @Max(100) int priority,@Size(max=4000) String note,JsonNode data) {}

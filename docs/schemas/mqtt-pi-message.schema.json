@@ -669,13 +669,19 @@
                   "type": "object",
                   "properties": {
                     "x_m": {
-                      "type": "number"
+                      "type": "number",
+                      "minimum": -99999999.9999,
+                      "maximum": 99999999.9999
                     },
                     "y_m": {
-                      "type": "number"
+                      "type": "number",
+                      "minimum": -99999999.9999,
+                      "maximum": 99999999.9999
                     },
                     "yaw_rad": {
-                      "type": "number"
+                      "type": "number",
+                      "minimum": -3.141593,
+                      "maximum": 3.141593
                     },
                     "map_id": {
                       "anyOf": [
@@ -711,7 +717,8 @@
             "age_sec": {
               "anyOf": [
                 {
-                  "type": "number"
+                  "type": "number",
+                  "minimum": 0
                 },
                 {
                   "type": "null"

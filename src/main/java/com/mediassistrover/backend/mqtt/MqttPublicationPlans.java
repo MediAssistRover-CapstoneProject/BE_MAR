@@ -29,6 +29,7 @@ public class MqttPublicationPlans {
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     private final com.mediassistrover.backend.ai.AiSensingService ai;
     private final MqttRolloutService rollout;
+    private final com.mediassistrover.backend.validation.StepExecutionPolicy executionPolicy;
     public record Publication(UUID id,UUID robotId,UUID sessionId,JsonNode payload) { }
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public Publication command(UUID id) {
@@ -41,6 +42,8 @@ public class MqttPublicationPlans {
         if(!cancel && !cleanup && !rollout.dispatchAllowed())return null;
         if(!properties.manages(command.getRobotId()) || !cancel && !cleanup && (!properties.isDispatchEnabled()
                 || !properties.getEnabledStepTypes().contains(command.getPayloadJson().path("step").path("stepType").asText())))return null;
+        if (!cancel && !cleanup && (executionPolicy.isServer(action, action.getResolvedInputsJson())
+                || !registry.advertises(session, action.getStepTypeSnapshot()))) return null;
         if (!Set.of("PENDING","PUBLISHING","PUBLISHED").contains(command.getState())
                 || job.getStatus()!=JobStatus.RUNNING && !(cancel && job.getStatus()==JobStatus.RECOVERY_REQUIRED)) return null;
         if(!cancel && (job.getCancelRequestedAt()!=null && !cleanup || commands.findByJobStepIdAndCommandType(command.getJobStepId(),"CANCEL_STEP").isPresent()))return null;

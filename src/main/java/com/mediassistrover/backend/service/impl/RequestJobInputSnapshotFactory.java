@@ -37,7 +37,9 @@ public class RequestJobInputSnapshotFactory {
         else if (request.getRequestType() == ServiceRequestType.NAVIGATION) {
             NavigationRequest n = navigations.findById(request.getServiceRequestId()).orElseThrow(() -> new BusinessRuleException("Navigation request detail is missing"));
             result.put("map_id", n.getMap().getMapId().toString()).put("target_mode", n.getTargetMode().name());
-            result.remove(Set.of("endpoint_id", "endpoint_group_id"));
+            result.remove(Set.of("workflow_id", "endpoint_id", "endpoint_group_id", "origin_endpoint_id"));
+            if (n.getWorkflow() != null) result.put("workflow_id", n.getWorkflow().getWorkflowId().toString());
+            if (n.getOriginEndpoint() != null) result.put("origin_endpoint_id", n.getOriginEndpoint().getEndpointId().toString());
             if (n.getDestinationEndpoint() != null) result.put("endpoint_id", n.getDestinationEndpoint().getEndpointId().toString());
             if (n.getDestinationGroup() != null) result.put("endpoint_group_id", n.getDestinationGroup().getEndpointGroupId().toString());
         } else if (request.getRequestType() == ServiceRequestType.ESCORT) {

@@ -44,4 +44,21 @@ class MqttWireContractTest {
         assertThat(wire.canonicalHash(first)).isEqualTo(wire.canonicalHash(replay));
         ((ObjectNode)replay.path("payload")).put("a",2);assertThat(wire.canonicalHash(first)).isNotEqualTo(wire.canonicalHash(replay));
     }
+    @Test void mapPoseRejectsCoordinatesThatCannotBePersistedAndYawOutsideMapFrameRange() throws Exception {
+        ObjectMapper json=new ObjectMapper();
+        ObjectNode heartbeat=(ObjectNode)json.readTree("""
+                {"protocolVersion":"1.0","messageId":"11111111-1111-4111-8111-111111111111","operationKey":"heartbeat-1",
+                 "correlationId":"22222222-2222-4222-8222-222222222222","robotId":"11111111-1111-4111-8111-111111111111",
+                 "jobId":null,"jobStepId":null,"occurredAt":"2026-10-20T00:00:00Z","producerSessionId":"33333333-3333-4333-8333-333333333333",
+                 "sequenceNo":1,"transportSessionId":"44444444-4444-4444-8444-444444444444","messageType":"HEARTBEAT",
+                 "payload":{"status":"IDLE","runtimeVersion":"test","protocolMajor":1,"capabilities":[],"activeJobStepId":null,
+                 "currentMapId":"55555555-5555-4555-8555-555555555555","mapAssetHash":null,"mappingSession":null,
+                 "telemetry":{"map_pose":{"value":{"x_m":1,"y_m":2,"yaw_rad":0,"map_id":"55555555-5555-4555-8555-555555555555"},"age_sec":0.1,"fresh":true}}}}
+                """);
+        assertThatCode(()->validator.inbound(heartbeat)).doesNotThrowAnyException();
+        ((ObjectNode)heartbeat.at("/payload/telemetry/map_pose/value")).put("yaw_rad",4);
+        assertThatThrownBy(()->validator.inbound(heartbeat)).hasMessageContaining("contract");
+        ((ObjectNode)heartbeat.at("/payload/telemetry/map_pose/value")).put("yaw_rad",0).put("x_m",100000000);
+        assertThatThrownBy(()->validator.inbound(heartbeat)).hasMessageContaining("contract");
+    }
 }

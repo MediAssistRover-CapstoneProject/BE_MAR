@@ -19,6 +19,7 @@ public class WorkflowOrchestrationScheduler {
     private final JobRepository jobs;
     private final OrchestrationWorkService wakeups;
     private final JobUiEventStream uiEvents;
+    private final RobotRealtimeEventStream robotEvents;
     @Scheduled(fixedDelayString="${app.workflow.orchestration-delay-ms:500}")
     public void runPending() {
         for (var id:work.findPending(PageRequest.of(0,32))) {
@@ -39,5 +40,5 @@ public class WorkflowOrchestrationScheduler {
         } while (batch.hasNext());
     }
     @Scheduled(fixedDelay=20_000)
-    public void heartbeatUi() { uiEvents.heartbeat(); }
+    public void heartbeatUi() { uiEvents.heartbeat(); robotEvents.heartbeat(); }
 }

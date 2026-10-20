@@ -30,6 +30,7 @@ public class PiIntegrationServiceImpl implements PiIntegrationService {
     private final Clock clock;
     private final com.mediassistrover.backend.mqtt.MqttProperties mqtt;
     private final com.mediassistrover.backend.mqtt.MqttRolloutService rollout;
+    private final org.springframework.context.ApplicationEventPublisher applicationEvents;
 
     @Override @Transactional
     public AckResponse heartbeat(PiEnvelope<HeartbeatPayload> e,DevicePrincipal principal){validate(e,principal,"HEARTBEAT");Robot robot=robot(principal.robotId());Instant now=Instant.now(clock);
@@ -39,13 +40,15 @@ public class PiIntegrationServiceImpl implements PiIntegrationService {
         robot.setCurrentMap(current);robot.setRuntimeVersion(p.runtimeVersion());robot.setFirmwareVersion(p.firmwareVersion());robot.setProtocolVersion(p.protocolMajor());robot.setCapabilitiesJson(p.capabilities());robot.setDeployedCatalogHash(normalizeHash(p.deployedCatalogHash()));robot.setMapAssetHash(normalizeHash(p.mapAssetHash()));robot.setStatus(acceptedStatus);robot.setLastHeartbeatAt(now);
         if(p.batteryCapturedAt()!=null&&(robot.getBatteryCapturedAt()==null||!p.batteryCapturedAt().isBefore(robot.getBatteryCapturedAt()))){robot.setBatteryRaw(p.batteryRaw());robot.setBatteryUnit(p.batteryUnit());robot.setBatteryCapturedAt(p.batteryCapturedAt());}
         statusRepository.save(RobotStatusHistory.builder().robotStatusHistoryId(e.messageId()).robot(robot).job(rebootRecovery?null:job(e.jobId(),robot)).previousStatus(previous).newStatus(acceptedStatus).reason(rebootRecovery?"DEVICE_RESTART_RECOVERY_REQUIRED":previous==acceptedStatus?"HEARTBEAT":"HEARTBEAT_STATUS_CHANGE").errorCode(rebootRecovery?"DEVICE_RESTART":p.errorCode()).recordedAt(now).build());
+        applicationEvents.publishEvent(new com.mediassistrover.backend.service.RobotRealtimeEventStream.Changed(robot.getRobotId()));
         String expectedCatalog=expectedCatalogHash(current);boolean catalogSync=current!=null&&!Objects.equals(expectedCatalog,robot.getDeployedCatalogHash());boolean mapSync=current!=null&&!Objects.equals(normalizeHash(current.getAssetHash()),robot.getMapAssetHash());
         return ack(e,false,robot,catalogSync,mapSync,null);
     }
 
     @Override @Transactional
     public AckResponse location(PiEnvelope<LocationPayload> e,DevicePrincipal principal){validate(e,principal,"ROBOT_LOCATION");Robot robot=robot(principal.robotId());if(locationRepository.existsById(e.messageId()))return ack(e,true,robot,false,false,null);LocationPayload p=e.payload();FacilityMap map=facilityMap(p.mapId());if(robot.getCurrentMap()==null||!robot.getCurrentMap().getMapId().equals(map.getMapId()))throw new BusinessRuleException("Location map does not match the robot current map");
-        locationRepository.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map).job(job(e.jobId(),robot)).xM(p.xM()).yM(p.yM()).yawRad(p.yawRad()).localizationConfidence(p.localizationConfidence()).fresh(p.fresh()).capturedAt(p.capturedAt()).receivedAt(Instant.now(clock)).build());
+        locationRepository.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map).job(job(e.jobId(),robot)).xM(p.xM()).yM(p.yM()).yawRad(p.yawRad()).localizationConfidence(p.localizationConfidence()).frameId("map").source("PI_LOCATION_EVENT").fresh(p.fresh()).capturedAt(p.capturedAt()).receivedAt(Instant.now(clock)).build());
+        applicationEvents.publishEvent(new com.mediassistrover.backend.service.RobotRealtimeEventStream.Changed(robot.getRobotId()));
         return ack(e,false,robot,false,false,null);
     }
 

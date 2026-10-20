@@ -28,6 +28,7 @@ public class MqttRuntimeEvents {
     private final com.mediassistrover.backend.service.NavigationTargetService navigationTargets;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     private final com.mediassistrover.backend.ai.AiSensingService ai;
+    private final com.mediassistrover.backend.validation.StepExecutionPolicy executionPolicy;
 
     public void apply(Job job,MqttWire.Envelope e) {
         if (job==null || !job.isBeOrchestrated() || job.getSchemaVersion()!=3 || job.getRobot()==null || !job.getRobot().getRobotId().equals(e.robotId()))
@@ -37,6 +38,8 @@ public class MqttRuntimeEvents {
         boolean cancelAck="COMMAND_ACK".equals(e.messageType()) && "CANCEL_STEP".equals(correlated.getCommandType());
         boolean nullCancel=cancelAck && e.jobId()==null && e.jobStepId()==null;
         JobStep step=steps.lockById(correlated.getJobStepId()).orElseThrow(()->new BusinessRuleException("Unknown MQTT JobStep"));
+        if (executionPolicy.isServer(step, step.getResolvedInputsJson()))
+            throw new BusinessRuleException("Backend-owned step cannot accept MQTT runtime events");
         if (!correlated.getJobId().equals(job.getJobId()) || !correlated.getRobotId().equals(e.robotId())
                 || !correlated.getCommandId().equals(e.correlationId()) || correlated.getSendAttempts()==0
                 || !nullCancel && (!job.getJobId().equals(e.jobId()) || !step.getJobStepId().equals(e.jobStepId()) || !e.operationKey().equals(step.getOperationKey())))
