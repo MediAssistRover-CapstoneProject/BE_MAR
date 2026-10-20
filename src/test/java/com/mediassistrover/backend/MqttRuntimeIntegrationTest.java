@@ -211,8 +211,11 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
             entityManager.persist(endpoint);
             ObjectNode params=json.createObjectNode().put("map_id",fixture.mapId.toString()).put("endpoint_id",endpoint.getEndpointId().toString())
                     .put("mode","NORMAL").put("max_speed_mps",0.05);
+            end.getStep().setSequenceNo(3);
+            end.setExecutionSequenceNo(3);
+            entityManager.flush();
             Step definition=MqttTestFixture.definition(first.getStep().getWorkflow(),first.getStep().getTask(),StepType.MOVE,"MOVE_SECOND",2,params,json);
-            entityManager.persist(definition);end.getStep().setSequenceNo(3);end.setExecutionSequenceNo(3);
+            entityManager.persist(definition);
             entityManager.createQuery("delete from StepTransition t where t.fromStep.stepId=:from and t.outcome=:outcome")
                     .setParameter("from",first.getStep().getStepId()).setParameter("outcome",TransitionOutcome.SUCCESS).executeUpdate();
             entityManager.persist(StepTransition.builder().workflow(first.getStep().getWorkflow()).fromStep(first.getStep()).toStep(definition)
