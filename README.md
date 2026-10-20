@@ -1,29 +1,30 @@
 # MediAssistRover Backend
 
-Spring Boot backend quản lý nghiệp vụ bệnh viện, workflow/job và hợp đồng giao tiếp Server–Raspberry Pi. Source hiện đã hoàn tất Phase 1–21 trong phạm vi Backend. Trạng thái kiểm chứng mới nhất được ghi tại `docs/implementation-status.md`; danh mục Workflow canonical tại `docs/workflow-source-matrix.md`; kết quả nghiệm thu tại `docs/backend-acceptance-final.md`; contract/hardware riêng tại `docs/pi-contract-and-hardware-acceptance.md`.
+Java 21, Spring Boot 3.5, MySQL 8.4, MQTT/TLS. Giữ luồng robot từ Downloads và gộp nghiệp vụ GitHub main `0dc215c58b8308ca3dda7290c14b131e2e2046df`.
 
-## Yêu cầu
+## Chạy
 
-- Java 21 LTS
-- Maven 3.9+
-- MySQL 8.4 LTS, hoặc Docker + Docker Compose
+Giữ `.env` và chứng chỉ hiện tại. Môi trường mới dùng `.env.example`, điền database/JWT/MQTT và tạo chứng chỉ HTTPS.
 
-## Chạy bằng Docker Compose
+```powershell
+docker compose config --quiet
+docker compose --profile production up -d --build mysql backend reverse-proxy
+docker compose --profile production restart reverse-proxy
+docker compose logs --tail 80 backend
+```
 
-1. Sao chép `.env.example` thành `.env` và thay toàn bộ secret/mật khẩu mẫu.
-2. Chạy `docker compose up --build`.
-3. Swagger UI: `http://localhost:8080/swagger-ui.html`.
-4. OpenAPI JSON: `http://localhost:8080/v3/api-docs`.
-5. Health: `http://localhost:8080/actuator/health`.
+Swagger: http://localhost:8080/swagger-ui/index.html. UI: http://localhost:8080/mapping.html. Sao lưu DB trước khi áp dụng V31–V34; không xóa volume database.
 
-## Production HTTPS
+## OpenAI / bản đồ
 
-Backend chỉ bind vào `127.0.0.1` theo mặc định. Để chạy kết hợp reverse proxy HTTPS:
+Trong `.env`: TTS_ENABLED=true, OPENAI_API_KEY=<key riêng>, OPENAI_TTS_MODEL=gpt-4o-mini-tts, OPENAI_TTS_VOICE=coral, OPENAI_TTS_SPEED=1.0. Key chỉ ở BE. WAV cache nằm trong volume speech-cache.
 
-1. Đặt certificate chain tại `${TLS_CERT_DIR}/fullchain.pem` và private key tại `${TLS_CERT_DIR}/privkey.pem`.
-2. Đặt `PUBLIC_BASE_URL=https://<domain>` và `TLS_CERT_DIR` trong `.env`.
-3. Chạy `docker compose --profile production up --build -d`.
+- POST /api/v1/pi/speech/prepare: ADMIN chuẩn bị âm thanh, body text/languageCode/speedWpm.
+- POST /api/v1/speech-jobs: tạo job phát loa; Pi tải WAV từ BE qua HTTPS.
+- POST /api/v1/maps/import: multipart floorId/mapCode/versionNo/mapName/yaml/pgm; map DRAFT.
+- POST/PUT /api/v1/endpoints: cấu hình endpoint.
+- GET /api/v1/pi/maps/{mapId}/bundle: YAML/PGM/metadata; DEVICE chỉ tải map được gán.
 
-Nginx chỉ mở cổng HTTPS `${HTTPS_PORT:-443}`; backend vẫn là upstream nội bộ và xử lý forwarded headers bằng Spring `framework` strategy.
+Giữ 11 step types. BE xử lý nghiệp vụ; Pi chạy handler robot. MOVE cần map đã nạp và profile ACK. Tạo workflow không tự tạo handler phần cứng mới.
 
-Không commit file `.env`. Flyway là nguồn duy nhất tạo/cập nhật schema; Hibernate chỉ chạy ở chế độ `validate`.
+Lệnh upload Pi, cấu hình HTTPS và script API nằm trong README duy nhất của gói MAR_OpenAI_Final_2026_10_20 trong Downloads. Source BE này đã được sửa; container đang chạy chỉ đổi sau khi recreate.

@@ -3,7 +3,7 @@ package com.mediassistrover.backend.enums;
 /** Fixed protocol handlers. Business actions are configured in Step.paramsJson. */
 public enum StepType {
     MOVE("Di chuyển", StepExecutorKind.PI),
-    INTERACT("Tương tác", StepExecutorKind.SERVER),
+    INTERACT("Tương tác", StepExecutorKind.MIXED),
     DATA_SERVICE("Dịch vụ dữ liệu", StepExecutorKind.SERVER),
     AUTHENTICATE("Xác thực", StepExecutorKind.SERVER),
     CONTROL_HARDWARE("Điều khiển phần cứng", StepExecutorKind.PI),
@@ -24,6 +24,7 @@ public enum StepType {
     public String getDisplayName() { return displayName; }
     public StepExecutorKind getExecutorKind() { return executorKind; }
     public StepExecutorKind getExecutorKind(int schemaVersion) {
+        if(schemaVersion==2 && this==INTERACT) return StepExecutorKind.SERVER;
         if(schemaVersion==2 && (this==CHECK_CONDITION || this==SET_CONTEXT)) return StepExecutorKind.PI;
         return executorKind;
     }

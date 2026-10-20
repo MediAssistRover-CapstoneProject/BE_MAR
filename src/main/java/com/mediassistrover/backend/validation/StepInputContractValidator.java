@@ -130,9 +130,8 @@ public class StepInputContractValidator {
     public void validateMqttParams(Step step, JsonNode params) {
         object(step, params, "params");
         rejectRefs(step, params);
-
-        // IMPORTANT:
-        // MQTT final gate => validate using Pi/device contract.
+        if (!Set.of(StepType.MOVE, StepType.CONTROL_HARDWARE, StepType.EXECUTE_SENSING, StepType.WAIT, StepType.INTERACT)
+                .contains(step.getStepType())) fail(step, "stepType", "is not a Pi action");
         validate(step, params, false, true, true);
     }
 
@@ -414,82 +413,27 @@ public class StepInputContractValidator {
             }
 
             case INTERACT -> {
-                fields(
-                        s,
-                        n,
-                        Set.of(
-                                "prompt_key",
-                                "action",
-                                "data",
-                                "actor",
-                                "required_role",
-                                "compartment_id",
-                                "patient_reference",
-                                "endpoint_id",
-                                "question",
-                                "items",
-                                "message",
-                                "incident_id",
-                                "detection_event_id"
-                        )
-                );
-
-                text(
-                        s,
-                        n,
-                        "prompt_key",
-                        required,
-                        template
-                );
-
-                enumeration(
-                        s,
-                        n,
-                        "action",
-                        Set.of(
-                                "SPEAK",
-                                "DISPLAY",
-                                "CAPTURE_INPUT",
-                                "CONFIRM"
-                        ),
-                        false,
-                        template
-                );
-
-                enumeration(
-                        s,
-                        n,
-                        "actor",
-                        Set.of(
-                                "STAFF",
-                                "ADMIN",
-                                "PATIENT",
-                                "USER",
-                                "DEVICE"
-                        ),
-                        false,
-                        template
-                );
-
-                enumeration(
-                        s,
-                        n,
-                        "required_role",
-                        Set.of(
-                                "STAFF",
-                                "ADMIN"
-                        ),
-                        false,
-                        template
-                );
-
-                objectField(
-                        s,
-                        n,
-                        "data",
-                        template
-                );
-
+                fields(s, n, Set.of("prompt_key", "action", "data", "actor", "required_role", "compartment_id",
+                        "patient_reference", "endpoint_id", "question", "items", "message", "incident_id", "detection_event_id"));
+                text(s, n, "prompt_key", required, template);
+                enumeration(s, n, "action", Set.of("SPEAK", "DISPLAY", "CAPTURE_INPUT", "CONFIRM"), false, template);
+                enumeration(s, n, "actor", Set.of("STAFF", "ADMIN", "PATIENT", "USER", "DEVICE"), false, template);
+                enumeration(s, n, "required_role", Set.of("STAFF", "ADMIN"), false, template);
+                objectField(s, n, "data", template);
+                if (pi || modern && "SPEAK".equals(n.path("action").asText())) {
+                    fields(s,n,Set.of("prompt_key","action","data"));
+                    enumeration(s,n,"action",Set.of("SPEAK"),required,template);
+                    JsonNode data=n.get("data");
+                    if(literal(data,template)) {
+                        fields(s,data,Set.of("text","language_code","speed_wpm","volume"));
+                        text(s,data,"text",required,template);
+                        if(literal(data.get("text"),template) && data.path("text").asText().length()>500)fail(s,"data.text","maximum is 500 characters");
+                        enumeration(s,data,"language_code",Set.of("vi","en"),false,template);
+                        number(s,data,"speed_wpm",80,220,false,false,template);
+                        number(s,data,"volume",0,100,false,false,template);
+                        for(String f:Set.of("speed_wpm","volume"))if(literal(data.get(f),template) && !data.get(f).isIntegralNumber())fail(s,f,"must be an integer");
+                    }
+                }
                 if (modern && required) {
                     text(
                             s,

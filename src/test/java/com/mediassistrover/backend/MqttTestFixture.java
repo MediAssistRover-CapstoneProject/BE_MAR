@@ -81,11 +81,11 @@ if(delivery) {
         Task task=Task.builder().workflow(workflow).taskCode("TASK").taskName("Test").sequenceNo(1).configJson(json.createObjectNode()).build();em.persist(task);
         ObjectNode params=json.createObjectNode();
         switch (type) {
+            case INTERACT -> { if("SPEAK".equals(sensing)){ params.put("prompt_key","DEMO_SPEAK").put("action","SPEAK");params.putObject("data").put("text","Xin chào").put("language_code","vi"); } else params.put("prompt_key","WELCOME").put("action","DISPLAY").set("data",json.createObjectNode()); }
             case WAIT -> params.put("wait_type","DURATION").put("duration_sec",2);
             case EXECUTE_SENSING -> params.put("sensing_type",sensing);
             case CONTROL_HARDWARE -> params.put("compartment_id","CART_MAIN").put("action","LOCK_COMPARTMENT");
             case MOVE -> params.put("map_id",f.mapId.toString()).put("endpoint_id",f.endpointId.toString()).put("mode","NORMAL").put("max_speed_mps",0.05);
-            case INTERACT -> params.put("prompt_key","WELCOME").put("action","DISPLAY").set("data",json.createObjectNode());
             case DATA_SERVICE -> params.put("service_key","QUERY_HOSPITAL_INFORMATION").put("question","Visiting hours?").put("language_code","vi-VN");
             case AUTHENTICATE -> params.put("purpose","DELIVERY_SENDER").put("service_request_id",f.serviceRequestId.toString());
             case HANDLE_PAYLOAD -> {params.put("action","LOAD").put("service_request_id",f.serviceRequestId.toString()).put("compartment_id","CART_MAIN");params.putArray("items").addObject().put("item_code","MED-1").put("quantity",1);}
@@ -114,7 +114,7 @@ if(delivery) {
         return Step.builder().workflow(w).task(t).stepType(type).stepCode(code).stepName(code).sequenceNo(seq).enabled(true).paramsJson(params).inputMappingJson(json.createObjectNode()).timeoutSec(60).maxAttempts(1).retryDelaySec(0).retryCodesJson(json.createArrayNode()).maxVisits(1).auditLevel(StepAuditLevel.FULL).build();
     }
     ObjectNode hello(ObjectMapper json) {
-        return hello(json, EnumSet.allOf(StepType.class));
+        return hello(json, EnumSet.of(StepType.MOVE,StepType.WAIT,StepType.CONTROL_HARDWARE,StepType.EXECUTE_SENSING,StepType.INTERACT));
     }
     ObjectNode hello(ObjectMapper json, Set<StepType> advertised) {
         ObjectNode payload=json.createObjectNode().put("contract","MAR-STEP-2").put("runtimeVersion","0.7.0").put("simulation",true).put("unlockPolicy","DISABLED").put("mappingEnabled",false);
@@ -133,8 +133,8 @@ if(delivery) {
                 .put("producerSessionId",producerId.toString()).put("sequenceNo",++sequence).put("transportSessionId",transportId.toString());e.set("payload",p);return e;
     }
     ObjectNode output(ObjectMapper json) {
+        if (type==StepType.INTERACT && "SPEAK".equals(sensing)) {var result=json.createObjectNode().put("completed",true).put("action","SPEAK").put("prompt_key","DEMO_SPEAK").put("source","AUDIO_CLIENT").put("completed_at",Instant.now().toString());result.putNull("actor_account_id");result.putObject("values").put("playback_completed",true).put("audible_verified",false);return result;}
         if (type==StepType.WAIT) {var result=json.createObjectNode().put("completed",true).put("wake_reason","DURATION").put("elapsed_sec",2);result.putNull("event");return result;}
-        if(type==StepType.INTERACT)return json.createObjectNode().put("completed",true).put("prompt_key","WELCOME").put("action","DISPLAY").put("source","UI").putNull("actor_account_id").put("completed_at",Instant.now().toString());
         if(type==StepType.DATA_SERVICE){var data=json.createObjectNode().put("found",false).put("answer","Unavailable").put("language_code","vi-VN").put("count",0).putNull("source").put("fallback_code","INFORMATION_UNAVAILABLE");data.putArray("items");return json.createObjectNode().put("request_id",operationKey).set("data",data);}
         if(type==StepType.AUTHENTICATE)return json.createObjectNode().put("verified",true).put("verification_id",UUID.randomUUID().toString()).put("actor_account_id",accountId.toString()).put("purpose","DELIVERY_SENDER").put("service_request_id",serviceRequestId.toString()).put("verified_at",Instant.now().minusSeconds(1).toString()).put("valid_until",Instant.now().plusSeconds(300).toString());
         if(type==StepType.HANDLE_PAYLOAD){var result=json.createObjectNode().put("confirmed",true).put("action","LOAD").put("service_request_id",serviceRequestId.toString()).put("compartment_id","CART_MAIN");result.putArray("items").addObject().put("item_code","MED-1").put("quantity",1);return result.put("actor_account_id",accountId.toString()).put("confirmed_at",Instant.now().toString()).put("source","STAFF_MANUAL");}

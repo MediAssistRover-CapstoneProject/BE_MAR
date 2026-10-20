@@ -22,7 +22,7 @@ final class FixedContractSchemaValidator {
     FixedContractSchemaValidator() {
         ObjectMapper mapper = new ObjectMapper();
         for (String name : new String[]{"common.schema.json", "pi-step-outputs.schema.json", "be-step-contracts.json", "staff-step-response.schema.json",
-                "pi-step-inputs.schema.json", "mqtt-command.schema.json", "mqtt-pi-message.schema.json", "mqtt-be-response.schema.json"}) {
+                "pi-step-inputs.schema.json", "mqtt-command.schema.json", "mqtt-pi-message.schema.json", "mqtt-be-response.schema.json", "mapping-live.schema.json"}) {
             try (var stream = getClass().getResourceAsStream("/contracts/mar-step-2/" + name)) {
                 if (stream == null) throw new IllegalStateException("Missing bundled contract: " + name);
                 documents.put(name, mapper.readTree(stream));

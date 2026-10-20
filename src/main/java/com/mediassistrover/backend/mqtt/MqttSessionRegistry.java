@@ -206,6 +206,11 @@ public class MqttSessionRegistry {
             safety.recovery(job,"MQTT disconnected with an in-flight operation");
         applicationEvents.publishEvent(new com.mediassistrover.backend.service.RobotRealtimeEventStream.Changed(session.getRobotId()));
     }
+    public void camera(UUID robotId,UUID transport,JsonNode payload) {
+        RobotMqttSession session=sessions.findById(robotId).orElse(null);
+        if(!fresh(session) || !transport.equals(session.getTransportSessionId()) || !session.getHelloJson().path("mappingEnabled").asBoolean())return;
+        mappingPreviews.acceptCamera(robotId,payload);
+    }
     public void preview(UUID robotId,UUID transport,JsonNode payload) {
         RobotMqttSession session=sessions.findById(robotId).orElse(null);
         if (!fresh(session) || !transport.equals(session.getTransportSessionId()) || !session.getHelloJson().path("mappingEnabled").asBoolean()) return;

@@ -17,6 +17,8 @@ public class MqttInboundRouter {
     private final MqttInboxStore store;
     private final MqttInboxProcessor processor;
     private final MqttDurablePublisher publisher;
+    private final com.mediassistrover.backend.service.NavigationProfileService navigationProfiles;
+    private final com.mediassistrover.backend.mapping.MappingControlService mappingControl;
     public void receive(String topic,byte[] bytes,int qos,boolean retained) {
         try {route(topic,bytes,qos,retained);}
         catch (BusinessRuleException | IllegalArgumentException ex) {log.warn("MQTT inbound rejected on {}: {}",topic,ex.getMessage());}
@@ -25,16 +27,29 @@ public class MqttInboundRouter {
     public void route(String topic,byte[] bytes,int qos,boolean retained) {
         MqttTopics.Topic lane=MqttTopics.parse(topic);
         if (!properties.manages(lane.robotId())) throw new BusinessRuleException("MQTT robot is not enrolled");
-        ObjectNode raw=wire.parse(bytes);contracts.inbound(raw);
+        ObjectNode raw=wire.parse(bytes);
+        boolean live=Set.of("mapping/control-acks","camera/preview").contains(lane.lane());
+        if(live)contracts.live(raw);else contracts.inbound(raw);
         if (!lane.robotId().equals(UUID.fromString(raw.path("robotId").asText()))) throw new BusinessRuleException("MQTT robotId differs from topic identity");
         String type=raw.path("messageType").asText();
+        if(live) {
+            if(retained || qos!=0)throw new BusinessRuleException("Live mapping lanes require QoS 0 and retain=false");
+            if("mapping/control-acks".equals(lane.lane()) && "MAPPING_CONTROL_ACK".equals(type))mappingControl.acknowledge(lane.robotId(),raw);
+            else if("camera/preview".equals(lane.lane()) && "CAMERA_PREVIEW".equals(type))sessions.camera(lane.robotId(),UUID.fromString(raw.path("transportSessionId").asText()),raw.path("payload"));
+            else throw new BusinessRuleException("Wrong live mapping messageType");
+            return;
+        }
         if ("presence".equals(lane.lane())) {
             if(qos!=1)throw new BusinessRuleException("Presence requires QoS 1");
             if (raw.has("messageType")) throw new BusinessRuleException("Presence has no event envelope");
-            if (!retained && !raw.path("online").asBoolean()) sessions.offline(lane.robotId(),UUID.fromString(raw.path("transportSessionId").asText()));return;
+            if (!raw.path("online").asBoolean()) sessions.offline(lane.robotId(),UUID.fromString(raw.path("transportSessionId").asText()));return;
+        }
+        if ("profile-acks".equals(lane.lane())) {
+            if (retained || qos!=1 || !"NAV_PROFILE_ACK".equals(type)) throw new BusinessRuleException("Invalid navigation profile ACK lane");
+            navigationProfiles.confirmMqtt(lane.robotId(),raw);return;
         }
         if (retained || qos!=("events".equals(lane.lane())?1:0)) throw new BusinessRuleException("MQTT topic QoS/retain contract mismatch");
-        if ("map-preview".equals(lane.lane())) {
+        if ("mapping/preview".equals(lane.lane())) {
             if (!"MAP_PREVIEW".equals(type)) throw new BusinessRuleException("Invalid preview messageType");
             sessions.preview(lane.robotId(),UUID.fromString(raw.path("transportSessionId").asText()),raw.path("payload"));return;
         }

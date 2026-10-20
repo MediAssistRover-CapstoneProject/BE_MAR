@@ -45,7 +45,7 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
 
     @BeforeEach void setup() {
         tx=new TransactionTemplate(transactionManager);properties.setEnabled(true);properties.setDispatchEnabled(true);properties.setAllowSimulation(true);
-        properties.setEnabledStepTypes(new HashSet<>(List.of("MOVE","WAIT","CONTROL_HARDWARE","EXECUTE_SENSING")));properties.getRobotIds().clear();connection.connectedNow();published.clear();
+        properties.setEnabledStepTypes(new HashSet<>(List.of("MOVE","WAIT","CONTROL_HARDWARE","EXECUTE_SENSING","INTERACT")));properties.getRobotIds().clear();connection.connectedNow();published.clear();
         when(transport.connected()).thenReturn(true);
         when(transport.publish(anyString(),any(byte[].class),anyInt())).thenAnswer(invocation->{published.add(new Publication(invocation.getArgument(0),wire.parse(invocation.getArgument(1)),invocation.getArgument(2)));return CompletableFuture.completedFuture(null);});
     }
@@ -67,6 +67,14 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
     private ObjectNode result(boolean stopped) {var p=json.createObjectNode().put("stepType",fixture.type.name()).put("status","SUCCEEDED").put("retryable",false).put("physicalStopConfirmed",stopped);p.putNull("errorCode");p.putNull("details");p.set("result",fixture.output(json));return fixture.event(json,"STEP_RESULT",p);}
     private ObjectNode error(String status,Boolean stopped) {var p=json.createObjectNode().put("stepType",fixture.type.name()).put("status",status).put("errorCode","TEST_ERROR").put("errorMessage","test error").put("retryable",false);p.putNull("details");if(stopped!=null)p.put("physicalStopConfirmed",stopped);return fixture.event(json,"STEP_ERROR",p);}
     private Job currentJob() {return jobs.findById(fixture.jobId).orElseThrow();}
+
+    @Test void speechDispatchAcceptsStartedAndAudioResultWithoutInventingChassisStop() {
+        fixture(StepType.INTERACT,"SPEAK");var c=dispatch();
+        assertThat(c.getPayloadJson().path("step").path("params").path("data").path("text").asText()).isEqualTo("Xin chào");
+        receive(ack(true));receive(start());ObjectNode response=result(false);((ObjectNode)response.path("payload")).putNull("physicalStopConfirmed");receive(response);
+        orchestrator.advance(fixture.jobId);orchestrator.advance(fixture.jobId);orchestrator.advance(fixture.jobId);
+        assertThat(currentJob().getStatus()).isEqualTo(JobStatus.SUCCEEDED);
+    }
 
     @ParameterizedTest @EnumSource(value=StepType.class, names={"MOVE","CONTROL_HARDWARE","EXECUTE_SENSING","WAIT"})
     void robotCandidateStepTypesDispatchAndAcceptAValidatedResultExactlyOnce(StepType type) {

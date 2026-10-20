@@ -76,17 +76,11 @@
             },
             "stepType": {
               "enum": [
-                "AUTHENTICATE",
-                "INTERACT",
-                "HANDLE_PAYLOAD",
-                "DATA_SERVICE",
-                "SET_CONTEXT",
-                "CHECK_CONDITION",
-                "NOTIFY",
                 "MOVE",
                 "CONTROL_HARDWARE",
                 "EXECUTE_SENSING",
-                "WAIT"
+                "WAIT",
+                "INTERACT"
               ]
             },
             "visitNo": {
@@ -191,10 +185,26 @@
               "then": {
                 "properties": {
                   "params": {
-                    "anyOf": [
-                      { "$ref": "pi-step-inputs.schema.json#/$defs/WAIT" },
-                      { "$ref": "be-step-contracts.json#/$defs/WAITInput" }
-                    ]
+                    "$ref": "pi-step-inputs.schema.json#/$defs/WAIT"
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "stepType": {
+                    "const": "INTERACT"
+                  }
+                },
+                "required": [
+                  "stepType"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "params": {
+                    "$ref": "pi-step-inputs.schema.json#/$defs/INTERACT"
                   }
                 }
               }

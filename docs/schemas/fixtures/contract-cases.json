@@ -616,8 +616,8 @@
   },
   {
     "schema": "mqtt-command.schema.json",
-    "name": "server-step-command",
-    "valid": true,
+    "name": "reject-server-step",
+    "valid": false,
     "instance": {
       "protocolVersion": "1.0",
       "contract": "MAR-STEP-2",

@@ -34,6 +34,24 @@ public class JobExecutionServiceImpl implements JobExecutionService {
     private final FloorRepository floors;
     private final MappingSessionRepository mappingSessions;
     private final com.mediassistrover.backend.mqtt.MqttRolloutService rollout;
+    @Override public Job createForSpeech(UUID workflowId,UUID robotId,String text,String languageCode) {
+        var policy=rollout.lockForRuntimeCreation();
+        Workflow workflow=workflowRepository.findById(workflowId).orElseThrow(()->new ResourceNotFoundException("Workflow not found"));
+        rollout.requireSchema(policy,workflow.getSchemaVersion());
+        if(workflow.getSchemaVersion()!=3 || !"SPEECH".equals(workflow.getServiceType()) || workflow.getStatus()!=WorkflowStatus.PUBLISHED
+                || !workflow.isAcceptsNewJobs() || workflow.getDefinitionHash()==null)throw new BusinessRuleException("Speech requires a published schema 3 SPEECH workflow");
+        var actions=stepRepository.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflowId).stream().filter(Step::isEnabled).toList();
+        if(actions.isEmpty() || actions.stream().noneMatch(s->s.getStepType()==StepType.INTERACT)
+                || actions.stream().anyMatch(s->s.getStepType()!=StepType.INTERACT || !"SPEAK".equals(s.getParamsJson().path("action").asText())))
+            throw new BusinessRuleException("Speech jobs accept only INTERACT/SPEAK steps");
+        if(text==null || text.isBlank() || text.length()>500 || !Set.of("vi","en").contains(Objects.toString(languageCode,"")))
+            throw new BusinessRuleException("Speech requires 1-500 characters and languageCode vi or en");
+        Robot robot=selectPinnedRobot(robotRepository.findById(robotId).orElseThrow(()->new ResourceNotFoundException("Robot not found")));
+        if(!mappingSessions.findByRobotIdAndPotentiallyOpenTrue(robotId).isEmpty())throw new BusinessRuleException("Robot holds an open mapping session");
+        var input=merge(workflow.getDefaultInputsJson(),objectMapper.createObjectNode().put("speech_text",text).put("language_code",languageCode));
+        return create(workflow,null,null,robot,null,1,input,null,null);
+    }
+
     @Override public Job createForMapping(UUID workflowId,UUID robotId,UUID floorId,String mapName) {
         rollout.lockForRuntimeCreation();
         Workflow workflow=workflowRepository.findById(workflowId).orElseThrow(()->new ResourceNotFoundException("Workflow not found"));

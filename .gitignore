@@ -6,5 +6,6 @@ target/
 .env
 secrets/
 data/map-artifacts/
+data/speech/
 .DS_Store
 Thumbs.db

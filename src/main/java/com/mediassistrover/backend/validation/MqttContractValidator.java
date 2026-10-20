@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 @Component
 public class MqttContractValidator {
     private final FixedContractSchemaValidator schemas=new FixedContractSchemaValidator();
+    public void live(JsonNode node) { schemas.validateRoot("mapping-live.schema.json",node); }
     public void inbound(JsonNode node) { schemas.validateRoot("mqtt-pi-message.schema.json",node); }
     public void command(JsonNode node) {
         schemas.validateRoot("mqtt-command.schema.json",node);

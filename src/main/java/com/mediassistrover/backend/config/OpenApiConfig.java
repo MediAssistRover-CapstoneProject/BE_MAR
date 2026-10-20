@@ -83,6 +83,11 @@ public class OpenApiConfig {
     private void customizeOperation(String path, PathItem.HttpMethod method, Operation operation) {
         if (isAnonymous(path)) {
             operation.setSecurity(List.of());
+        } else if (path.equals("/api/v1/pi/speech/prepare")) {
+            operation.setSecurity(List.of(new SecurityRequirement().addList(USER_BEARER_SCHEME)));
+        } else if (path.equals("/api/v1/pi/speech/synthesize") || path.matches("/api/v1/pi/maps/\\{[^}]+}/bundle")) {
+            operation.setSecurity(List.of(new SecurityRequirement().addList(DEVICE_BEARER_SCHEME),
+                    new SecurityRequirement().addList(USER_BEARER_SCHEME)));
         } else if (isDevice(path)) {
             operation.setSecurity(List.of(new SecurityRequirement().addList(DEVICE_BEARER_SCHEME)));
         } else {

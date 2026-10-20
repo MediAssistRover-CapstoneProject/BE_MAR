@@ -42,14 +42,14 @@ class MqttPropertiesTest {
     void rejectsBackendOwnedStepTypeDuringContextStartup() {
         context.withPropertyValues(
                         "app.mqtt.enabled=true",
-                        "app.mqtt.enabled-step-types=MOVE,INTERACT"
+                        "app.mqtt.enabled-step-types=MOVE,DATA_SERVICE"
                 )
                 .run(result -> {
                     assertThat(result).hasFailed();
                     assertThat(result.getStartupFailure())
                             .hasRootCauseMessage(
                                     "MQTT enabled StepType must be one of MOVE, CONTROL_HARDWARE, "
-                                            + "EXECUTE_SENSING, WAIT; backend-owned StepType is not dispatchable: INTERACT"
+                                            + "EXECUTE_SENSING, WAIT, INTERACT/SPEAK; backend-owned StepType is not dispatchable: DATA_SERVICE"
                             );
                 });
     }

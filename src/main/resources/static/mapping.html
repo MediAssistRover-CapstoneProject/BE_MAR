@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="vi"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quét bản đồ robot</title>
+<style>
+*{box-sizing:border-box}body{margin:24px auto;padding:0 20px;max-width:1200px;font:16px system-ui;color:#171717;background:#fafafa}h1{font-size:25px}label{display:block;font-size:13px;margin:8px 0}input{width:100%;padding:9px;border:1px solid #999;border-radius:4px}button{padding:10px 16px;margin:5px 5px 5px 0;background:white;border:1px solid #555;border-radius:4px;cursor:pointer}button:disabled{opacity:.45;cursor:default}.row{display:flex;gap:20px;align-items:start}.main{flex:3;min-width:0}.side{flex:1;min-width:250px}.panel{padding:16px;border:1px solid #bbb;background:white;margin:12px 0}.fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.map{width:100%;max-height:650px;object-fit:contain;background:#ddd;image-rendering:pixelated}.camera{width:100%;background:#ddd}small{display:block;color:#555;margin:8px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:250px;overflow:auto;font-size:13px}#notice{min-height:25px;font-weight:600}#stop{background:#222;color:white} @media(max-width:800px){.row{display:block}.fields{grid-template-columns:1fr}}
+</style>
+<h1>Quét bản đồ robot</h1>
+<p>Map cập nhật tối đa 1 giây/lần. Camera là ảnh xem trước, mặc định 2 giây/lần.</p>
+<details class="panel" open><summary>Kết nối nhiệm vụ</summary>
+<label>Access token ADMIN (chỉ giữ trong trang hiện tại)<input id="token" type="password" autocomplete="off" placeholder="Dán accessToken sau khi đăng nhập Swagger"></label>
+<div class="fields"><label>Robot ID<input id="robot" value="0e3f1083-2546-4f45-8004-5eda5cb75a6f"></label><label>Workflow ID — đã publish<input id="workflow"></label><label>Floor ID<input id="floor"></label><label>Tên bản đồ<input id="mapName" value="Ban do demo"></label></div>
+<button id="prepareMapping">Chuẩn bị workflow quét và lưu</button><small>Workflow lưu bản đồ trên Pi, upload HTTPS rồi đăng ký Map trong hệ thống.</small>
+<button id="create">Tạo nhiệm vụ quét</button>
+<label>Job ID<input id="job" placeholder="Hoặc dán jobId đã tạo trên Swagger"></label><button id="watch">Theo dõi nhiệm vụ</button><button id="unwatch">Ngừng theo dõi</button>
+</details>
+<div id="notice" role="status"></div>
+<div class="row"><section class="main panel"><h2>Bản đồ đang quét</h2><img id="mapImage" class="map" alt="Chưa nhận dữ liệu bản đồ" hidden><small id="mapTime">Đang chờ dữ liệu mới từ Pi.</small></section>
+<aside class="side"><section class="panel"><h2>Camera robot</h2><img id="cameraImage" class="camera" alt="Chưa nhận ảnh camera" hidden><small id="cameraTime">Chưa có ảnh.</small></section>
+<section class="panel"><h2>Di chuyển</h2><p>Mỗi lần bấm gửi một lệnh tối đa 400 ms. Robot tự dừng khi lệnh hết hạn.</p>
+<button data-x="0.05" data-z="0" disabled>Tiến</button><button data-x="0" data-z="0.2" disabled>Quay trái</button><button data-x="0" data-z="-0.2" disabled>Quay phải</button><button id="stop" disabled>Dừng di chuyển</button>
+<small>Giới hạn 0,05 m/s và 0,2 rad/s. Không hỗ trợ lùi/ngang với cấu hình xe kéo hiện tại.</small><pre id="receipt">Chưa gửi lệnh.</pre>
+<button id="save" disabled>Lưu bản đồ và kết thúc</button><small>Pi phải được cấu hình HTTPS upload để hoàn tất lưu bản đồ vào hệ thống.</small></section></aside></div>
+<section class="panel"><h2>Phát giọng nói</h2><small>Giọng thông báo được tổng hợp bằng AI.</small>
+<p>Dùng Robot ID và token ở trên. Kết thúc nhiệm vụ quét trước khi tạo nhiệm vụ phát loa riêng.</p>
+<label>Workflow phát loa<input id="speechWorkflow" placeholder="Bấm Chuẩn bị workflow để lấy ID"></label>
+<button id="prepareSpeech">Chuẩn bị workflow phát loa</button>
+<label>Văn bản (tối đa 500 ký tự)<textarea id="speechText" maxlength="500" rows="3" style="width:100%;padding:10px">Xin chào. Robot đã nhận lệnh từ máy chủ.</textarea></label>
+<label>Ngôn ngữ<select id="speechLanguage"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
+<button id="speak">Gửi văn bản tới robot</button><button id="speechStatus" disabled>Xem kết quả phát loa</button>
+<pre id="speechReceipt">Chưa gửi lệnh.</pre></section>
+<details class="panel"><summary>Trạng thái nhiệm vụ</summary><pre id="state"></pre></details>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);let job='',session='',mapping=false,timer=null,busy=false,polling=false;const images={};
+function notice(message){$('notice').textContent=message}
+async function api(path,body,raw=false){const token=$('token').value.trim().replace(/^Bearer\s+/i,'');if(!token)throw Error('Cần access token ADMIN.');const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(5000)});if(!r.ok){const t=await r.text();throw Error(r.status+' '+t.slice(0,300))}return raw?r:r.status===204?null:r.json()}
+function buttons(){document.querySelectorAll('[data-x]').forEach(b=>b.disabled=!mapping||busy);$('save').disabled=!mapping||busy;$('stop').disabled=!session||busy}
+function clearImage(id,label,text){$(id).hidden=true;$(label).textContent=text;if(images[id]){URL.revokeObjectURL(images[id]);delete images[id]}}
+async function picture(route,id,label){const r=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/'+route,undefined,true);if(r.status===204){clearImage(id,label,'Chưa có ảnh mới hoặc dữ liệu đã quá 10 giây.');return}const blob=await r.blob();const url=URL.createObjectURL(blob);if(images[id])URL.revokeObjectURL(images[id]);images[id]=url;$(id).src=url;$(id).hidden=false;$(label).textContent='Bản '+r.headers.get('X-Frame-Revision')+' • '+r.headers.get('X-Captured-At')}
+async function poll(){if(!job||polling)return;polling=true;try{const state=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-session?includePreview=false');session=state.mapping_session_id;mapping=state.state==='MAPPING'&&state.potentially_open;const p=state.preview;const summary={...state,preview:p?{revision:p.revision,width:p.width,height:p.height,resolution:p.resolution,captured_at:p.captured_at,pose:p.pose}:null};$('state').textContent=JSON.stringify(summary,null,2);buttons();await Promise.all([picture('mapping-preview.png','mapImage','mapTime'),picture('camera-preview.jpg','cameraImage','cameraTime')]);const receipt=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control');if(receipt)$('receipt').textContent=JSON.stringify(receipt,null,2)}catch(e){mapping=false;buttons();notice(e.message);clearImage('mapImage','mapTime','Mất kết nối hoặc chưa có phiên quét.');clearImage('cameraImage','cameraTime','Không có ảnh mới.')}finally{polling=false}}
+function watch(){if(timer)clearInterval(timer);job=$('job').value.trim();if(!job){notice('Cần jobId.');return}session='';mapping=false;buttons();poll();timer=setInterval(poll,1000)}
+async function control(x,z){if(!session)throw Error('Chưa có phiên quét.');return api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control',{mappingSessionId:session,linearX:x,angularZ:z,durationMs:400})}
+document.querySelectorAll('[data-x]').forEach(b=>b.onclick=async()=>{if(busy||!mapping)return;busy=true;buttons();try{$('receipt').textContent=JSON.stringify(await control(Number(b.dataset.x),Number(b.dataset.z)),null,2);notice('Đã gửi yêu cầu. Xem PI_ACCEPTED/PI_REJECTED ở phần phản hồi.')}catch(e){notice(e.message)}finally{busy=false;buttons()}});
+$('stop').onclick=async()=>{busy=true;buttons();try{$('receipt').textContent=JSON.stringify(await control(0,0),null,2);notice('Đã gửi yêu cầu dừng.')}catch(e){notice(e.message)}finally{busy=false;buttons()}};
+$('save').onclick=async()=>{busy=true;buttons();try{await control(0,0);await api('/api/v1/jobs/'+encodeURIComponent(job)+'/events',{eventId:crypto.randomUUID(),eventType:'MAPPING_SAVE_REQUESTED',correlationKey:session,occurredAt:new Date().toISOString(),data:{}});mapping=false;notice('Đã yêu cầu lưu. Theo dõi các bước lưu và dừng. Chỉ hoàn tất khi Job SUCCEEDED; kiểm tra output của COMMIT_MAP để lấy map_id.')}catch(e){notice(e.message)}finally{busy=false;buttons()}};
+$('create').onclick=async()=>{try{const result=await api('/api/v1/mapping-jobs',{workflowId:$('workflow').value.trim(),robotId:$('robot').value.trim(),floorId:$('floor').value.trim(),mapName:$('mapName').value.trim()});$('job').value=result.jobId;notice('Đã tạo '+result.jobCode);watch()}catch(e){notice(e.message)}};
+$('watch').onclick=watch;$('unwatch').onclick=()=>{clearInterval(timer);timer=null;mapping=false;buttons();notice('Đã ngừng theo dõi. Nhiệm vụ trên BE vẫn còn; lệnh di chuyển tự hết hạn.');clearImage('mapImage','mapTime','Đã ngừng theo dõi.');clearImage('cameraImage','cameraTime','Đã ngừng theo dõi.')};
+document.addEventListener('visibilitychange',()=>{if(document.hidden){mapping=false;buttons()}});
+
+let speechJob='';
+async function prepareWorkflow(file,code,field){
+  const published=await api('/api/v1/admin/workflows/published/all');
+  const found=published.find(x=>x.workflow.workflowCode===code && x.workflow.acceptsNewJobs);
+  if(found){$(field).value=found.workflow.workflowId;return}
+  const list=await api('/api/v1/admin/workflows?size=100');
+  const draft=list.content.find(x=>x.workflowCode===code && ['DRAFT','VALIDATED'].includes(x.status));
+  let id=draft?.workflowId;
+  if(!id){const definition=await api('/'+file);const created=await api('/api/v1/admin/workflows/graph',definition);id=created.workflow.workflowId}
+  $(field).value=id;
+  await api('/api/v1/admin/workflows/'+id+'/validate',{});
+  await api('/api/v1/admin/workflows/'+id+'/publish',{});
+}
+$('prepareSpeech').onclick=async()=>{const b=$('prepareSpeech');b.disabled=true;try{await prepareWorkflow('speech-workflow.json','WF_ROBOT_SPEECH_DEMO','speechWorkflow');notice('Workflow phát loa đã sẵn sàng.')}catch(e){notice(e.message)}finally{b.disabled=false}};
+$('prepareMapping').onclick=async()=>{const b=$('prepareMapping');b.disabled=true;try{await prepareWorkflow('mapping-workflow.json','WF_MAPPING','workflow');notice('Workflow quét và lưu đã sẵn sàng.')}catch(e){notice(e.message)}finally{b.disabled=false}};
+$('speak').onclick=async()=>{const b=$('speak');b.disabled=true;try{
+  const result=await api('/api/v1/speech-jobs',{workflowId:$('speechWorkflow').value.trim(),robotId:$('robot').value.trim(),text:$('speechText').value,languageCode:$('speechLanguage').value});
+  speechJob=result.jobId;$('speechStatus').disabled=false;$('speechReceipt').textContent=JSON.stringify(result,null,2);
+  notice('BE đã tạo nhiệm vụ phát loa. Bấm Xem kết quả để kiểm tra phản hồi Pi.');
+}catch(e){notice(e.message)}finally{b.disabled=false}};
+$('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stringify(await api('/api/v1/jobs/'+encodeURIComponent(speechJob)),null,2)}catch(e){notice(e.message)}};
+</script></html>

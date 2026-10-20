@@ -1,0 +1,103 @@
+package com.mediassistrover.backend.mapping;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.mediassistrover.backend.entity.*;
+import com.mediassistrover.backend.enums.*;
+import com.mediassistrover.backend.exception.*;
+import com.mediassistrover.backend.mqtt.*;
+import com.mediassistrover.backend.repository.*;
+import com.mediassistrover.backend.validation.MqttContractValidator;
+import jakarta.validation.constraints.*;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import java.time.*;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
+
+/** Short manual pulses are never stored in the command outbox or replayed. */
+@Service @RequiredArgsConstructor
+public class MappingControlService {
+    private final JobRepository jobs;
+    private final MappingSessionRepository mappingSessions;
+    private final RobotMqttSessionRepository robotSessions;
+    private final MqttSessionRegistry registry;
+    private final MqttProperties mqtt;
+    private final MappingProperties mapping;
+    private final PahoMqttTransport transport;
+    private final MqttWire wire;
+    private final MqttContractValidator contracts;
+    private final Clock clock;
+    // Epoch-based start also advances across normal BE restarts. Pi rejects old sequences.
+    private final AtomicLong sequence=new AtomicLong(System.currentTimeMillis()*1000);
+    private final Map<UUID,Receipt> latest=new ConcurrentHashMap<>();
+    public record Request(@NotNull UUID mappingSessionId,
+            @NotNull @DecimalMin("0.0") @DecimalMax("0.05") Double linearX,
+            @NotNull @DecimalMin("-0.2") @DecimalMax("0.2") Double angularZ,
+            @Min(100) @Max(400) int durationMs) { }
+    public record Receipt(UUID commandId,UUID jobId,UUID mappingSessionId,UUID transportSessionId,
+            long sequenceNo,Instant issuedAt,Instant expiresAt,String status,String errorCode,Instant receivedAt) { }
+
+    @Transactional
+    public Receipt send(UUID jobId,Request input) {
+        if(!mapping.isEnabled() || !mqtt.isDispatchEnabled())throw new BusinessRuleException("Mapping dispatch is disabled");
+        Job job=jobs.lockById(jobId).orElseThrow(()->new ResourceNotFoundException("Job not found"));
+        MappingSession session=mappingSessions.findByJobId(jobId).orElseThrow(()->new BusinessRuleException("Job has no mapping session"));
+        if(!session.getSessionId().equals(input.mappingSessionId()) || !session.isPotentiallyOpen())
+            throw new BusinessRuleException("Mapping session is closed or does not belong to Job");
+        boolean stop=input.linearX()!=null && input.angularZ()!=null && input.linearX()==0 && input.angularZ()==0;
+        if(input.linearX()==null || input.angularZ()==null || !Double.isFinite(input.linearX()) || !Double.isFinite(input.angularZ())
+                || input.linearX()<0 || input.linearX()>.05 || Math.abs(input.angularZ())>.2 || input.durationMs()<100 || input.durationMs()>400)
+            throw new BusinessRuleException("Invalid mapping velocity or duration");
+        JobStep selected=job.getSelectedJobStep();
+        if(!stop && (job.getStatus()!=JobStatus.RUNNING || job.getCancelRequestedAt()!=null || !"MAPPING".equals(session.getState())
+                || selected==null || selected.getStatus()!=JobStepStatus.RUNNING || !"WAIT".equals(selected.getStepTypeSnapshot())
+                || !"MAPPING_SAVE_REQUESTED".equals(selected.getResolvedInputsJson().path("event_type").asText())))
+            throw new BusinessRuleException("Move only while mapping Job waits for MAPPING_SAVE_REQUESTED");
+        UUID robot=session.getRobotId();
+        RobotMqttSession link=robotSessions.findById(robot).orElse(null);
+        if(!mqtt.manages(robot) || !transport.connected() || !registry.fresh(link)
+                || !link.getHelloJson().path("mappingEnabled").asBoolean())throw new BusinessRuleException("Pi mapping connection is not ready");
+        Instant now=Instant.now(clock);
+        Receipt prior=latest.get(robot);
+        if(!stop && prior!=null && prior.issuedAt().isAfter(now.minusMillis(240)))
+            throw new BusinessRuleException("Wait at least 250 ms between movement commands");
+        var receipt=new Receipt(UUID.randomUUID(),jobId,session.getSessionId(),link.getTransportSessionId(),sequence.incrementAndGet(),
+                now,now.plusMillis(750),"QUEUED",null,null);
+        var command=wire.object().put("messageType","MAPPING_CONTROL").put("robotId",robot.toString())
+                .put("transportSessionId",link.getTransportSessionId().toString()).put("jobId",jobId.toString())
+                .put("mappingSessionId",session.getSessionId().toString()).put("commandId",receipt.commandId().toString())
+                .put("sequenceNo",receipt.sequenceNo()).put("issuedAt",now.toString()).put("expiresAt",receipt.expiresAt().toString())
+                .put("linearX",input.linearX()).put("angularZ",input.angularZ()).put("durationMs",input.durationMs());
+        contracts.live(command);latest.put(robot,receipt);
+        transport.publish(MqttTopics.topic(robot,"mapping/control"),wire.bytes(command),0).whenComplete((ignored,error)->
+                latest.computeIfPresent(robot,(id,current)->!current.commandId().equals(receipt.commandId()) || !"QUEUED".equals(current.status())?current:
+                        update(current,error==null?"MQTT_PUBLISHED":"PUBLISH_FAILED",error==null?null:"MQTT_PUBLISH_FAILED",null)));
+        return receipt;
+    }
+    public void acknowledge(UUID robot,JsonNode ack) {
+        RobotMqttSession link=robotSessions.findById(robot).orElse(null);
+        if(!registry.fresh(link) || !link.getTransportSessionId().toString().equals(ack.path("transportSessionId").asText())
+                || !link.getProducerSessionId().toString().equals(ack.path("producerSessionId").asText()))return;
+        latest.computeIfPresent(robot,(id,current)->{
+            if(!current.commandId().toString().equals(ack.path("commandId").asText())
+                    || !current.jobId().toString().equals(ack.path("jobId").asText())
+                    || !current.mappingSessionId().toString().equals(ack.path("mappingSessionId").asText())
+                    || current.sequenceNo()!=ack.path("sequenceNo").asLong())return current;
+            return update(current,ack.path("accepted").asBoolean()?"PI_ACCEPTED":"PI_REJECTED",
+                    ack.path("errorCode").isNull()?null:ack.path("errorCode").asText(),Instant.now(clock));
+        });
+    }
+    public Receipt status(UUID jobId) {
+        var session=mappingSessions.findByJobId(jobId).orElseThrow(()->new ResourceNotFoundException("Mapping session not found"));
+        Receipt receipt=latest.get(session.getRobotId());
+        if(receipt==null || !receipt.jobId().equals(jobId))return null;
+        if(Set.of("QUEUED","MQTT_PUBLISHED").contains(receipt.status()) && receipt.expiresAt().plusSeconds(2).isBefore(Instant.now(clock)))
+            return update(receipt,"NO_PI_ACK","NO_PI_ACK",null);
+        return receipt;
+    }
+    private Receipt update(Receipt r,String status,String error,Instant received) {
+        return new Receipt(r.commandId(),r.jobId(),r.mappingSessionId(),r.transportSessionId(),r.sequenceNo(),r.issuedAt(),r.expiresAt(),status,error,received);
+    }
+}

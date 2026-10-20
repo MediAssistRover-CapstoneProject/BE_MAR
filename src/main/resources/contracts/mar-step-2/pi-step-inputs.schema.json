@@ -75,6 +75,22 @@
         "params"
       ],
       "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "stepType": {
+          "const": "INTERACT"
+        },
+        "params": {
+          "$ref": "pi-step-inputs.schema.json#/$defs/INTERACT"
+        }
+      },
+      "required": [
+        "stepType",
+        "params"
+      ],
+      "additionalProperties": false
     }
   ],
   "$defs": {
@@ -306,6 +322,56 @@
       "required": [
         "wait_type",
         "duration_sec"
+      ],
+      "additionalProperties": false
+    },
+    "INTERACT": {
+      "type": "object",
+      "properties": {
+        "prompt_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "action": {
+          "const": "SPEAK"
+        },
+        "data": {
+          "type": "object",
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500,
+              "pattern": "\\S"
+            },
+            "language_code": {
+              "enum": [
+                "vi",
+                "en"
+              ]
+            },
+            "speed_wpm": {
+              "type": "integer",
+              "minimum": 80,
+              "maximum": 220
+            },
+            "volume": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "text"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "prompt_key",
+        "action",
+        "data"
       ],
       "additionalProperties": false
     }

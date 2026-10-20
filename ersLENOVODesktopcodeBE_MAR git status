@@ -1,9 +1,0 @@
-  backup-main-before-sync   [m a702a6d ghghg
-  backup-thanh-before-sync  [m 8fc480f done
-  backup/main-before-thanh  [m 97efe57 [[34morigin/main[m: behind 55] Merge pull request #1 from MediAssistRover-CapstoneProject/new+test
-  fix/be-mar-merged-verified[m a7dcf65 [[34morigin/fix/be-mar-merged-verified[m] Merge CI isolation fixes
-  fix/ci-test-isolation     [m 7d0fb9c [[34morigin/fix/ci-test-isolation[m] test: clean binary UUID fixtures correctly
-  main                      [m a702a6d [[34morigin/main[m: ahead 3, behind 9] ghghg
-  reconcile/thanh-main      [m 2589f79 [[34morigin/reconcile/thanh-main[m] Merge thanh into main using thanh as canonical codebase
-* [32mthanh                     [m 6f93582 [[34morigin/thanh[m] dddd
-  thien                     [m 10ccdad [[34morigin/thien[m] create wf

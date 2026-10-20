@@ -1,6 +1,7 @@
 package com.mediassistrover.backend.mapping;
 
 import com.fasterxml.jackson.databind.*;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.validation.MappingArtifactContractValidator;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +46,27 @@ public class MappingArchiveReader {
     }
     public static String hash(byte[] bytes) {
         try{return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));}catch(NoSuchAlgorithmException ex){throw new IllegalStateException(ex);}
+    }
+    public ObjectNode inspectMap(byte[] yamlBytes,byte[] pgm) {
+        LoaderOptions options=new LoaderOptions();options.setAllowDuplicateKeys(false);options.setMaxAliasesForCollections(0);
+        options.setCodePointLimit(64*1024);options.setNestingDepthLimit(8);
+        Object loaded=new Yaml(new SafeConstructor(options)).load(new String(yamlBytes,StandardCharsets.UTF_8));
+        if(!(loaded instanceof Map<?,?>))fail("Map YAML must be an object");
+        Map<?,?> yaml=(Map<?,?>)loaded;
+        PgmReader parser=new PgmReader(pgm);parser.token();int width=parser.integer(),height=parser.integer();
+        double resolution=number(yaml.get("resolution"));
+        if(!(yaml.get("origin") instanceof List<?>)||((List<?>)yaml.get("origin")).size()!=3)fail("Map origin requires three numbers");
+        List<?> xyz=(List<?>)yaml.get("origin");
+        var n=json.createObjectNode().put("width_px",width).put("height_px",height).put("resolution_m_per_pixel",resolution)
+            .put("width_m",width*resolution).put("height_m",height*resolution).put("origin_x_m",number(xyz.get(0)))
+            .put("origin_y_m",number(xyz.get(1))).put("origin_yaw_rad",number(xyz.get(2))).put("frame_id","map");
+        validateMap(yamlBytes,pgm,n);return n;
+    }
+    public Map<String,byte[]> mapFiles(byte[] archive) {
+        try(var gzip=new GZIPInputStream(new ByteArrayInputStream(archive))) {
+            var files=tar(readBounded(gzip,properties.getMaxUncompressedBytes()));
+            return Map.of("map.yaml",files.get("map.yaml"),"map.pgm",files.get("map.pgm"));
+        } catch(IOException e){throw new BusinessRuleException("Invalid stored map archive");}
     }
     private Map<String,byte[]> tar(byte[] bytes) {
         Map<String,byte[]> files=new HashMap<>();int offset=0;

@@ -17,11 +17,15 @@ public class MqttProperties {
                     StepType.MOVE,
                     StepType.CONTROL_HARDWARE,
                     StepType.EXECUTE_SENSING,
-                    StepType.WAIT
+                    StepType.WAIT, StepType.INTERACT
             ));
     private boolean enabled;
     private boolean dispatchEnabled;
     private boolean allowSimulation;
+    private boolean allowCommissioningUnlock;
+    private boolean navigationProfileSyncEnabled=true;
+    private int publishRatePerSecond=8;
+    private int publishQueueCapacity=64;
     private String brokerUri="ssl://localhost:8883";
     private String clientId="mar-be-mqtt";
     private String username;
@@ -52,7 +56,7 @@ public class MqttProperties {
             if (!ROBOT_STEP_TYPES.contains(type)) {
                 throw new IllegalArgumentException(
                         "MQTT enabled StepType must be one of MOVE, CONTROL_HARDWARE, "
-                                + "EXECUTE_SENSING, WAIT; backend-owned StepType is not dispatchable: " + value
+                                + "EXECUTE_SENSING, WAIT, INTERACT/SPEAK; backend-owned StepType is not dispatchable: " + value
                 );
             }
         }
@@ -65,5 +69,8 @@ public class MqttProperties {
         if (username==null || username.isBlank() || password==null || password.isBlank()) throw new IllegalArgumentException("MQTT broker credentials are required");
         if (clientId==null || clientId.isBlank() || commandTtlSec<1 || commandTtlSec>300 || retryIntervalSec<1 || retryIntervalSec>10)
             throw new IllegalArgumentException("Invalid MQTT client ID / timing configuration");
+        if (publishRatePerSecond<1 || publishRatePerSecond>10 || publishQueueCapacity<8 || publishQueueCapacity>256)
+            throw new IllegalArgumentException("MQTT publish rate must be 1..10/sec and queue capacity 8..256");
+        if (!Set.of("WAIT","MOVE","CONTROL_HARDWARE","EXECUTE_SENSING","INTERACT").containsAll(enabledStepTypes)) throw new IllegalArgumentException("Unsupported MQTT enabled StepType");
     }
 }
