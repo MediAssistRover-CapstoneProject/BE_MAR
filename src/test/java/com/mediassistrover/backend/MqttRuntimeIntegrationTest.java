@@ -212,7 +212,6 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
             ObjectNode params=json.createObjectNode().put("map_id",fixture.mapId.toString()).put("endpoint_id",endpoint.getEndpointId().toString())
                     .put("mode","NORMAL").put("max_speed_mps",0.05);
             end.getStep().setSequenceNo(3);
-            end.setExecutionSequenceNo(3);
             entityManager.flush();
             Step definition=MqttTestFixture.definition(first.getStep().getWorkflow(),first.getStep().getTask(),StepType.MOVE,"MOVE_SECOND",2,params,json);
             entityManager.persist(definition);
@@ -225,7 +224,8 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
             for(TransitionOutcome outcome:List.of(TransitionOutcome.FAILURE,TransitionOutcome.TIMEOUT))entityManager.persist(StepTransition.builder()
                     .workflow(first.getStep().getWorkflow()).fromStep(definition).outcome(outcome).priority(1).defaultTransition(true).terminalStatus(TerminalStatus.FAILED).build());
             String operationKey=fixture.jobId+":MOVE_SECOND:1";
-            JobStep visit=JobStep.builder().jobTask(first.getJobTask()).step(definition).visitNo(1).executionSequenceNo(2)
+            long executionSequence=steps.findByJobId(fixture.jobId).stream().mapToLong(JobStep::getExecutionSequenceNo).max().orElseThrow()+1;
+            JobStep visit=JobStep.builder().jobTask(first.getJobTask()).step(definition).visitNo(1).executionSequenceNo(executionSequence)
                     .stepCodeSnapshot("MOVE_SECOND").stepTypeSnapshot("MOVE").resolvedInputsJson(json.createObjectNode())
                     .status(JobStepStatus.PENDING).attemptNo(1).timeoutSecSnapshot(60).operationKey(operationKey).build();
             entityManager.persist(visit);entityManager.flush();return new Second(visit.getJobStepId(),endpoint.getEndpointId(),operationKey);
