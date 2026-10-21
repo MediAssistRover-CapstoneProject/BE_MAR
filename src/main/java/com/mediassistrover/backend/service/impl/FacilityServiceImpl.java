@@ -160,7 +160,14 @@ public class FacilityServiceImpl implements FacilityService {
         Endpoint e=mapper.toEntity(r);bindEndpoint(e,r);e=endpointRepository.save(e);audit(account(a),"ENDPOINT_CREATED","Endpoint",e.getEndpointId(),md);return mapper.toResponse(e);}
     @Override @Transactional public EndpointResponse updateEndpoint(UUID id,EndpointRequest r,UUID a,RequestMetadata md){Endpoint e=endpoint(id);
         if((!e.getMap().getMapId().equals(r.mapId())||!e.getEndpointCode().equalsIgnoreCase(r.endpointCode()))&&endpointRepository.existsByMapMapIdAndEndpointCodeIgnoreCase(r.mapId(),r.endpointCode()))throw new ConflictException("Endpoint code already exists in this map");
-        mapper.update(r,e);bindEndpoint(e,r);audit(account(a),"ENDPOINT_UPDATED","Endpoint",id,md);return mapper.toResponse(e);}
+        mapper.update(r,e);
+        // MapStruct does not update the acronym-named xM/yM fields in the generated mapper.
+        // Set the requested coordinates explicitly on this managed JPA entity.
+        e.setXM(r.xM());
+        e.setYM(r.yM());
+        bindEndpoint(e,r);
+        audit(account(a),"ENDPOINT_UPDATED","Endpoint",id,md);
+        return mapper.toResponse(e);}
     @Override @Transactional public EndpointResponse setEndpointActive(UUID id,boolean active,UUID a,RequestMetadata md){Endpoint e=endpoint(id);e.setActive(active);audit(account(a),active?"ENDPOINT_ACTIVATED":"ENDPOINT_DEACTIVATED","Endpoint",id,md);return mapper.toResponse(e);}
     @Override public Page<EndpointResponse> listEndpoints(UUID mapId,UUID roomId,EndpointType endpointType,Boolean active,Boolean accessible,String query,Pageable p){
         String normalized=query==null||query.isBlank()?null:query.trim();
