@@ -8,6 +8,7 @@ import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.service.OrchestrationWorkService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
@@ -15,7 +16,7 @@ import java.time.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
-@Service @RequiredArgsConstructor
+@Service @RequiredArgsConstructor @Slf4j
 public class MqttSessionRegistry {
     private final RobotMqttSessionRepository sessions;
     private final RobotRepository robots;
@@ -157,10 +158,22 @@ public class MqttSessionRegistry {
         if(pose.path("fresh").asBoolean())validateFreshMapPose(pose,map,
                 mappingOpen?p.path("mappingSession").path("session_id").asText():null);
         if (map!=null && !mappingOpen && active.stream().noneMatch(j->mapping.open(j.getJobId())) && pose.path("fresh").asBoolean() && !locations.existsById(e.messageId())) {
-            JsonNode value=pose.path("value");locations.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map)
-                    .frameId("map").source("MQTT_HEARTBEAT_MAP_POSE")
-                    .xM(value.path("x_m").decimalValue()).yM(value.path("y_m").decimalValue()).yawRad(value.path("yaw_rad").decimalValue()).fresh(true)
-                    .capturedAt(e.time().minusMillis((long)(pose.path("age_sec").asDouble()*1000))).receivedAt(now).build());
+            JsonNode value=pose.path("value");
+            Instant capturedAt=e.time().minusMillis((long)(pose.path("age_sec").asDouble()*1000));
+            RobotLocationHistory latest=locations.findFirstByRobotRobotIdOrderByCapturedAtDesc(e.robotId()).orElse(null);
+            // Heartbeats can arrive in order while their independently captured TF samples do not.
+            // Never append an older pose that could later be selected as current by a consumer.
+            if(latest==null || capturedAt.isAfter(latest.getCapturedAt())) {
+                locations.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map)
+                        .frameId("map").source("MQTT_HEARTBEAT_MAP_POSE")
+                        .xM(value.path("x_m").decimalValue()).yM(value.path("y_m").decimalValue()).yawRad(value.path("yaw_rad").decimalValue()).fresh(true)
+                        .capturedAt(capturedAt).receivedAt(now).build());
+                log.debug("robot_pose accepted robotId={} messageId={} capturedAt={} receivedAt={} ageMs={}",
+                        e.robotId(),e.messageId(),capturedAt,now,Duration.between(capturedAt,now).toMillis());
+            } else {
+                log.info("robot_pose dropped_out_of_order robotId={} messageId={} capturedAt={} latestCapturedAt={}",
+                        e.robotId(),e.messageId(),capturedAt,latest.getCapturedAt());
+            }
         }
         ObjectNode heartbeat=(ObjectNode)p.deepCopy();heartbeat.put("occurredAt",e.occurredAt());session.setHeartbeatJson(heartbeat);session.setLastHeartbeatAt(now);
         if (next==RobotStatus.ERROR) session.setDispatchReady(false);

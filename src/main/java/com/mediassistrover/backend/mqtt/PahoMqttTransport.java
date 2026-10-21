@@ -21,6 +21,9 @@ public class PahoMqttTransport implements SmartLifecycle {
     private final ObjectProvider<MqttInboundRouter> router;
     private volatile MqttAsyncClient client;
     private volatile boolean running;
+    private final java.util.concurrent.atomic.AtomicBoolean subscriptionInFlight=new java.util.concurrent.atomic.AtomicBoolean();
+    private final java.util.concurrent.atomic.AtomicInteger subscriptionFailures=new java.util.concurrent.atomic.AtomicInteger();
+    private volatile long nextSubscriptionAttemptNanos;
     // The same eight topic filters must be approved in EMQX ACL for username mar-be.
     private static final String[] SUBSCRIPTION_LANES = {
             "events", "heartbeat", "presence", "map-preview",
@@ -54,19 +57,54 @@ public class PahoMqttTransport implements SmartLifecycle {
         try {
             client=new MqttAsyncClient(properties.getBrokerUri(),properties.getClientId(),new MemoryPersistence());
             client.setCallback(new MqttCallback() {
-                public void disconnected(MqttDisconnectResponse response) {state.disconnected();publications.failPending(new IllegalStateException("MQTT disconnected"));}
+                public void disconnected(MqttDisconnectResponse response) {state.disconnected();subscriptionInFlight.set(false);scheduleSubscriptionRetry();publications.failPending(new IllegalStateException("MQTT disconnected"));}
                 public void mqttErrorOccurred(MqttException error) {log.warn("MQTT client error: reason {}",error.getReasonCode());}
                 public void deliveryComplete(IMqttToken token) { }
                 public void authPacketArrived(int reason,MqttProperties packet) { }
                 public void connectComplete(boolean reconnect,String uri) {
-                    try {
-                        client.subscribe(subscriptions(),null,new MqttActionListener() {
+                    state.disconnected();
+                    subscriptionFailures.set(0);nextSubscriptionAttemptNanos=0;
+                    reconcileSubscriptions();
+                }
+                public void messageArrived(String topic,MqttMessage message) {
+                    byte[] bytes=message.getPayload().clone();int qos=message.getQos();boolean retained=message.isRetained();
+                    try {inbound.execute(()->router.getObject().receive(topic,bytes,qos,retained));}
+                    catch (RejectedExecutionException ex) {log.warn("MQTT inbound queue full; durable event receives no application ACK");}
+                }
+            });
+            MqttConnectionOptions options=new MqttConnectionOptions();options.setUserName(properties.getUsername());options.setPassword(properties.getPassword().getBytes(StandardCharsets.UTF_8));
+            options.setCleanStart(true);options.setSessionExpiryInterval(0L);options.setKeepAliveInterval(10);options.setConnectionTimeout(10);
+            options.setAutomaticReconnect(true);options.setAutomaticReconnectDelay(1000,5000);options.setMaximumPacketSize(1_048_576L);
+            options.setSocketFactory(tls(properties));options.setHttpsHostnameVerificationEnabled(true);
+            running=true;
+            if(outboundStarted.compareAndSet(false,true)) {
+                outbound.scheduleWithFixedDelay(this::drainPublication,0,10,TimeUnit.MILLISECONDS);
+                outbound.scheduleWithFixedDelay(this::reconcileSubscriptions,1,1,TimeUnit.SECONDS);
+            }
+            client.connect(options,null,new MqttActionListener() {
+                public void onSuccess(IMqttToken token) { }
+                public void onFailure(IMqttToken token,Throwable error) {state.disconnected();scheduleSubscriptionRetry();log.warn("MQTT initial connection failed; scheduler will retry");}
+            });
+        } catch (MqttException ex) {running=false;throw new IllegalStateException("Cannot start MQTT client",ex);}
+    }
+
+    /**
+     * A connected TCP socket is not application readiness. Reconcile the complete required
+     * subscription set until one wire SUBACK accepts every topic. Only that callback may
+     * promote MqttConnectionState to connected.
+     */
+    void reconcileSubscriptions() {
+        MqttAsyncClient current=client;
+        if(!running || current==null || !current.isConnected() || state.connected()
+                || System.nanoTime()<nextSubscriptionAttemptNanos || !subscriptionInFlight.compareAndSet(false,true))return;
+        try {
+            current.subscribe(subscriptions(),null,new MqttActionListener() {
                             public void onSuccess(IMqttToken token) {
                                 int[] reasons = token.getReasonCodes();
-                                boolean accepted = reasons != null && reasons.length == SUBSCRIPTION_LANES.length;
+                                boolean accepted = subscriptionAccepted(reasons);
                                 log.info("MQTT SUBACK: codes={}, expectedTopics={}, socketConnected={}",
                                         java.util.Arrays.toString(reasons), SUBSCRIPTION_LANES.length,
-                                        client != null && client.isConnected());
+                                        current.isConnected());
                                 if (reasons == null || reasons.length != SUBSCRIPTION_LANES.length) {
                                     log.warn("MQTT SUBACK unexpected response length: actual={}, expected={}",
                                             reasons == null ? "null" : reasons.length, SUBSCRIPTION_LANES.length);
@@ -80,35 +118,38 @@ public class PahoMqttTransport implements SmartLifecycle {
                                         }
                                     }
                                 }
-                                if (!accepted || client == null || !client.isConnected()) {
+                                subscriptionInFlight.set(false);
+                                if (!accepted || !current.isConnected()) {
                                     state.disconnected();
+                                    scheduleSubscriptionRetry();
                                     log.warn("MQTT required subscriptions not ready; session remains unavailable");
                                 } else {
+                                    subscriptionFailures.set(0);nextSubscriptionAttemptNanos=0;
                                     state.connectedNow();
                                     log.info("MQTT subscribed to all {} required topics", SUBSCRIPTION_LANES.length);
                                 }
                             }
-                            public void onFailure(IMqttToken token,Throwable error) {state.disconnected();log.warn("MQTT subscriptions denied; session remains unavailable");}
+                            public void onFailure(IMqttToken token,Throwable error) {
+                                subscriptionInFlight.set(false);state.disconnected();scheduleSubscriptionRetry();
+                                log.warn("MQTT subscriptions failed; session remains unavailable, cause={}",error==null?"unknown":error.getClass().getSimpleName());
+                            }
                         },new MqttProperties());
-                    } catch (MqttException ex) {state.disconnected();log.warn("MQTT subscriptions failed: reason {}",ex.getReasonCode());}
-                }
-                public void messageArrived(String topic,MqttMessage message) {
-                    byte[] bytes=message.getPayload().clone();int qos=message.getQos();boolean retained=message.isRetained();
-                    try {inbound.execute(()->router.getObject().receive(topic,bytes,qos,retained));}
-                    catch (RejectedExecutionException ex) {log.warn("MQTT inbound queue full; durable event receives no application ACK");}
-                }
-            });
-            MqttConnectionOptions options=new MqttConnectionOptions();options.setUserName(properties.getUsername());options.setPassword(properties.getPassword().getBytes(StandardCharsets.UTF_8));
-            options.setCleanStart(true);options.setSessionExpiryInterval(0L);options.setKeepAliveInterval(10);options.setConnectionTimeout(10);
-            options.setAutomaticReconnect(true);options.setAutomaticReconnectDelay(1000,5000);options.setMaximumPacketSize(1_048_576L);
-            options.setSocketFactory(tls(properties));options.setHttpsHostnameVerificationEnabled(true);
-            running=true;
-            if(outboundStarted.compareAndSet(false,true)) outbound.scheduleWithFixedDelay(this::drainPublication,0,10,TimeUnit.MILLISECONDS);
-            client.connect(options,null,new MqttActionListener() {
-                public void onSuccess(IMqttToken token) { }
-                public void onFailure(IMqttToken token,Throwable error) {state.disconnected();log.warn("MQTT initial connection failed; scheduler will retry");}
-            });
-        } catch (MqttException ex) {running=false;throw new IllegalStateException("Cannot start MQTT client",ex);}
+        } catch (MqttException ex) {
+            subscriptionInFlight.set(false);state.disconnected();scheduleSubscriptionRetry();
+            log.warn("MQTT subscriptions failed: reason {}",ex.getReasonCode());
+        }
+    }
+
+    static boolean subscriptionAccepted(int[] reasons) {
+        if(reasons==null || reasons.length!=SUBSCRIPTION_LANES.length)return false;
+        for(int reason:reasons)if(reason<0 || reason>2)return false;
+        return true;
+    }
+    private void scheduleSubscriptionRetry() {
+        int attempt=Math.min(subscriptionFailures.incrementAndGet(),6);
+        long base=Math.min(30_000L,500L*(1L<<attempt));
+        long jitter=ThreadLocalRandom.current().nextLong(Math.max(1,base/4));
+        nextSubscriptionAttemptNanos=System.nanoTime()+TimeUnit.MILLISECONDS.toNanos(base+jitter);
     }
     public CompletableFuture<Void> publish(String topic,byte[] bytes,int qos) {
         if (!connected()) return CompletableFuture.failedFuture(new IllegalStateException("MQTT is disconnected"));
@@ -146,7 +187,7 @@ public class PahoMqttTransport implements SmartLifecycle {
         }
     }
     @Override public synchronized void stop() {
-        state.disconnected();running=false;
+        state.disconnected();running=false;subscriptionInFlight.set(false);
         publications.failPending(new IllegalStateException("MQTT transport stopped"));
         if (client!=null) {try {client.disconnectForcibly(1000L,1000L,true);client.close(true);} catch (MqttException ex) {log.debug("MQTT close: reason {}",ex.getReasonCode());}client=null;}
     }

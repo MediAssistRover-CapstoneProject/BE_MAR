@@ -23,6 +23,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
+import com.mediassistrover.backend.enums.EndpointType;
 
 @RestController
 @RequestMapping("/api/v1")
@@ -69,7 +70,12 @@ public class FacilityController {
     @PostMapping("/rooms/{id}/activate") @PreAuthorize("hasRole('ADMIN')") public RoomResponse activateRoom(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.setRoomActive(id,true,a.accountId(),RequestMetadataFactory.from(r));}
     @PostMapping("/rooms/{id}/deactivate") @PreAuthorize("hasRole('ADMIN')") public RoomResponse deactivateRoom(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.setRoomActive(id,false,a.accountId(),RequestMetadataFactory.from(r));}
 
-    @GetMapping("/endpoints") public PageResponse<EndpointResponse> endpoints(@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size){return PageResponse.from(service.listEndpoints(page(page,size,"createdAt")));}
+    @GetMapping("/endpoints") public PageResponse<EndpointResponse> endpoints(
+            @RequestParam(required=false) UUID mapId,@RequestParam(required=false) UUID roomId,
+            @RequestParam(required=false) EndpointType endpointType,@RequestParam(required=false) Boolean active,
+            @RequestParam(required=false) Boolean accessible,@RequestParam(required=false,name="q") String query,
+            @RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size){
+        return PageResponse.from(service.listEndpoints(mapId,roomId,endpointType,active,accessible,query,page(page,size,"createdAt")));}
     @GetMapping("/endpoints/{id}") public EndpointResponse endpoint(@PathVariable UUID id){return service.getEndpoint(id);}
     @PostMapping("/endpoints") @ResponseStatus(HttpStatus.CREATED) @PreAuthorize("hasRole('ADMIN')") public EndpointResponse createEndpoint(@Valid @RequestBody EndpointRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.createEndpoint(b,a.accountId(),RequestMetadataFactory.from(r));}
     @PutMapping("/endpoints/{id}") @PreAuthorize("hasRole('ADMIN')") public EndpointResponse updateEndpoint(@PathVariable UUID id,@Valid @RequestBody EndpointRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.updateEndpoint(id,b,a.accountId(),RequestMetadataFactory.from(r));}

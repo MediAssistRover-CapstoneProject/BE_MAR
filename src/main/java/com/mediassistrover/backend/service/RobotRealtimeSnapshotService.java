@@ -8,6 +8,7 @@ import com.mediassistrover.backend.mapper.RobotMapper;
 import com.mediassistrover.backend.mqtt.MqttSessionRegistry;
 import com.mediassistrover.backend.repository.*;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,7 +17,7 @@ import java.math.BigDecimal;
 import java.time.*;
 import java.util.*;
 
-@Service @RequiredArgsConstructor
+@Service @RequiredArgsConstructor @Slf4j
 public class RobotRealtimeSnapshotService {
     public record Pose(UUID locationId,UUID robotId,UUID mapId,UUID jobId,BigDecimal xM,BigDecimal yM,
                        BigDecimal yawRad,BigDecimal localizationConfidence,String frameId,String source,
@@ -57,9 +58,12 @@ public class RobotRealtimeSnapshotService {
                     value.getSource()==null?"LEGACY_LOCATION_HISTORY":value.getSource(),fresh,
                     value.getCapturedAt(),value.getReceivedAt());
         }).orElse(null);
-        return new Snapshot(now,mapper.toResponse(robot),mqttConnected,heartbeatFresh,heartbeatAge,
+        Snapshot result=new Snapshot(now,mapper.toResponse(robot),mqttConnected,heartbeatFresh,heartbeatAge,
                 registry.fresh(session),session==null?"HELLO required":session.getFailureReason(),
                 active==null?null:active.getJobId(),selected==null?null:selected.getJobStepId(),
                 selected==null?null:selected.getStepTypeSnapshot(),selected==null?null:selected.getStepCodeSnapshot(),pose);
+        log.debug("robot_snapshot robotId={} observedAt={} mqttConnected={} heartbeatFresh={} heartbeatAgeSec={} poseCapturedAt={} poseFresh={}",
+                robotId,now,mqttConnected,heartbeatFresh,heartbeatAge,pose==null?null:pose.capturedAt(),pose!=null&&pose.fresh());
+        return result;
     }
 }

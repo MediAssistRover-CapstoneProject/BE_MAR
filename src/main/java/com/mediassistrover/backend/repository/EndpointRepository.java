@@ -17,6 +17,19 @@ public interface EndpointRepository extends JpaRepository<Endpoint, UUID> {
     List<Endpoint> findByMapMapIdOrderByEndpointCodeAsc(UUID mapId);
     List<Endpoint> findByZoneZoneId(UUID zoneId);
     @Query("""
+            select e from Endpoint e where
+              (:mapId is null or e.map.mapId = :mapId)
+              and (:roomId is null or e.room.roomId = :roomId)
+              and (:endpointType is null or e.endpointType = :endpointType)
+              and (:active is null or e.active = :active)
+              and (:accessible is null or e.accessible = :accessible)
+              and (:q is null or lower(e.endpointName) like lower(concat('%', :q, '%'))
+                   or lower(e.endpointCode) like lower(concat('%', :q, '%')))
+            """)
+    Page<Endpoint> searchAdmin(@Param("mapId") UUID mapId, @Param("roomId") UUID roomId,
+            @Param("endpointType") EndpointType endpointType, @Param("active") Boolean active,
+            @Param("accessible") Boolean accessible, @Param("q") String q, Pageable pageable);
+    @Query("""
             select e from Endpoint e where e.active = true and e.publicVisible = true
               and (:mapId is null or e.map.mapId = :mapId)
               and (:roomId is null or e.room.roomId = :roomId)

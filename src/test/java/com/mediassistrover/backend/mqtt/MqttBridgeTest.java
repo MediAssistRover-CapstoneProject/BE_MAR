@@ -20,6 +20,9 @@ class MqttBridgeTest {
         assertThat(MqttTopics.parse(MqttTopics.topic(id,"map-preview")).lane()).isEqualTo("mapping/preview");
         var subscriptions=PahoMqttTransport.subscriptions();assertThat(subscriptions).hasSize(8);
         for(var s:subscriptions) { assertThat(s.isRetainAsPublished()).isTrue();assertThat(s.getRetainHandling()).isEqualTo(2); }
+        assertThat(PahoMqttTransport.subscriptionAccepted(new int[]{0,1,2,0,1,2,0,1})).isTrue();
+        assertThat(PahoMqttTransport.subscriptionAccepted(new int[]{0,1,2,0,135,2,0,1})).isFalse();
+        assertThat(PahoMqttTransport.subscriptionAccepted(new int[]{0,1,2,0})).isFalse();
     }
     @Test void publicationsAreBoundedDeduplicatedAndEvenlyPaced() {
         var q=new MqttPublishQueue();byte[] raw={1};
