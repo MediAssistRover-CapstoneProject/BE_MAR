@@ -57,7 +57,7 @@ public class PahoMqttTransport implements SmartLifecycle {
                     try {
                         client.subscribe(subscriptions(),null,new MqttActionListener() {
                             public void onSuccess(IMqttToken token) {
-                                int[] reasons=token.getReasonCodes();
+                                int[] reasons=token.getReasonCodes(); log.warn("MQTT SUBACK DIAG: codes={}, connected={}, response={}", java.util.Arrays.toString(reasons), client != null && client.isConnected(), token.getResponse() == null ? "null" : token.getResponse().getClass().getSimpleName());
                                 if (reasons==null || reasons.length!=subscriptions().length || java.util.Arrays.stream(reasons).anyMatch(code->code>=128)) {
                                     state.disconnected();log.warn("MQTT SUBACK denied a required topic; session remains unavailable");
                                 } else state.connectedNow();
