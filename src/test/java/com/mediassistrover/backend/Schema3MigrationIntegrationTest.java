@@ -38,7 +38,7 @@ class Schema3MigrationIntegrationTest extends MySqlIntegrationTest {
         Set<String> legacyCodes=allWorkflows.stream().filter(w->w.getSchemaVersion()==2)
                 .map(Workflow::getWorkflowCode).collect(java.util.stream.Collectors.toSet());
         var modernCatalog=allWorkflows.stream().filter(w->w.getSchemaVersion()==3&&!"WF_MAPPING".equals(w.getWorkflowCode())).toList();
-        assertThat(modernCatalog).hasSize(13);
+        assertThat(modernCatalog).hasSize(14);
         var navigationCandidates=modernCatalog.stream().filter(w->Set.of(
                 "WF_DYNAMIC_ENDPOINT_NAVIGATION","WF_HOSPITAL_MULTI_STOP").contains(w.getWorkflowCode())).toList();
         assertThat(navigationCandidates).extracting(Workflow::getWorkflowCode).containsExactlyInAnyOrder(

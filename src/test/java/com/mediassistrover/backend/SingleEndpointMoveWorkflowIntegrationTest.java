@@ -78,13 +78,14 @@ class SingleEndpointMoveWorkflowIntegrationTest extends MySqlIntegrationTest {
         assertThat(commands.count()).isZero();
     }
 
-    @Test void unsupportedAdapterCapabilityIsRejectedBeforeJobCreationWithClearError() {
-        Robot robot=robot(json.createArrayNode().add("INTERACT"));mqtt.getRobotIds().add(robot.getRobotId());
+    @Test void disabledMoveCapabilityIsRejectedBeforeJobCreationWithClearError() {
+        Robot robot=robot(json.createArrayNode());mqtt.getRobotIds().add(robot.getRobotId());
+        mqtt.setEnabledStepTypes(new HashSet<>(Set.of("INTERACT")));
         var body=new NavigationCreateRequest(map.getMapId(),WORKFLOW_ID,null,null,endpoint.getEndpointId(),null,
                 TargetMode.ENDPOINT,NavigationMode.STANDARD,null,1,null,50,"unsupported",json.createObjectNode());
         var created=requests.createNavigation(body,"unsupported-move",AccountPrincipal.fromAccount(account),metadata());
         assertThatThrownBy(()->requests.submit(created.request().serviceRequestId(),AccountPrincipal.fromAccount(account),metadata()))
-                .hasMessageContaining("does not advertise required workflow capabilities [MOVE]");
+                .hasMessageContaining("awaits configured MQTT dispatch");
         assertThat(jobs.count()).isZero();assertThat(commands.count()).isZero();
     }
 
