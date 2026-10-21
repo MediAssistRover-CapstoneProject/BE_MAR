@@ -63,7 +63,7 @@ class Phase13WorkflowOrchestrationIntegrationTest extends MySqlIntegrationTest {
             if(type==ServiceRequestType.ESCORT)em.persist(EscortRequest.builder().serviceRequest(request).map(em.find(FacilityMap.class,f.mapId)).destinationEndpoint(em.find(Endpoint.class,f.endpointId))
                     .targetMode(TargetMode.ENDPOINT).patientReference("patient-test").escortMode(EscortMode.GUIDED).walkingSpeedMps(new BigDecimal("0.05")).confirmationTimeoutSec(60).build());
             return execution.createForRequest(request).getJobId();});
-        f.type=StepType.EXECUTE_SENSING;f.sensing="ROBOT_HEALTH";advance();receive(f.hello(json));router.route(MqttTopics.topic(f.robotId,"heartbeat"),wire.bytes(f.heartbeat(json)),0,false);advance();
+        f.type=StepType.EXECUTE_SENSING;f.sensing="ROBOT_HEALTH";advance();receive(f.hello(json));router.route(MqttTopics.topic(f.robotId,"heartbeat"),wire.bytes(f.heartbeat(json)),0,false);advance();advance();
     }
     void advance(){tx.executeWithoutResult(s->work.request(em.find(Job.class,f.jobId)));orchestrator.advance(f.jobId);}
     void drain(int n){for(int i=0;i<n;i++)advance();}
