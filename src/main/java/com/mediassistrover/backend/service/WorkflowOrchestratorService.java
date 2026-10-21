@@ -36,6 +36,7 @@ public class WorkflowOrchestratorService {
     private final Clock clock;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     private final StepExecutionPolicy executionPolicy;
+    private final com.mediassistrover.backend.validation.WorkflowExecutionReadiness readiness;
 
     @Transactional
     public void advance(UUID jobId) {
@@ -52,6 +53,7 @@ public class WorkflowOrchestratorService {
         if (job.getStatus()==JobStatus.QUEUED) {
             if (job.getRobot()==null) return; // assign-robot will wake the same durable work
             Robot robot=robots.findByIdForUpdate(job.getRobot().getRobotId()).orElseThrow();
+            if (!readiness.transportReady(job.getWorkflow(),robot)) return;
             if (robot.getStatus()!=RobotStatus.IDLE) return;
             if (jobs.findByRobotRobotIdAndStatusIn(robot.getRobotId(),List.of(JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED))
                     .stream().anyMatch(other->!other.getJobId().equals(jobId))) return;
