@@ -21,6 +21,11 @@ public class PahoMqttTransport implements SmartLifecycle {
     private final ObjectProvider<MqttInboundRouter> router;
     private volatile MqttAsyncClient client;
     private volatile boolean running;
+    // The same eight topic filters must be approved in EMQX ACL for username mar-be.
+    private static final String[] SUBSCRIPTION_LANES = {
+            "events", "heartbeat", "presence", "map-preview",
+            "mapping/preview", "profile-acks", "mapping/control-acks", "camera/preview"
+    };
     private final MqttPublishQueue publications=new MqttPublishQueue();
     private final ScheduledExecutorService outbound=Executors.newSingleThreadScheduledExecutor(task->{Thread thread=new Thread(task,"mar-mqtt-outbound");thread.setDaemon(true);return thread;});
     private final java.util.concurrent.atomic.AtomicBoolean outboundStarted=new java.util.concurrent.atomic.AtomicBoolean();
@@ -57,10 +62,31 @@ public class PahoMqttTransport implements SmartLifecycle {
                     try {
                         client.subscribe(subscriptions(),null,new MqttActionListener() {
                             public void onSuccess(IMqttToken token) {
-                                int[] reasons=token.getReasonCodes(); log.warn("MQTT SUBACK DIAG: codes={}, connected={}, response={}", java.util.Arrays.toString(reasons), client != null && client.isConnected(), token.getResponse() == null ? "null" : token.getResponse().getClass().getSimpleName());
-                                if (reasons==null || reasons.length!=subscriptions().length || java.util.Arrays.stream(reasons).anyMatch(code->code>=128)) {
-                                    state.disconnected();log.warn("MQTT SUBACK denied a required topic; session remains unavailable");
-                                } else state.connectedNow();
+                                int[] reasons = token.getReasonCodes();
+                                boolean accepted = reasons != null && reasons.length == SUBSCRIPTION_LANES.length;
+                                log.info("MQTT SUBACK: codes={}, expectedTopics={}, socketConnected={}",
+                                        java.util.Arrays.toString(reasons), SUBSCRIPTION_LANES.length,
+                                        client != null && client.isConnected());
+                                if (reasons == null || reasons.length != SUBSCRIPTION_LANES.length) {
+                                    log.warn("MQTT SUBACK unexpected response length: actual={}, expected={}",
+                                            reasons == null ? "null" : reasons.length, SUBSCRIPTION_LANES.length);
+                                } else {
+                                    for (int i = 0; i < SUBSCRIPTION_LANES.length; i++) {
+                                        int code = reasons[i];
+                                        if (code < 0 || code > 2) {
+                                            accepted = false;
+                                            log.warn("MQTT SUBACK rejected topic=mar/robots/+/{}, code={}",
+                                                    SUBSCRIPTION_LANES[i], code);
+                                        }
+                                    }
+                                }
+                                if (!accepted || client == null || !client.isConnected()) {
+                                    state.disconnected();
+                                    log.warn("MQTT required subscriptions not ready; session remains unavailable");
+                                } else {
+                                    state.connectedNow();
+                                    log.info("MQTT subscribed to all {} required topics", SUBSCRIPTION_LANES.length);
+                                }
                             }
                             public void onFailure(IMqttToken token,Throwable error) {state.disconnected();log.warn("MQTT subscriptions denied; session remains unavailable");}
                         },new MqttProperties());
@@ -93,10 +119,10 @@ public class PahoMqttTransport implements SmartLifecycle {
     }
     /** Preserve the broker's retain flag; ignore stored retained messages when subscribing. */
     public static MqttSubscription[] subscriptions() {
-        String[] lanes={"events","heartbeat","presence","map-preview","mapping/preview","profile-acks","mapping/control-acks","camera/preview"};
-        MqttSubscription[] subscriptions=new MqttSubscription[lanes.length];
-        for(int i=0;i<lanes.length;i++) {
-            var value=new MqttSubscription("mar/robots/+/"+lanes[i],java.util.Set.of("heartbeat","map-preview","mapping/preview","camera/preview").contains(lanes[i])?0:1);
+        MqttSubscription[] subscriptions=new MqttSubscription[SUBSCRIPTION_LANES.length];
+        for(int i=0;i<SUBSCRIPTION_LANES.length;i++) {
+            String lane=SUBSCRIPTION_LANES[i];
+            var value=new MqttSubscription("mar/robots/+/"+lane,java.util.Set.of("heartbeat","map-preview","mapping/preview","camera/preview").contains(lane)?0:1);
             value.setRetainAsPublished(true);value.setRetainHandling(2);subscriptions[i]=value;
         }
         return subscriptions;
