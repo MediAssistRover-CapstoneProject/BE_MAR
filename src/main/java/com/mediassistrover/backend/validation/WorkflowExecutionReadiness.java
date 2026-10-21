@@ -24,7 +24,10 @@ public class WorkflowExecutionReadiness {
     }
     /** A Pi-owned workflow remains queued until its selected robot has completed a fresh handshake. */
     public boolean transportReady(Workflow workflow, Robot robot) {
-        if (workflow.getSchemaVersion()!=3 || !requiresMqtt(workflow)) return true;
+        // Persisted production Jobs can only originate from a published workflow. Tests and
+        // validation tooling also execute synthetic DRAFT graphs directly; those must retain
+        // their existing orchestration lifecycle so the transport itself remains the dispatch gate.
+        if (workflow.getSchemaVersion()!=3 || workflow.getStatus()!=WorkflowStatus.PUBLISHED || !requiresMqtt(workflow)) return true;
         RobotMqttSession session=sessions.findById(robot.getRobotId()).orElse(null);
         return sessionRegistry.fresh(session);
     }
