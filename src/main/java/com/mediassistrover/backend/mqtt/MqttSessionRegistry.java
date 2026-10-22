@@ -8,7 +8,6 @@ import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.service.OrchestrationWorkService;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
@@ -16,7 +15,7 @@ import java.time.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
-@Service @RequiredArgsConstructor @Slf4j
+@Service @RequiredArgsConstructor
 public class MqttSessionRegistry {
     private final RobotMqttSessionRepository sessions;
     private final RobotRepository robots;
@@ -38,8 +37,9 @@ public class MqttSessionRegistry {
     private static final List<JobStatus> OCCUPIED=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
 
     public boolean owned(RobotMqttSession session) {
-        return session!=null && !session.isClosed() && session.isHandshakeAccepted() && connection.connected()
-                && connection.instanceId().equals(session.getOwnerInstanceId()) && connection.connectionId().equals(session.getConnectionId());
+        UUID currentConnection=connection.connectionId();
+        return currentConnection!=null && session!=null && !session.isClosed() && session.isHandshakeAccepted()
+                && connection.instanceId().equals(session.getOwnerInstanceId()) && currentConnection.equals(session.getConnectionId());
     }
     public RobotMqttSession requireCurrent(UUID robot,UUID transport) {
         RobotMqttSession session=sessions.lock(robot).orElseThrow(()->new MqttSessionUnavailableException("MQTT HELLO required"));
@@ -60,7 +60,8 @@ public class MqttSessionRegistry {
 
     /** Processor acquired active Job locks before this call; always lock Robot before Session. */
     public RobotMqttSession hello(MqttWire.Envelope e,List<Job> active) {
-        if (!connection.connected()) throw new MqttSessionUnavailableException("MQTT subscription is not ready");
+        UUID currentConnection=connection.connectionId();
+        if (currentConnection==null) throw new MqttSessionUnavailableException("MQTT subscription is not ready");
         Robot robot=robots.findByIdForUpdate(e.robotId()).orElseThrow(()->new BusinessRuleException("Unknown MQTT robot"));
         RobotMqttSession prior=sessions.lock(e.robotId()).orElse(null);
         boolean mappingProcessChanged=prior!=null && !prior.getProducerSessionId().equals(e.producerSessionId());
@@ -93,7 +94,7 @@ public class MqttSessionRegistry {
         for (Job job:active) if (!job.isBeOrchestrated() || job.getStatus()==JobStatus.RECOVERY_REQUIRED) {reconciled=false;reason="Robot is held by a legacy or recovery Job";}
         if (!reconciled) for (Job job:active) safety.recovery(job,reason);
         session.setRobotId(e.robotId());session.setTransportSessionId(e.transportSessionId());session.setProducerSessionId(e.producerSessionId());
-        session.setOwnerInstanceId(connection.instanceId());session.setConnectionId(connection.connectionId());
+        session.setOwnerInstanceId(connection.instanceId());session.setConnectionId(currentConnection);
         session.setHandshakeAccepted(true);session.setHandshakeAcked(sameTransport && session.isHandshakeAcked());session.setClosed(false);
         if(!mapping.telemetryMatches(e.robotId(),hello.path("mappingSession"))
                 || active.stream().anyMatch(j->mapping.open(j.getJobId())) && (!hello.path("mappingEnabled").asBoolean()
@@ -104,6 +105,8 @@ public class MqttSessionRegistry {
         session.setHelloJson(hello.deepCopy());session.setHelloReceivedAt(Instant.now(clock));
         if (!sameTransport) {session.setLastHeartbeatAt(null);session.setHeartbeatJson(null);}
         robot.setRuntimeVersion(hello.path("runtimeVersion").asText());robot.setProtocolVersion(1);robot.setCapabilitiesJson(hello.path("capabilities").deepCopy());
+        if (!currentConnection.equals(connection.connectionId()))
+            throw new MqttSessionUnavailableException("MQTT connection changed during HELLO; retry on the current connection");
         sessions.save(session);
         return session;
     }
@@ -158,22 +161,10 @@ public class MqttSessionRegistry {
         if(pose.path("fresh").asBoolean())validateFreshMapPose(pose,map,
                 mappingOpen?p.path("mappingSession").path("session_id").asText():null);
         if (map!=null && !mappingOpen && active.stream().noneMatch(j->mapping.open(j.getJobId())) && pose.path("fresh").asBoolean() && !locations.existsById(e.messageId())) {
-            JsonNode value=pose.path("value");
-            Instant capturedAt=e.time().minusMillis((long)(pose.path("age_sec").asDouble()*1000));
-            RobotLocationHistory latest=locations.findFirstByRobotRobotIdOrderByCapturedAtDesc(e.robotId()).orElse(null);
-            // Heartbeats can arrive in order while their independently captured TF samples do not.
-            // Never append an older pose that could later be selected as current by a consumer.
-            if(latest==null || capturedAt.isAfter(latest.getCapturedAt())) {
-                locations.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map)
-                        .frameId("map").source("MQTT_HEARTBEAT_MAP_POSE")
-                        .xM(value.path("x_m").decimalValue()).yM(value.path("y_m").decimalValue()).yawRad(value.path("yaw_rad").decimalValue()).fresh(true)
-                        .capturedAt(capturedAt).receivedAt(now).build());
-                log.debug("robot_pose accepted robotId={} messageId={} capturedAt={} receivedAt={} ageMs={}",
-                        e.robotId(),e.messageId(),capturedAt,now,Duration.between(capturedAt,now).toMillis());
-            } else {
-                log.info("robot_pose dropped_out_of_order robotId={} messageId={} capturedAt={} latestCapturedAt={}",
-                        e.robotId(),e.messageId(),capturedAt,latest.getCapturedAt());
-            }
+            JsonNode value=pose.path("value");locations.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map)
+                    .frameId("map").source("MQTT_HEARTBEAT_MAP_POSE")
+                    .xM(value.path("x_m").decimalValue()).yM(value.path("y_m").decimalValue()).yawRad(value.path("yaw_rad").decimalValue()).fresh(true)
+                    .capturedAt(e.time().minusMillis((long)(pose.path("age_sec").asDouble()*1000))).receivedAt(now).build());
         }
         ObjectNode heartbeat=(ObjectNode)p.deepCopy();heartbeat.put("occurredAt",e.occurredAt());session.setHeartbeatJson(heartbeat);session.setLastHeartbeatAt(now);
         if (next==RobotStatus.ERROR) session.setDispatchReady(false);

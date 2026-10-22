@@ -36,9 +36,9 @@ public class MappingControlService {
     private record ClientCursor(long sequence,Instant seenAt) { }
     private final Map<ClientKey,ClientCursor> clientOrder=new ConcurrentHashMap<>();
     public record Request(@NotNull UUID mappingSessionId,
-            @NotNull @DecimalMin("0.0") @DecimalMax("0.10") Double linearX,
-            @NotNull @DecimalMin("-0.3") @DecimalMax("0.3") Double angularZ,
-            @Min(100) @Max(600) int durationMs,
+            @NotNull @DecimalMin("-0.15") @DecimalMax("0.15") Double linearX,
+            @NotNull @DecimalMin("-0.5") @DecimalMax("0.5") Double angularZ,
+            @Min(100) @Max(900) int durationMs,
             UUID controlSessionId,@Min(1) Long controlSequence,Instant requestedAt) {
         public Request(UUID mappingSessionId,Double linearX,Double angularZ,int durationMs) {
             this(mappingSessionId,linearX,angularZ,durationMs,null,null,null);
@@ -56,7 +56,7 @@ public class MappingControlService {
             throw new BusinessRuleException("Mapping session is closed or does not belong to Job");
         boolean stop=input.linearX()!=null && input.angularZ()!=null && input.linearX()==0 && input.angularZ()==0;
         if(input.linearX()==null || input.angularZ()==null || !Double.isFinite(input.linearX()) || !Double.isFinite(input.angularZ())
-                || input.linearX()<0 || input.linearX()>.10 || Math.abs(input.angularZ())>.3 || input.durationMs()<100 || input.durationMs()>600)
+                || Math.abs(input.linearX())>.15 || Math.abs(input.angularZ())>.5 || input.durationMs()<100 || input.durationMs()>900)
             throw new BusinessRuleException("Invalid mapping velocity or duration");
         JobStep selected=job.getSelectedJobStep();
         if(!stop && (job.getStatus()!=JobStatus.RUNNING || job.getCancelRequestedAt()!=null || !"MAPPING".equals(session.getState())

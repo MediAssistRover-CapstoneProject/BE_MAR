@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.io.*;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.file.*;
 import java.security.MessageDigest;
 import java.util.*;
@@ -78,12 +79,14 @@ public class MapBundleService {
             String hash=fingerprint(files.get("map.yaml"),files.get("map.pgm"));
             if(!hash.equalsIgnoreCase(map.getAssetHash()))throw new BusinessRuleException("Map asset hash differs from catalog");
             var meta=reader.inspectMap(files.get("map.yaml"),files.get("map.pgm"));
-            if(Math.abs(meta.path("resolution_m_per_pixel").asDouble()-map.getResolutionMPerPixel().doubleValue())>1e-6
-                    ||Math.abs(meta.path("width_m").asDouble()-map.getWidthM().doubleValue())>1e-5
-                    ||Math.abs(meta.path("height_m").asDouble()-map.getHeightM().doubleValue())>1e-5
-                    ||Math.abs(meta.path("origin_x_m").asDouble()-map.getOriginXM().doubleValue())>1e-6
-                    ||Math.abs(meta.path("origin_y_m").asDouble()-map.getOriginYM().doubleValue())>1e-6
-                    ||Math.abs(meta.path("origin_yaw_rad").asDouble()-map.getOriginYawRad().doubleValue())>1e-6)
+            // MySQL DECIMAL columns round geometry on write. Compare at that stored precision;
+            // keep the original, hash-verified file geometry in the downloaded metadata.
+            if(!catalogNumber(meta,"resolution_m_per_pixel",map.getResolutionMPerPixel(),6)
+                    ||!catalogNumber(meta,"width_m",map.getWidthM(),4)
+                    ||!catalogNumber(meta,"height_m",map.getHeightM(),4)
+                    ||!catalogNumber(meta,"origin_x_m",map.getOriginXM(),4)
+                    ||!catalogNumber(meta,"origin_y_m",map.getOriginYM(),4)
+                    ||!catalogNumber(meta,"origin_yaw_rad",map.getOriginYawRad(),6))
                 throw new BusinessRuleException("Map dimensions differ from catalog");
             meta.put("map_id",id.toString()).put("asset_hash",hash).put("frame_id",map.getFrameId());
             var output=new ByteArrayOutputStream();
@@ -93,6 +96,9 @@ public class MapBundleService {
             }
             return output.toByteArray();
         } catch(IOException e){throw new BusinessRuleException("Map files are not available");}
+    }
+    private boolean catalogNumber(com.fasterxml.jackson.databind.JsonNode meta,String field,BigDecimal stored,int scale) {
+        return meta.path(field).decimalValue().setScale(scale,RoundingMode.HALF_UP).compareTo(stored)==0;
     }
     private byte[] read(Path p,int max) throws IOException {
         if(!Files.isRegularFile(p,LinkOption.NOFOLLOW_LINKS))throw new BusinessRuleException("Map file is missing");

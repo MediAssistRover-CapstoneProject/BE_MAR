@@ -6,7 +6,6 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 import java.util.UUID;
-import com.mediassistrover.backend.enums.EndpointType;
 
 public interface FacilityService {
     HospitalInformationResponse createHospitalInformation(HospitalInformationRequest request, UUID actorId, RequestMetadata metadata);
@@ -45,8 +44,7 @@ public interface FacilityService {
     EndpointResponse createEndpoint(EndpointRequest request, UUID actorId, RequestMetadata metadata);
     EndpointResponse updateEndpoint(UUID id, EndpointRequest request, UUID actorId, RequestMetadata metadata);
     EndpointResponse setEndpointActive(UUID id, boolean active, UUID actorId, RequestMetadata metadata);
-    Page<EndpointResponse> listEndpoints(UUID mapId, UUID roomId, EndpointType endpointType,
-                                         Boolean active, Boolean accessible, String query, Pageable pageable);
+    Page<EndpointResponse> listEndpoints(Pageable pageable);
     EndpointResponse getEndpoint(UUID id);
 
     EndpointGroupResponse createEndpointGroup(EndpointGroupRequest request, UUID actorId, RequestMetadata metadata);

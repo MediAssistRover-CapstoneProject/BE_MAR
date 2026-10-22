@@ -71,7 +71,7 @@ class MappingLiveTest {
     }
     @Test void rejectsDisconnectedForeignSessionAndOutOfRangeVelocity() {
         assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(UUID.randomUUID(),.05,0.,400))).hasMessageContaining("does not belong");
-        for(double speed:new double[]{-.01,.11,Double.NaN,Double.POSITIVE_INFINITY})
+        for(double speed:new double[]{-.16,.16,Double.NaN,Double.POSITIVE_INFINITY})
             assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,speed,0.,400))).hasMessageContaining("Invalid");
         when(registry.fresh(link)).thenReturn(false);
         assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,.05,0.,400))).hasMessageContaining("not ready");
@@ -89,6 +89,15 @@ class MappingLiveTest {
         assertThat(published.path("durationMs").asInt()).isEqualTo(600);
         assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,.08,0.,4000)))
                 .hasMessageContaining("Invalid");
+    }
+    @Test void mecanumReverseAndFasterTurnAreSignedAndHaveBoundedLease() {
+        controls.send(jobId,new MappingControlService.Request(sid,-.10,-.45,900));
+        contracts.live(published);
+        assertThat(published.path("linearX").asDouble()).isEqualTo(-.1);
+        assertThat(published.path("angularZ").asDouble()).isEqualTo(-.45);
+        assertThat(published.path("durationMs").asInt()).isEqualTo(900);
+        assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,0.,.51,900))).hasMessageContaining("Invalid");
+        assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,0.,.45,901))).hasMessageContaining("Invalid");
     }
     @Test void stopSequencePreventsAnOlderHttpMoveArrivingAfterStop() {
         UUID ui=UUID.randomUUID();
@@ -126,6 +135,19 @@ class MappingLiveTest {
         payload.put("width",5);assertThatThrownBy(()->previews.acceptCamera(robot,payload)).hasMessageContaining("dimensions");
         payload.put("width",4).put("captured_at",now.minusSeconds(20).toString()).put("revision",2);previews.acceptCamera(robot,payload);
         assertThat(previews.cameraImage(sid).revision()).isEqualTo(1);
+    }
+    @Test void metadataKeepsPngGeometryAndPoseWithoutSendingRasterOrLeakingAcrossSessions() throws Exception {
+        var payload=map(new byte[]{0,100,-1,50}).put("resolution",.025).put("frame_id","map");
+        payload.putArray("origin").add(-2.).add(-1.).add(.3);
+        payload.set("pose",wire.object().put("fresh",true).put("age_sec",.1).set("value",wire.object().put("x_m",0).put("y_m",0).put("yaw_rad",.5)));
+        previews.accept(robot,payload);
+        var meta=previews.metadata(sid);
+        assertThat(meta.has("data")).isFalse();assertThat(meta.path("width_m").asDouble()).isEqualTo(.05);
+        assertThat(meta.path("height_m").asDouble()).isEqualTo(.05);
+        assertThat(meta.path("pose")).isEqualTo(payload.path("pose"));assertThat(meta.path("origin")).isEqualTo(payload.path("origin"));
+        assertThat(previews.latest(sid).has("data")).isTrue();
+        assertThat(previews.metadata(UUID.randomUUID())).isNull();
+        session.setPotentiallyOpen(false);assertThat(previews.metadata(sid)).isNull();
     }
     @Test void actualPythonPreviewMatchesJavaSchemaAndRendersPng() throws Exception {
         String fixture=System.getenv("MAR_PI_PREVIEW_FIXTURE");

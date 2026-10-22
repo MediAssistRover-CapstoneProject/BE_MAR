@@ -1,6 +1,7 @@
 package com.mediassistrover.backend.mapping;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mediassistrover.backend.repository.MappingSessionRepository;
 import com.mediassistrover.backend.exception.BusinessRuleException;
 import lombok.RequiredArgsConstructor;
@@ -83,6 +84,14 @@ public class MappingPreviewService {
         return frame!=null && frame.sessionId().equals(sessionId) && fresh(frame.captured())?frame:null;
     }
     public JsonNode latest(UUID sessionId) {Frame frame=frame(sessionId);return frame==null?null:frame.data().deepCopy();}
+    /** Geometry and pose from the same revision as the PNG, without transferring the occupancy grid. */
+    public JsonNode metadata(UUID sessionId) {
+        Frame frame=frame(sessionId);if(frame==null)return null;
+        ObjectNode data=(ObjectNode)frame.data().deepCopy();data.remove("data");
+        double resolution=data.path("resolution").asDouble();
+        data.put("width_m",data.path("width").asInt()*resolution).put("height_m",data.path("height").asInt()*resolution);
+        return data;
+    }
     public Picture mapImage(UUID sessionId) {Frame frame=frame(sessionId);return frame==null?null:new Picture(sessionId,frame.captured(),frame.revision(),frame.png());}
     public Picture cameraImage(UUID sessionId) {
         var session=sessions.findById(sessionId).orElse(null);if(session==null || !session.isPotentiallyOpen())return null;

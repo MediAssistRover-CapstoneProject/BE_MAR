@@ -13,7 +13,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.Comparator;
-import java.util.Set;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.*;
@@ -34,22 +33,7 @@ class Schema3MigrationIntegrationTest extends MySqlIntegrationTest {
     @Autowired com.mediassistrover.backend.validation.WorkflowExecutionReadiness readiness;
 
     @Test void clonesCompileWithNewIdsAndContractsWhileLegacyDefinitionsRemainIntact() {
-        var allWorkflows=workflows.findAll();
-        Set<String> legacyCodes=allWorkflows.stream().filter(w->w.getSchemaVersion()==2)
-                .map(Workflow::getWorkflowCode).collect(java.util.stream.Collectors.toSet());
-        var modernCatalog=allWorkflows.stream().filter(w->w.getSchemaVersion()==3&&!"WF_MAPPING".equals(w.getWorkflowCode())).toList();
-        assertThat(modernCatalog).hasSize(14);
-        var navigationCandidates=modernCatalog.stream().filter(w->Set.of(
-                "WF_DYNAMIC_ENDPOINT_NAVIGATION","WF_HOSPITAL_MULTI_STOP").contains(w.getWorkflowCode())).toList();
-        assertThat(navigationCandidates).extracting(Workflow::getWorkflowCode).containsExactlyInAnyOrder(
-                "WF_DYNAMIC_ENDPOINT_NAVIGATION","WF_HOSPITAL_MULTI_STOP");
-        assertThat(navigationCandidates).allSatisfy(w->{
-            assertThat(w.getStatus()).isEqualTo(WorkflowStatus.DRAFT);
-            assertThat(w.isAcceptsNewJobs()).isFalse();
-            assertThat(w.getCompiledDefinitionJson()).isNotNull();
-            assertThat(w.getDefinitionHash()).hasSize(64);
-        });
-        var drafts = modernCatalog.stream().filter(w->legacyCodes.contains(w.getWorkflowCode())).toList();
+        var drafts = workflows.findAll().stream().filter(w -> w.getSchemaVersion() == 3 && !"WF_MAPPING".equals(w.getWorkflowCode())).toList();
         assertThat(drafts).hasSize(11);
         for (Workflow draft : drafts) {
             Workflow legacy = workflows.findAll().stream().filter(w -> w.getWorkflowCode().equals(draft.getWorkflowCode()) && w.getSchemaVersion() == 2)

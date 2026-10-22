@@ -21,6 +21,8 @@ class MapBundleIntegrationTest extends MySqlIntegrationTest {
     @Autowired MockMvc mvc;@Autowired ObjectMapper json;
     @Autowired FloorRepository floors;@Autowired AccountRepository accounts;@Autowired HospitalInformationRepository hospitals;
     @Autowired MappingProperties properties;
+    @Autowired jakarta.persistence.EntityManager entities;
+    @Autowired FacilityMapRepository maps;
     @TempDir Path directory;
     byte[] yaml="image: map.pgm\nmode: trinary\nresolution: 0.5\norigin: [0.0, 0.0, 0.0]\nnegate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.25\n".getBytes();
     byte[] pgm=new byte[]{'P','5','\n','2',' ','2','\n','2','5','5','\n',0,(byte)254,(byte)254,0};
@@ -62,5 +64,48 @@ class MapBundleIntegrationTest extends MySqlIntegrationTest {
     }
     @Test @WithMockUser(roles="DEVICE") void downloadRequiresActualDeviceIdentity() throws Exception {
         mvc.perform(get("/api/v1/pi/maps/{id}/bundle",UUID.randomUUID())).andExpect(status().isForbidden());
+    }
+    @Test @Transactional @WithMockUser(roles="ADMIN") void downloadsRealScanGeometryAfterDatabaseRounding() throws Exception {
+        String old=properties.getStorageDir();properties.setStorageDir(directory.toString());
+        try {
+            byte[] preciseYaml=new String(yaml).replace("resolution: 0.5","resolution: 0.02500000037252903")
+                .replace("origin: [0.0, 0.0, 0.0]","origin: [-3.7304232240790096, -1.9355943845186525, 0.123456789]").getBytes();
+            var imported=mvc.perform(multipart("/api/v1/maps/import")
+                .file(new MockMultipartFile("yaml",preciseYaml)).file(new MockMultipartFile("pgm",pgm))
+                .param("floorId",floor().toString()).param("mapCode","ROUNDED_SCAN").param("mapName","Precise scan"))
+                .andExpect(status().isCreated()).andReturn();
+            UUID id=UUID.fromString(json.readTree(imported.getResponse().getContentAsByteArray()).path("mapId").asText());
+            entities.flush();entities.clear();
+            assertThat(maps.findById(id).orElseThrow().getOriginXM()).isEqualByComparingTo("-3.7304");
+            byte[] zip=mvc.perform(get("/api/v1/pi/maps/{id}/bundle",id).accept("application/zip"))
+                .andExpect(status().isOk()).andExpect(content().contentType("application/zip"))
+                .andExpect(header().string("Content-Disposition",org.hamcrest.Matchers.containsString("attachment;")))
+                .andReturn().getResponse().getContentAsByteArray();
+            Map<String,byte[]> files=new HashMap<>();
+            try(var input=new java.util.zip.ZipInputStream(new java.io.ByteArrayInputStream(zip))) {
+                java.util.zip.ZipEntry entry;while((entry=input.getNextEntry())!=null)files.put(entry.getName(),input.readAllBytes());
+            }
+            assertThat(files.get("map.yaml")).isEqualTo(preciseYaml);
+            assertThat(json.readTree(files.get("metadata.json")).path("origin_x_m").asDouble()).isEqualTo(-3.7304232240790096);
+            maps.findById(id).orElseThrow().setOriginXM(new java.math.BigDecimal("-3.7404"));
+            entities.flush();entities.clear();
+            mvc.perform(get("/api/v1/pi/maps/{id}/bundle",id).accept("application/zip"))
+                .andExpect(status().isUnprocessableEntity()).andExpect(content().contentType("application/json"))
+                .andExpect(jsonPath("$.message").value("Map dimensions differ from catalog"));
+        } finally {properties.setStorageDir(old);}
+    }
+    @Test @WithMockUser(roles="ADMIN") void zipRequestReturnsJsonForMissingMap() throws Exception {
+        mvc.perform(get("/api/v1/pi/maps/{id}/bundle",UUID.randomUUID()).accept("application/zip"))
+            .andExpect(status().isNotFound()).andExpect(content().contentType("application/json"))
+            .andExpect(jsonPath("$.error").value("RESOURCE_NOT_FOUND"));
+    }
+    @Test void bundleStillRequiresAuthentication() throws Exception {
+        mvc.perform(get("/api/v1/pi/maps/{id}/bundle",UUID.randomUUID()).accept("application/zip"))
+            .andExpect(status().isUnauthorized());
+    }
+    @Test void internalErrorDispatchDoesNotBecomeAnAuthenticationFailure() throws Exception {
+        mvc.perform(get("/error").with(request->{request.setDispatcherType(jakarta.servlet.DispatcherType.ERROR);return request;})
+                .requestAttr(jakarta.servlet.RequestDispatcher.ERROR_STATUS_CODE,500))
+            .andExpect(status().isInternalServerError());
     }
 }

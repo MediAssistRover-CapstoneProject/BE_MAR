@@ -89,19 +89,6 @@ class FacilityIntegrationTest extends MySqlIntegrationTest {
                 .andExpect(jsonPath("$.error").value("BUSINESS_RULE_VIOLATION"));
 
         UUID publicEndpointId = createEndpoint(mapId);
-        mockMvc.perform(get("/api/v1/endpoints").header("Authorization", bearer(adminToken))
-                        .param("mapId", mapId.toString()).param("active", "true")
-                        .param("accessible", "true").param("q", "EP-1"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(1))
-                .andExpect(jsonPath("$.content[0].endpointId").value(publicEndpointId.toString()))
-                .andExpect(jsonPath("$.content[0].mapId").value(mapId.toString()))
-                .andExpect(jsonPath("$.content[0].xM").value(1))
-                .andExpect(jsonPath("$.content[0].yM").value(2))
-                .andExpect(jsonPath("$.content[0].active").value(true))
-                .andExpect(jsonPath("$.content[0].accessible").value(true));
-        mockMvc.perform(get("/api/v1/endpoints").header("Authorization", bearer(adminToken))
-                        .param("mapId", mapId.toString()).param("active", "false"))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(0));
         mockMvc.perform(post("/api/v1/endpoint-group-members").header("Authorization", bearer(adminToken))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"endpointGroupId\":\"%s\",\"endpointId\":\"%s\",\"sequenceNo\":1,\"active\":true}"

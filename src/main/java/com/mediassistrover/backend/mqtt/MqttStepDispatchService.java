@@ -80,11 +80,8 @@ public class MqttStepDispatchService {
         if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step) && !session.getHelloJson().path("mappingEnabled").asBoolean())
             throw new BusinessRuleException("Pi does not enable mapping");
         if (session.getHelloJson().path("simulation").asBoolean() && !properties.isAllowSimulation()) throw new BusinessRuleException("Simulation dispatch is disabled");
-        Set<String> enabledStepTypes=new LinkedHashSet<>();
-        session.getHelloJson().path("enabledStepTypes").forEach(type->enabledStepTypes.add(type.asText()));
-        if (!enabledStepTypes.contains(step.getStepTypeSnapshot()))
-            throw new BusinessRuleException("Pi does not enable selected StepType "+step.getStepTypeSnapshot()
-                    +"; enabledStepTypes="+enabledStepTypes);
+        boolean enabled=false;for (var type:session.getHelloJson().path("enabledStepTypes")) if (step.getStepTypeSnapshot().equals(type.asText())) enabled=true;
+        if (!enabled) throw new BusinessRuleException("Pi does not enable selected StepType");
         if ("MOVE".equals(step.getStepTypeSnapshot()) && (job.getMap()==null || job.getRobot().getCurrentMap()==null
                 || !job.getMap().getMapId().equals(job.getRobot().getCurrentMap().getMapId()) || job.getMap().getAssetHash()==null
                 || !job.getMap().getAssetHash().equalsIgnoreCase(Objects.toString(job.getRobot().getMapAssetHash(),""))))

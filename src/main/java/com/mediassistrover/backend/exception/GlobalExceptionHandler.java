@@ -134,7 +134,7 @@ public class GlobalExceptionHandler {
             HttpServletRequest request,
             List<ApiErrorResponse.FieldViolation> violations
     ) {
-        return ResponseEntity.status(status).body(new ApiErrorResponse(
+        return ResponseEntity.status(status).contentType(org.springframework.http.MediaType.APPLICATION_JSON).body(new ApiErrorResponse(
                 Instant.now(clock),
                 status.value(),
                 code,

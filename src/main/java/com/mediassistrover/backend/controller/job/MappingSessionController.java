@@ -24,6 +24,7 @@ public class MappingSessionController {
     private final MappingPreviewService previews;
     private final MappingControlService controls;
     private final ObjectMapper json;
+    private final com.mediassistrover.backend.repository.RobotMqttSessionRepository links;
     private MappingSession session(UUID jobId,AccountPrincipal actor) {
         snapshots.snapshot(jobId,actor);
         return sessions.findByJobId(jobId).orElseThrow(()->new ResourceNotFoundException("Job has no mapping session"));
@@ -32,7 +33,13 @@ public class MappingSessionController {
         var job=snapshots.snapshot(jobId,actor).job();
         var s=sessions.findByJobId(jobId).orElseThrow(()->new ResourceNotFoundException("Job has no mapping session"));
         var result=json.createObjectNode().put("mapping_session_id",s.getSessionId().toString()).put("artifact_id",s.getArtifactId().toString())
-                .put("state",s.getState()).put("job_status",job.status().name()).put("potentially_open",s.isPotentiallyOpen());if(includePreview)result.set("preview",previews.latest(s.getSessionId()));return result;
+                .put("state",s.getState()).put("job_status",job.status().name()).put("potentially_open",s.isPotentiallyOpen());
+        result.set("preview",includePreview?previews.latest(s.getSessionId()):previews.metadata(s.getSessionId()));
+        links.findById(s.getRobotId()).ifPresent(link->{
+            result.put("motionObservedAt",link.getLastHeartbeatAt()==null?null:link.getLastHeartbeatAt().toString());
+            if(link.getHeartbeatJson()!=null)result.set("motionTelemetry",link.getHeartbeatJson().path("telemetry"));
+        });
+        return result;
     }
     @PostMapping("/{jobId}/mapping-control") @PreAuthorize("hasRole('ADMIN')") @ResponseStatus(HttpStatus.ACCEPTED)
     @Operation(summary="Manual mapping pulse; zero velocities stop. HTTP 202 does not prove robot movement.")

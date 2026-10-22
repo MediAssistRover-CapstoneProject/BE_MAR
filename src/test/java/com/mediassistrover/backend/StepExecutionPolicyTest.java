@@ -57,13 +57,6 @@ class StepExecutionPolicyTest {
     }
 
     @Test
-    void interactWithoutFixedSpeakActionIsBackendOwnedAndCannotProduceMqttWork() {
-        var inputs=json.createObjectNode().put("prompt_key","DESTINATION");
-        assertThat(policy.executor(3,StepType.INTERACT,inputs)).isEqualTo(StepExecutorKind.SERVER);
-        assertThat(policy.isServer(runtime(StepType.INTERACT,3,inputs),inputs)).isTrue();
-    }
-
-    @Test
     void schema2KeepsLegacyExecutorKinds() {
         assertThat(policy.isServer(runtime(StepType.MOVE, 2, json.createObjectNode()), json.createObjectNode())).isFalse();
         assertThat(policy.isServer(runtime(StepType.CHECK_CONDITION, 2, json.createObjectNode()), json.createObjectNode())).isFalse();

@@ -398,6 +398,29 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
         assertThat(published).filteredOn(p->p.topic.endsWith("/commands")).hasSize(1);
     }
 
+    @Test void genericRecoveryRequiresANewHelloInsteadOfKeepingTheOldDispatchBlockForever() {
+        fixture(StepType.MOVE,null);hello();heartbeat();
+        var principal=tx.execute(status->com.mediassistrover.backend.security.AccountPrincipal.fromAccount(entityManager.find(Account.class,fixture.accountId)));
+        tx.executeWithoutResult(status->{
+            var job=jobs.findById(fixture.jobId).orElseThrow();job.setStatus(JobStatus.RECOVERY_REQUIRED);
+            job.getRobot().setStatus(RobotStatus.ERROR);
+            var session=sessionRows.findById(fixture.robotId).orElseThrow();session.setDispatchReady(false);
+            session.setFailureReason("Robot is held by a legacy or recovery Job");
+        });
+        var request=new com.mediassistrover.backend.dto.job.request.JobRequests.ReconcileJobRequest("Close unissued operation",
+                com.mediassistrover.backend.dto.job.request.JobRequests.ReconcileOutcome.CONFIRM_CANCELLED);
+        jobService.reconcile(fixture.jobId,request,principal,new RequestMetadata("127.0.0.1","test","generic-recovery"));
+        assertThat(currentJob().getStatus()).isEqualTo(JobStatus.CANCELLED);
+        var closed=sessionRows.findById(fixture.robotId).orElseThrow();
+        assertThat(closed.isClosed()).isTrue();assertThat(sessions.owned(closed)).isFalse();
+        assertThat(closed.isDispatchReady()).isFalse();
+        assertThat(commands.findByJobIdOrderByCreatedAt(fixture.jobId)).isEmpty();
+        fixture.transportId=UUID.randomUUID();hello();heartbeat();
+        var refreshed=sessionRows.findById(fixture.robotId).orElseThrow();
+        assertThat(sessions.fresh(refreshed)).isTrue();assertThat(refreshed.getFailureReason()).isNull();
+        assertThat(currentJob().getStatus()).isEqualTo(JobStatus.CANCELLED);
+    }
+
     @Test void adminAssignmentAndGenericReconcileCannotBypassMqttTransportOrStopChecks() {
         fixture(StepType.MOVE,null);
         var principal=tx.execute(status->com.mediassistrover.backend.security.AccountPrincipal.fromAccount(entityManager.find(Account.class,fixture.accountId)));

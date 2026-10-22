@@ -33,6 +33,8 @@ public class MapBundleController {
         if(!(principal instanceof DevicePrincipal) && org.springframework.security.core.context.SecurityContextHolder.getContext()
             .getAuthentication().getAuthorities().stream().noneMatch(a->a.getAuthority().equals("ROLE_ADMIN")))
             throw new org.springframework.security.access.AccessDeniedException("Device identity is required");
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(maps.bundle(mapId,principal instanceof DevicePrincipal p?p:null));
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType("application/zip"))
+            .header(HttpHeaders.CONTENT_DISPOSITION,ContentDisposition.attachment().filename("map-"+mapId+".zip").build().toString())
+            .cacheControl(CacheControl.noStore()).body(maps.bundle(mapId,principal instanceof DevicePrincipal p?p:null));
     }
 }

@@ -33,8 +33,9 @@ public class SecurityConfig {
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .accessDeniedHandler(accessDeniedHandler))
                 .authorizeHttpRequests(authorize -> authorize
-                        // The initial SSE request is authenticated below. Its completion dispatch has no JWT filter run.
-                        .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ASYNC).permitAll()
+                        // Authenticate the initial request; allow internal completion/error dispatches
+                        // to preserve the response status when the JWT filter does not run again.
+                        .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ASYNC,jakarta.servlet.DispatcherType.ERROR).permitAll()
                         .requestMatchers(
                                 "/actuator/health",
                                 "/v3/api-docs/**",
