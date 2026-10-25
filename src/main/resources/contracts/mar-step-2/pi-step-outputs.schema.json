@@ -141,6 +141,51 @@
             ],
             "additionalProperties": false
           }
+        },
+        "verified_pose": {
+          "type": "object",
+          "properties": {
+            "x_m": {
+              "type": "number"
+            },
+            "y_m": {
+              "type": "number"
+            },
+            "yaw_rad": {
+              "type": "number"
+            },
+            "map_id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+            },
+            "navigation_session_id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+            },
+            "initialization_revision": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "x_m",
+            "y_m",
+            "yaw_rad",
+            "map_id"
+          ],
+          "additionalProperties": false
+        },
+        "position_error_m": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.08
+        },
+        "yaw_error_rad": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0.15
         }
       },
       "required": [

@@ -135,7 +135,7 @@ public class MappingLifecycleService {
             // SAVE failure may close the Pi session before its durable STEP_ERROR
             // reaches BE. Wait for that result while the exact SAVE is in flight;
             // the heartbeat itself never closes the BE session or releases robot.
-            return commands.findByRobotIdAndStateIn(robotId,List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED")).stream()
+            boolean inFlight=commands.findByRobotIdAndStateIn(robotId,List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED")).stream()
                     .anyMatch(c->{
                         String action=c.getPayloadJson().path("step").path("params").path("action").asText();
                         if(c.getSendAttempts()<1)return false;
@@ -145,11 +145,41 @@ public class MappingLifecycleService {
                              s.getJobId().toString().equals(reported.path("job_id").asText()) &&
                              Set.of("SAVED_LOCAL","SAVED","ABORTED","STOPPED").contains(reported.path("state").asText())));
                     });
+            return inFlight || pendingSaveCleanupMatches(open,reported);
         }
         MappingSession session;
         try{session=sessions.findById(UUID.fromString(reported.path("session_id").asText())).orElse(null);}catch(IllegalArgumentException ex){return false;}
         return session!=null && session.getRobotId().equals(robotId) && session.isPotentiallyOpen()
                 && session.getJobId().toString().equalsIgnoreCase(reported.path("job_id").asText());
+    }
+    /** SAVE's error can commit before cleanup STOP is published. Keep that exact handoff valid;
+     * only STOP's result or explicit recovery closes the server session. */
+    private boolean pendingSaveCleanupMatches(List<MappingSession> open,JsonNode reported) {
+        if(reported==null || !reported.path("session_open").isBoolean() || reported.path("session_open").asBoolean()
+                || !Set.of("SAVED_LOCAL","SAVED","ABORTED","STOPPED").contains(reported.path("state").asText()))return false;
+        for(var session:open) {
+            if(!"SAVING".equals(session.getState()) || session.getCleanupTerminal()==null
+                    || !session.getSessionId().toString().equals(reported.path("session_id").asText())
+                    || !session.getJobId().toString().equals(reported.path("job_id").asText())
+                    || !session.getArtifactId().toString().equals(reported.path("artifact_id").asText()))continue;
+            for(var stop:visits.findByJobId(session.getJobId())) {
+                var job=stop.getJobTask().getJob();
+                if(job.getStatus()!=JobStatus.RUNNING || job.getSelectedJobStep()==null
+                        || !stop.getJobStepId().equals(job.getSelectedJobStep().getJobStepId())
+                        || !stop.isMappingCleanup() || stop.getStatus()!=JobStepStatus.PENDING || stop.getStartedAt()!=null
+                        || !mapping(stop) || !"STOP".equals(stop.getResolvedInputsJson().path("action").asText())
+                        || !session.getSessionId().toString().equals(stop.getResolvedInputsJson().path("mapping_session_id").asText()))continue;
+                var command=commands.findByJobStepId(stop.getJobStepId()).orElse(null);
+                if(command!=null && (!"PENDING".equals(command.getState()) || command.getSendAttempts()!=0
+                        || command.getLastPublishAt()!=null || command.getAcknowledgedAt()!=null))continue;
+                boolean savedAndStopped=commands.findByJobIdOrderByCreatedAt(session.getJobId()).stream().anyMatch(c->
+                        c.getSendAttempts()>0 && "COMPLETED".equals(c.getState()) && Boolean.TRUE.equals(c.getPhysicalStopConfirmed())
+                        && "SAVE".equals(c.getPayloadJson().path("step").path("params").path("action").asText())
+                        && session.getSessionId().toString().equals(c.getPayloadJson().path("step").path("params").path("mapping_session_id").asText()));
+                if(savedAndStopped)return true;
+            }
+        }
+        return false;
     }
     public void reconciled(Job job) {
         sessions.findByJobId(job.getJobId()).ifPresent(s->{s.setPotentiallyOpen(false);s.setState("OPERATOR_RECONCILED");s.setClosedAt(Instant.now(clock));});

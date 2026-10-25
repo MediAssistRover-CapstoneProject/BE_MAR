@@ -20,7 +20,8 @@ class MqttSessionRegistryTest {
             mock(JobRepository.class),mock(JobStepRepository.class),mock(RobotCommandOutboxRepository.class),
             mock(FacilityMapRepository.class),mock(RobotLocationHistoryRepository.class),mock(RobotStatusHistoryRepository.class),
             mock(OrchestrationWorkService.class),mock(MqttJobSafety.class),connection,new MqttProperties(),Clock.systemUTC(),
-            mock(RobotNavigationProfileRepository.class),mapping,mock(MappingPreviewService.class),mock(ApplicationEventPublisher.class));
+            mock(RobotNavigationProfileRepository.class),mapping,mock(MappingPreviewService.class),mock(ApplicationEventPublisher.class),
+            mock(com.mediassistrover.backend.service.NavigationSessionService.class),mock(MappingCompletionService.class));
 
     @Test void disconnectedConnectionNeverOwnsAPersistedSession() {
         connection.connectedNow();

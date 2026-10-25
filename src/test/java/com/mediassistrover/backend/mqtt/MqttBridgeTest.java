@@ -76,7 +76,8 @@ class MqttBridgeTest {
         when(robots.findByIdForUpdate(robotId)).thenReturn(Optional.of(robot));
         when(registry.requireCurrent(robotId,transportId)).thenReturn(session);
         var service=new NavigationProfileService(robots,profiles,sessions,endpoints,mock(ZoneRepository.class),jobs,commands,
-                registry,props,wire,mock(com.mediassistrover.backend.service.OrchestrationWorkService.class),Clock.fixed(now,ZoneOffset.UTC));
+                registry,props,wire,mock(com.mediassistrover.backend.service.OrchestrationWorkService.class),Clock.fixed(now,ZoneOffset.UTC),
+                mock(com.mediassistrover.backend.service.NavigationSessionService.class));
         var manifest=service.snapshot(robot);
         var ack=wire.object().put("messageType","NAV_PROFILE_ACK").put("robotId",robotId.toString())
                 .put("transportSessionId",transportId.toString()).put("producerSessionId",producerId.toString())

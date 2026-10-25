@@ -71,7 +71,7 @@ class MappingLiveTest {
     }
     @Test void rejectsDisconnectedForeignSessionAndOutOfRangeVelocity() {
         assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(UUID.randomUUID(),.05,0.,400))).hasMessageContaining("does not belong");
-        for(double speed:new double[]{-.16,.16,Double.NaN,Double.POSITIVE_INFINITY})
+        for(double speed:new double[]{-.31,.31,Double.NaN,Double.POSITIVE_INFINITY})
             assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,speed,0.,400))).hasMessageContaining("Invalid");
         when(registry.fresh(link)).thenReturn(false);
         assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,.05,0.,400))).hasMessageContaining("not ready");
@@ -96,8 +96,22 @@ class MappingLiveTest {
         assertThat(published.path("linearX").asDouble()).isEqualTo(-.1);
         assertThat(published.path("angularZ").asDouble()).isEqualTo(-.45);
         assertThat(published.path("durationMs").asInt()).isEqualTo(900);
-        assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,0.,.51,900))).hasMessageContaining("Invalid");
+        assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,0.,1.01,900))).hasMessageContaining("Invalid");
         assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,0.,.45,901))).hasMessageContaining("Invalid");
+    }
+    @Test void bareMecanumUpperEnvelopeUsesTheSameWireContract() {
+        controls.send(jobId,new MappingControlService.Request(sid,.30,1.0,900));
+        contracts.live(published);
+        assertThat(published.path("linearX").asDouble()).isEqualTo(.30);
+        assertThat(published.path("angularZ").asDouble()).isEqualTo(1.0);
+    }
+    @Test void localGamepadRejectsWebMoveButKeepsStopAvailable() {
+        var report=wire.object();report.putObject("autonomy").putObject("manual_control").put("source","gamepad");
+        link.setHeartbeatJson(wire.object().set("mappingSession",report));
+        assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,.1,0.,900)))
+                .hasMessageContaining("Local gamepad owns");
+        controls.send(jobId,new MappingControlService.Request(sid,0.,0.,900));
+        assertThat(published.path("linearX").asDouble()).isZero();
     }
     @Test void stopSequencePreventsAnOlderHttpMoveArrivingAfterStop() {
         UUID ui=UUID.randomUUID();
@@ -111,6 +125,36 @@ class MappingLiveTest {
         assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,.08,0.,600,UUID.randomUUID(),1L,now.minusSeconds(2))))
                 .hasMessageContaining("Stale UI control request");
         verify(transport,never()).publish(anyString(),any(),anyInt());
+    }
+    void enableAutonomy() {
+        link.setLastHeartbeatAt(now);
+        var report=wire.object().put("session_id",sid.toString());
+        report.set("autonomy",wire.object().put("available",true));
+        link.setHeartbeatJson(wire.object().set("mappingSession",report));
+    }
+    MappingControlService.AutonomyRequest auto(String action) {
+        return new MappingControlService.AutonomyRequest(sid,new MappingControlService.Autonomy(action,
+                UUID.fromString("55555555-5555-4555-8555-555555555555"),180,false),UUID.randomUUID(),1L,now);
+    }
+    @Test void autonomyUsesSameScopedShortLeaseAndStrictWireContract() {
+        enableAutonomy();controls.sendAutonomy(jobId,auto("START"));contracts.live(published);
+        assertThat(published.path("linearX").asDouble()).isZero();
+        assertThat(published.path("durationMs").asInt()).isEqualTo(900);
+        assertThat(published.path("autonomy").path("action").asText()).isEqualTo("START");
+        assertThat(published.path("autonomy").path("maxDurationSec").asInt()).isEqualTo(180);
+    }
+    @Test void autonomyZeroVelocityDoesNotBypassWaitPhaseAndOldPiCannotStart() {
+        assertThatThrownBy(()->controls.sendAutonomy(jobId,auto("START"))).hasMessageContaining("not configured");
+        enableAutonomy();job.setStatus(JobStatus.RECOVERY_REQUIRED);
+        assertThatThrownBy(()->controls.sendAutonomy(jobId,auto("START"))).hasMessageContaining("Move only");
+        assertThatThrownBy(()->controls.sendAutonomy(jobId,auto("RENEW"))).hasMessageContaining("Move only");
+        controls.sendAutonomy(jobId,auto("STOP"));contracts.live(published);
+    }
+    @Test void autonomyRejectsForeignHeartbeatScopeAndDoesNotRelaxManualLane() {
+        enableAutonomy();((ObjectNode)link.getHeartbeatJson().path("mappingSession")).put("session_id",UUID.randomUUID().toString());
+        assertThatThrownBy(()->controls.sendAutonomy(jobId,auto("START"))).hasMessageContaining("not configured");
+        controls.send(jobId,new MappingControlService.Request(sid,.05,0.,400));
+        assertThat(published.has("autonomy")).isFalse();
     }
     ObjectNode map(byte[] grid) throws Exception {
         var bytes=new ByteArrayOutputStream();try(var zip=new DeflaterOutputStream(bytes)){zip.write(grid);}

@@ -210,6 +210,41 @@
               }
             }
           ]
+        },
+        "navigationContext": {
+          "type": "object",
+          "properties": {
+            "session_id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+            },
+            "map_id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+            },
+            "map_asset_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "initialization_revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "profile_hash": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "session_id",
+            "map_id",
+            "map_asset_hash",
+            "initialization_revision",
+            "profile_hash"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

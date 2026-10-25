@@ -12,7 +12,13 @@ public final class ServiceRequestRequests {
     public record NavigationCreateRequest(@NotNull UUID mapId,UUID workflowId,UUID roomId,UUID originEndpointId,UUID destinationEndpointId,
             UUID destinationGroupId,@NotNull TargetMode targetMode,@NotNull NavigationMode navigationMode,
             @Size(max=4000) String accessibilityNeed,@Min(1) @Max(20) int passengerCount,
-            @Size(max=4000) String arrivalInstruction,@Min(0) @Max(100) int priority,@Size(max=4000) String note,JsonNode data) {}
+            @Size(max=4000) String arrivalInstruction,@Min(0) @Max(100) int priority,@Size(max=4000) String note,JsonNode data,
+            UUID robotId,UUID navigationSessionId) {
+        public NavigationCreateRequest(UUID mapId,UUID workflowId,UUID roomId,UUID originEndpointId,UUID destinationEndpointId,UUID destinationGroupId,
+                TargetMode targetMode,NavigationMode navigationMode,String accessibilityNeed,int passengerCount,String arrivalInstruction,int priority,String note,JsonNode data){
+            this(mapId,workflowId,roomId,originEndpointId,destinationEndpointId,destinationGroupId,targetMode,navigationMode,accessibilityNeed,passengerCount,arrivalInstruction,priority,note,data,null,null);
+        }
+    }
     public record EscortCreateRequest(@NotNull UUID mapId,UUID originRoomId,UUID destinationRoomId,
             UUID originEndpointId,UUID destinationEndpointId,UUID destinationGroupId,@NotNull TargetMode targetMode,
             @Size(max=100) String patientReference,@NotNull EscortMode escortMode,

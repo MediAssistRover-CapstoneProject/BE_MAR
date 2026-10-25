@@ -27,6 +27,7 @@ public class SavedMapImageService {
         ObjectNode meta=load(mapId).metadata();
         meta.put("image_url","/api/v1/maps/"+mapId+"/image.png");
         meta.put("image_format","png").put("pixel_origin","TOP_LEFT").put("row_order","TOP_TO_BOTTOM");
+        meta.put("navigation_reload_safe",bundles.navigationSafe(mapId));
         // Matrix maps image cell-centre indices [u,v,1] into map-frame metres.
         double r=meta.path("resolution_m_per_pixel").asDouble(),h=meta.path("height_px").asDouble();
         double yaw=meta.path("origin_yaw_rad").asDouble(),c=Math.cos(yaw),s=Math.sin(yaw);

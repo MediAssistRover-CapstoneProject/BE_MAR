@@ -24,7 +24,7 @@ public class RobotRealtimeSnapshotService {
     public record Snapshot(Instant observedAt,RobotResponse robot,boolean mqttConnected,boolean heartbeatFresh,
                            Double heartbeatAgeSeconds,boolean dispatchReady,String sessionFailureReason,
                            UUID activeJobId,UUID selectedJobStepId,String selectedStepType,String selectedStepCode,
-                           Pose latestPose) { }
+                           Pose latestPose,com.fasterxml.jackson.databind.JsonNode navigationSession) { }
 
     private final RobotRepository robots;
     private final RobotLocationHistoryRepository locations;
@@ -33,6 +33,7 @@ public class RobotRealtimeSnapshotService {
     private final RobotMapper mapper;
     private final MqttSessionRegistry registry;
     private final Clock clock;
+    private final NavigationSessionService navigationSessions;
     @Value("${app.operations.robot-pose-freshness-seconds:3}") private long poseFreshnessSeconds;
 
     @Transactional(readOnly=true)
@@ -50,6 +51,10 @@ public class RobotRealtimeSnapshotService {
         JobStep selected=active==null?null:active.getSelectedJobStep();
         Pose pose=locations.findFirstByRobotRobotIdOrderByCapturedAtDesc(robotId).map(value->{
             boolean fresh=value.isFresh()&&!value.getCapturedAt().isBefore(now.minusSeconds(poseFreshnessSeconds))
+                    && mqttConnected&&heartbeatFresh&&session.getHeartbeatJson()!=null
+                    &&session.getHeartbeatJson().path("telemetry").path("map_pose").path("fresh").asBoolean()
+                    &&navigationSessions.localized(robotId,session)
+                    &&!value.getCapturedAt().isBefore(session.getHelloReceivedAt())
                     && robot.getCurrentMap()!=null&&robot.getCurrentMap().getMapId().equals(value.getMap().getMapId());
             return new Pose(value.getRobotLocationHistoryId(),robotId,value.getMap().getMapId(),
                     value.getJob()==null?null:value.getJob().getJobId(),value.getXM(),value.getYM(),value.getYawRad(),
@@ -60,6 +65,6 @@ public class RobotRealtimeSnapshotService {
         return new Snapshot(now,mapper.toResponse(robot),mqttConnected,heartbeatFresh,heartbeatAge,
                 registry.fresh(session),session==null?"HELLO required":session.getFailureReason(),
                 active==null?null:active.getJobId(),selected==null?null:selected.getJobStepId(),
-                selected==null?null:selected.getStepTypeSnapshot(),selected==null?null:selected.getStepCodeSnapshot(),pose);
+                selected==null?null:selected.getStepTypeSnapshot(),selected==null?null:selected.getStepCodeSnapshot(),pose,navigationSessions.status(robotId));
     }
 }

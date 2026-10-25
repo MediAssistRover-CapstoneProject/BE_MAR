@@ -55,7 +55,23 @@ class MqttWireContractTest {
                  "currentMapId":"55555555-5555-4555-8555-555555555555","mapAssetHash":null,"mappingSession":null,
                  "telemetry":{"map_pose":{"value":{"x_m":1,"y_m":2,"yaw_rad":0,"map_id":"55555555-5555-4555-8555-555555555555"},"age_sec":0.1,"fresh":true}}}}
                 """);
+        var autonomous=wire.object().put("state","IDLE").put("available",false).putNull("run_id")
+                .put("control_selected",false).put("vehicle","articulated").put("finished",false).put("coverage_complete",false)
+                .put("reason","NOT_STARTED").put("elapsed_sec",0).put("travel_m",0).putNull("start_pose")
+                .put("max_duration_sec",180).put("profile_max_duration_sec",180).put("stop_on_return",false);
+        ((ObjectNode)heartbeat.path("payload")).set("mappingSession",wire.object().set("autonomy",autonomous));
         assertThatCode(()->validator.inbound(heartbeat)).doesNotThrowAnyException();
+        autonomous.set("manual_control",wire.object().put("source","gamepad").put("layout","vendor_mecanum")
+                .put("session_required",false).put("forward_mps",.25).put("angular_rps",.8).put("continuous",true));
+        assertThatCode(()->validator.inbound(heartbeat)).doesNotThrowAnyException();
+        autonomous.put("coverage_complete",true);
+        assertThatThrownBy(()->validator.inbound(heartbeat)).hasMessageContaining("contract");
+        autonomous.put("state","STOPPED").put("finished",true).put("reason","COVERAGE_COMPLETE").put("exploration_mode","frontier");
+        autonomous.set("exploration",wire.object().put("enabled",true).put("state","COMPLETE").put("frontier_count",0));
+        assertThatCode(()->validator.inbound(heartbeat)).doesNotThrowAnyException();
+        ((ObjectNode)autonomous.path("exploration")).put("state","BLOCKED").put("frontier_count",1);
+        assertThatThrownBy(()->validator.inbound(heartbeat)).hasMessageContaining("contract");
+        autonomous.put("coverage_complete",false);
         ((ObjectNode)heartbeat.at("/payload/telemetry/map_pose/value")).put("yaw_rad",4);
         assertThatThrownBy(()->validator.inbound(heartbeat)).hasMessageContaining("contract");
         ((ObjectNode)heartbeat.at("/payload/telemetry/map_pose/value")).put("yaw_rad",0).put("x_m",100000000);

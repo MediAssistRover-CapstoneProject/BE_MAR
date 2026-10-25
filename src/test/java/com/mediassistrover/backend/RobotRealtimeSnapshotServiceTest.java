@@ -33,7 +33,12 @@ class RobotRealtimeSnapshotServiceTest {
         when(jobs.findByRobotRobotIdAndStatusIn(eq(robotId),anyCollection())).thenReturn(List.of());
         when(registry.owned(session)).thenReturn(true);when(registry.fresh(session)).thenReturn(false);
         when(mapper.toResponse(robot)).thenReturn(mock(RobotResponse.class));
-        RobotRealtimeSnapshotService service=new RobotRealtimeSnapshotService(robots,locations,sessions,jobs,mapper,registry,clock);
+        var navigation=mock(com.mediassistrover.backend.service.NavigationSessionService.class);
+        when(navigation.localized(robotId,session)).thenReturn(true);
+        session.setHelloReceivedAt(now.minusSeconds(10));
+        var heartbeat=new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();heartbeat.putObject("telemetry").putObject("map_pose").put("fresh",true);
+        session.setHeartbeatJson(heartbeat);
+        RobotRealtimeSnapshotService service=new RobotRealtimeSnapshotService(robots,locations,sessions,jobs,mapper,registry,clock,navigation);
         ReflectionTestUtils.setField(service,"poseFreshnessSeconds",3L);
 
         var snapshot=service.snapshot(robotId);

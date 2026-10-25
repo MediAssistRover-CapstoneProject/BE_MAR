@@ -30,6 +30,7 @@ public class MqttStepDispatchService {
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     private final com.mediassistrover.backend.ai.AiSensingService ai;
     private final MqttRolloutService rollout;
+    private final com.mediassistrover.backend.service.NavigationSessionService navigationSessions;
 
     public void requireActionSupported(Step step) {
         if(!executionPolicy.requiresMqtt(step))throw new BusinessRuleException("Step is backend-owned and cannot use MQTT dispatch");
@@ -107,6 +108,10 @@ public class MqttStepDispatchService {
         ObjectNode action=command.putObject("step").put("jobId",job.getJobId().toString()).put("jobStepId",step.getJobStepId().toString())
                 .put("stepId",step.getStep().getStepId().toString()).put("stepCode",step.getStepCodeSnapshot()).put("stepType",step.getStepTypeSnapshot())
                 .put("visitNo",step.getVisitNo()).put("operationKey",step.getOperationKey()).put("timeoutSec",step.getTimeoutSecSnapshot());action.set("params",params);
+        if("MOVE".equals(step.getStepTypeSnapshot())){
+            var context=navigationSessions.commandContext(session.getRobotId(),profileHash);
+            if(context!=null)command.set("navigationContext",context);
+        }
         contracts.command(command);
         commands.save(RobotCommandOutbox.builder().commandId(commandId).robotId(session.getRobotId()).jobId(job.getJobId()).jobStepId(step.getJobStepId())
                 .operationKey(step.getOperationKey()).navigationProfileHash(profileHash).aiProfileSnapshotJson(aiProfile).payloadJson(command).expiresAt(now.plusSeconds(properties.getCommandTtlSec())).state("PENDING").createdAt(now).build());

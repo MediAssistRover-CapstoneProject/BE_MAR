@@ -38,6 +38,7 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
     @Autowired WorkflowRepository workflows;@Autowired WorkflowValidationService validation;
     @Autowired JobExecutionService execution;@Autowired JobService jobService;
     @Autowired MqttRolloutService rollout;
+    @Autowired MappingRecoveryService recovery;@Autowired RobotMqttSessionRepository links;
     @Autowired org.springframework.test.web.servlet.MockMvc mvc;@Autowired DeviceJwtTokenService tokens;
     @Autowired PlatformTransactionManager tm;@Autowired jakarta.persistence.EntityManager em;
     @MockitoBean PahoMqttTransport transport;
@@ -100,6 +101,46 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
         complete("STOP");advance();assertThat(status()).isEqualTo(JobStatus.SUCCEEDED);assertThat(session().isPotentiallyOpen()).isFalse();
         var cmds=commands.findByJobIdOrderByCreatedAt(fixture.jobId);assertThat(cmds).hasSize(3);assertThat(cmds).extracting(RobotCommandOutbox::getOperationKey).doesNotHaveDuplicates();
         for(var c:cmds){assertThat(c.getPayloadJson().has("jobSteps")).isFalse();assertThat(c.getPayloadJson().path("step").path("params").path("mapping_session_id").asText()).isEqualTo(session().getSessionId().toString());}}
+    @Test void autonomyApiThenExistingSaveUploadCommitStopAndPngIsOneMappingJob() throws Exception {
+        waiting();long before=commands.findByJobIdOrderByCreatedAt(fixture.jobId).size();
+        var raw=fixture.heartbeat(json);var p=(ObjectNode)raw.path("payload");p.putNull("currentMapId").putNull("mapAssetHash");
+        var report=json.createObjectNode().put("session_id",session().getSessionId().toString()).put("job_id",fixture.jobId.toString())
+                .put("state","MAPPING").put("session_open",true);
+        report.set("autonomy",json.createObjectNode().put("available",true).put("state","IDLE").put("vehicle","articulated")
+                .put("coverage_complete",false).put("control_selected",false));p.set("mappingSession",report);
+        router.route(MqttTopics.topic(fixture.robotId,"heartbeat"),wire.bytes(raw),0,false);
+        var options=json.createObjectNode().put("action","START").put("runId",UUID.randomUUID().toString()).put("maxDurationSec",180).put("stopOnReturn",false);
+        var request=json.createObjectNode().put("mappingSessionId",session().getSessionId().toString())
+                .put("controlSessionId",UUID.randomUUID().toString()).put("controlSequence",1).put("requestedAt",Instant.now().toString());request.set("autonomy",options);
+        var user=org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(actor());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/jobs/"+fixture.jobId+"/mapping-autonomy")
+                .with(user).contentType("application/json").content(json.writeValueAsBytes(request)))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isAccepted());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/jobs/"+fixture.jobId+"/mapping-session").with(user))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.autonomy.available").value(true))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.autonomy.vehicle").value("articulated"));
+        assertThat(commands.findByJobIdOrderByCreatedAt(fixture.jobId)).hasSize((int)before);
+        assertThat(selected().getStepTypeSnapshot()).isEqualTo("WAIT");
+        var completed=fixture.heartbeat(json);var completedPayload=(ObjectNode)completed.path("payload");
+        completedPayload.putNull("currentMapId").putNull("mapAssetHash");
+        var completedReport=report.deepCopy();
+        var covered=json.createObjectNode().put("available",true).put("state","STOPPED").put("finished",true)
+                .put("reason","COVERAGE_COMPLETE").put("coverage_complete",true).put("exploration_mode","frontier");
+        covered.set("exploration",json.createObjectNode().put("enabled",true).put("state","COMPLETE").put("frontier_count",0));
+        covered.set("manual_control",json.createObjectNode().put("source","gamepad").put("layout","vendor_mecanum")
+                .put("session_required",false).put("forward_mps",.25).put("angular_rps",.8).put("continuous",true));
+        completedReport.set("autonomy",covered);completedPayload.set("mappingSession",completedReport);
+        router.route(MqttTopics.topic(fixture.robotId,"heartbeat"),wire.bytes(completed),0,false);
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/jobs/"+fixture.jobId+"/mapping-session").with(user))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.autonomy.coverage_complete").value(true))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.autonomy.manual_control.layout").value("vendor_mecanum"));
+        saveRequested();issue();startIssued();upload();receive(result("SAVE",true,true));advance();advance();advance();
+        UUID map=artifactRows.findById(session().getArtifactId()).orElseThrow().getMapId();
+        complete("STOP");advance();assertThat(status()).isEqualTo(JobStatus.SUCCEEDED);
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/maps/"+map+"/image.png").with(user))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().contentType("image/png"));
+    }
     @Test void uploadRetryReturnsSameReceiptAndChangedContentConflicts(){waiting();saveRequested();issue();startIssued();var first=upload();assertThat(upload()).isEqualTo(first);manifest.put("frame_id","other");archive=MappingTestArchive.archive(json,manifest);assertThatThrownBy(this::upload).hasMessageContaining("different content");assertThat(artifactRows.findById(session().getArtifactId())).isPresent();}
     @Test void wrongHashScopeOrArtifactCannotStore(){waiting();saveRequested();issue();startIssued();assertThatThrownBy(()->artifacts.upload(session().getSessionId(),session().getArtifactId(),manifest.path("asset_hash").asText(),"b".repeat(64),new ByteArrayInputStream(archive),device())).hasMessageContaining("Archive SHA");
         assertThatThrownBy(()->artifacts.upload(session().getSessionId(),UUID.randomUUID(),manifest.path("asset_hash").asText(),MappingArchiveReader.hash(archive),new ByteArrayInputStream(archive),device())).hasMessageContaining("not issued");
@@ -126,6 +167,137 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
                 .put("job_id",fixture.jobId.toString()).put("session_open",false).put("state","SAVED_LOCAL"));
         router.route(MqttTopics.topic(fixture.robotId,"heartbeat"),wire.bytes(raw),0,false);
         assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(session().isPotentiallyOpen()).isTrue();
+    }
+    void failedSaveAwaitingCleanup() {
+        waiting();saveRequested();issue();startIssued();
+        receive(fixture.event(json,"STEP_ERROR",json.createObjectNode().put("status","FAILED")
+                .put("errorCode","MAP_UPLOAD_AUTH_REFRESH_FAILED").put("retryable",false).put("physicalStopConfirmed",true).putNull("details")));
+        advance();assertThat(selected().isMappingCleanup()).isTrue();
+    }
+    ObjectNode closedMappingReport() {
+        return json.createObjectNode().put("session_id",session().getSessionId().toString())
+                .put("job_id",fixture.jobId.toString()).put("artifact_id",session().getArtifactId().toString())
+                .put("session_open",false).put("state","SAVED_LOCAL");
+    }
+    @Test void closedHeartbeatAfterSaveErrorBeforeStopPublishStillAllowsCleanup() {
+        failedSaveAwaitingCleanup();var raw=fixture.heartbeat(json);var p=(ObjectNode)raw.path("payload");
+        p.putNull("currentMapId");p.putNull("mapAssetHash");p.set("mappingSession",closedMappingReport());
+        router.route(MqttTopics.topic(fixture.robotId,"heartbeat"),wire.bytes(raw),0,false);
+        assertThat(status()).isEqualTo(JobStatus.RUNNING);assertThat(session().isPotentiallyOpen()).isTrue();
+        complete("STOP");advance();assertThat(status()).isEqualTo(JobStatus.FAILED);assertThat(session().isPotentiallyOpen()).isFalse();
+    }
+    @Test void foreignArtifactAfterSaveErrorStillHoldsRecovery() {
+        failedSaveAwaitingCleanup();var raw=fixture.heartbeat(json);var p=(ObjectNode)raw.path("payload");
+        p.putNull("currentMapId");p.putNull("mapAssetHash");p.set("mappingSession",closedMappingReport().put("artifact_id",UUID.randomUUID().toString()));
+        router.route(MqttTopics.topic(fixture.robotId,"heartbeat"),wire.bytes(raw),0,false);
+        assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(session().isPotentiallyOpen()).isTrue();
+    }
+    void recoverableUnsentStop() {
+        failedSaveAwaitingCleanup();var report=closedMappingReport();
+        tx.executeWithoutResult(s->{
+            jobs.findById(fixture.jobId).orElseThrow().setStatus(JobStatus.RECOVERY_REQUIRED);
+            robots.findById(fixture.robotId).orElseThrow().setStatus(RobotStatus.ERROR);
+            var link=links.findById(fixture.robotId).orElseThrow();link.setClosed(false);link.setHandshakeAcked(true);link.setDispatchReady(false);
+            link.setHelloReceivedAt(Instant.now().minusSeconds(1));link.setLastHeartbeatAt(Instant.now());
+            ObjectNode hello=((ObjectNode)link.getHelloJson()).deepCopy();hello.set("mappingSession",report.deepCopy());
+            var journal=hello.putArray("states");
+            for(var c:commands.findByJobIdOrderByCreatedAt(fixture.jobId))if(c.getSendAttempts()>0) {
+                var step=steps.findById(c.getJobStepId()).orElseThrow();
+                journal.addObject().put("jobId",fixture.jobId.toString()).put("jobStepId",c.getJobStepId().toString())
+                        .put("operationKey",c.getOperationKey()).put("status",step.getStatus().name());
+            }
+            link.setHelloJson(hello);
+            ObjectNode hb=((ObjectNode)fixture.heartbeat(json).path("payload")).deepCopy();hb.putNull("currentMapId").putNull("mapAssetHash");
+            hb.set("mappingSession",report.deepCopy());((ObjectNode)hb.path("telemetry")).putObject("odom_speed").put("value",0).put("age_sec",.01);
+            link.setHeartbeatJson(hb);
+        });
+    }
+    MappingRecoveryRequest recoveryRequest() {
+        return new MappingRecoveryRequest(selected().getJobStepId(),fixture.transportId,true,JobRequests.ReconcileOutcome.CONFIRM_CANCELLED,"Close failed local SAVE after verified stop");
+    }
+    JsonNode recover(String key,MappingRecoveryRequest request) {
+        return recovery.reconcile(fixture.jobId,key,request,actor(),new RequestMetadata("test","test","test"));
+    }
+    @Test void unsentStopApiClosesOncePreservesActualResultsAndRequiresNewHello() throws Exception {
+        recoverableUnsentStop();var request=recoveryRequest();String key=UUID.randomUUID().toString();
+        var user=org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(actor());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/api/v1/jobs/"+fixture.jobId+"/mapping-recovery").with(user))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.canReconcile").value(true));
+        var first=mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/jobs/"+fixture.jobId+"/mapping-recovery")
+                .with(user).header("Idempotency-Key",key).contentType("application/json").content(json.writeValueAsBytes(request)))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.stopWasExecuted").value(false))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.requiresNewHello").value(true))
+                .andReturn().getResponse().getContentAsString();
+        assertThat(recover(key,request)).isEqualTo(json.readTree(first));
+        assertThat(status()).isEqualTo(JobStatus.CANCELLED);assertThat(session().getState()).isEqualTo("OPERATOR_RECONCILED");
+        assertThat(session().isPotentiallyOpen()).isFalse();assertThat(links.findById(fixture.robotId).orElseThrow().isClosed()).isTrue();
+        assertThat(robots.findById(fixture.robotId).orElseThrow().getStatus()).isEqualTo(RobotStatus.STARTING);
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.FAILED);
+        for(var c:commands.findByJobIdOrderByCreatedAt(fixture.jobId)) {
+            if(c.getJobStepId().equals(request.jobStepId())) {assertThat(c.getState()).isEqualTo("ABANDONED");assertThat(c.getSendAttempts()).isZero();assertThat(c.getPhysicalStopConfirmed()).isNull();}
+            else {assertThat(c.getState()).isEqualTo("COMPLETED");assertThat(c.getPhysicalStopConfirmed()).isTrue();}
+        }
+        long receipts=tx.execute(s->((Number)em.createNativeQuery("SELECT COUNT(*) FROM MqttOperationRecoveryReceipt WHERE job_step_id=:id").setParameter("id",request.jobStepId()).getSingleResult()).longValue());
+        assertThat(receipts).isEqualTo(1);
+        assertThatThrownBy(()->recover(key,new MappingRecoveryRequest(request.jobStepId(),request.transportSessionId(),true,request.outcome(),"Different note")))
+                .isInstanceOf(com.mediassistrover.backend.exception.ConflictException.class);
+    }
+    @Test void unsentStopRecoveryRejectsStaleHeartbeatAndMovingRobot() {
+        recoverableUnsentStop();var request=recoveryRequest();
+        tx.executeWithoutResult(s->links.findById(fixture.robotId).orElseThrow().setLastHeartbeatAt(Instant.now().minusSeconds(20)));
+        assertThatThrownBy(()->recover(UUID.randomUUID().toString(),request)).hasMessageContaining("FRESH_PI_HELLO");
+        tx.executeWithoutResult(s->{var link=links.findById(fixture.robotId).orElseThrow();link.setLastHeartbeatAt(Instant.now());
+            ((ObjectNode)link.getHeartbeatJson().path("telemetry").path("odom_speed")).put("value",.03);});
+        assertThatThrownBy(()->recover(UUID.randomUUID().toString(),request)).hasMessageContaining("STATIONARY_ODOMETRY");
+        assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(session().isPotentiallyOpen()).isTrue();
+    }
+    @Test void unsentStopRecoveryRejectsMissingAcceptedStopReceipt() {
+        recoverableUnsentStop();var request=recoveryRequest();
+        tx.executeWithoutResult(s->{var c=commands.findById(fixture.commandId).orElseThrow();inbox.findById(UUID.fromString(c.getResultEnvelopeJson().path("messageId").asText())).orElseThrow().setAccepted(false);});
+        assertThatThrownBy(()->recover(UUID.randomUUID().toString(),request)).hasMessageContaining("STOP_RECEIPT_AND_JOURNAL");
+        assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);
+    }
+    @Test void unsentStopRecoveryRejectsChangedTransportAndArtifact() {
+        recoverableUnsentStop();var request=recoveryRequest();
+        assertThatThrownBy(()->recover(UUID.randomUUID().toString(),new MappingRecoveryRequest(request.jobStepId(),UUID.randomUUID(),true,request.outcome(),request.note())))
+                .hasMessageContaining("Transport session changed");
+        tx.executeWithoutResult(s->{var link=links.findById(fixture.robotId).orElseThrow();((ObjectNode)link.getHeartbeatJson().path("mappingSession")).put("artifact_id",UUID.randomUUID().toString());});
+        assertThatThrownBy(()->recover(UUID.randomUUID().toString(),request)).hasMessageContaining("MATCHING_CLOSED_PI_MAPPING");
+    }
+    @Test void unsentStopRecoveryRejectsAnyPossiblyPublishedCleanup() {
+        recoverableUnsentStop();var request=recoveryRequest();
+        tx.executeWithoutResult(s->{var step=steps.findById(request.jobStepId()).orElseThrow();
+            var c=commands.findByJobStepId(request.jobStepId()).orElseGet(()->commands.save(RobotCommandOutbox.builder()
+                    .commandId(UUID.randomUUID()).robotId(fixture.robotId).jobId(fixture.jobId).jobStepId(request.jobStepId())
+                    .operationKey(step.getOperationKey()).commandType("EXECUTE_STEP").state("PENDING").payloadJson(json.createObjectNode()).expiresAt(Instant.now().plusSeconds(60)).createdAt(Instant.now()).build()));
+            c.setSendAttempts(1);c.setState("PUBLISHED");c.setLastPublishAt(Instant.now());});
+        assertThatThrownBy(()->recover(UUID.randomUUID().toString(),request)).hasMessageContaining("STOP_MAY_HAVE_BEEN_SENT");
+        assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);
+    }
+    @Test void unsentZeroAttemptOutboxIsAbandonedWithoutInventingStopReceipt() {
+        recoverableUnsentStop();var request=recoveryRequest();
+        tx.executeWithoutResult(s->{var step=steps.findById(request.jobStepId()).orElseThrow();
+            if(commands.findByJobStepId(request.jobStepId()).isEmpty())commands.save(RobotCommandOutbox.builder()
+                    .commandId(UUID.randomUUID()).robotId(fixture.robotId).jobId(fixture.jobId).jobStepId(request.jobStepId())
+                    .operationKey(step.getOperationKey()).commandType("EXECUTE_STEP").state("PENDING").payloadJson(json.createObjectNode())
+                    .expiresAt(Instant.now().plusSeconds(60)).createdAt(Instant.now()).build());});
+        assertThat(recover(UUID.randomUUID().toString(),request).path("status").asText()).isEqualTo("CANCELLED");
+        var command=commands.findByJobStepId(request.jobStepId()).orElseThrow();
+        assertThat(command.getState()).isEqualTo("ABANDONED");assertThat(command.getSendAttempts()).isZero();
+        assertThat(command.getPhysicalStopConfirmed()).isNull();assertThat(command.getResultEnvelopeJson()).isNull();
+    }
+    @Test void unsentStopRecoveryApiRequiresAuthenticationAndExplicitStopConfirmation() throws Exception {
+        recoverableUnsentStop();var request=recoveryRequest();String path="/api/v1/jobs/"+fixture.jobId+"/mapping-recovery";
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(path))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isUnauthorized());
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(path)
+                .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user(actor()))
+                .header("Idempotency-Key",UUID.randomUUID()).contentType("application/json")
+                .content(json.writeValueAsBytes(new MappingRecoveryRequest(request.jobStepId(),request.transportSessionId(),false,request.outcome(),request.note()))))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isBadRequest());
+        assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);
     }
     @Test void claimedUploadWithoutReceiptEntersRecovery(){waiting();saveRequested();issue();startIssued();receive(result("SAVE",true,true));assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(session().isPotentiallyOpen()).isTrue();}
     @Test void durableRolloutHaltStillDispatchesCleanupStopForAnOpenMappingSession(){waiting();var before=rollout.state();

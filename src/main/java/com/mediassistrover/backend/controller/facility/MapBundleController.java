@@ -17,6 +17,16 @@ import java.util.UUID;
 @RestController @RequiredArgsConstructor @Validated @Tag(name="Facility Catalog")
 public class MapBundleController {
     private final MapBundleService maps;
+    @PostMapping("/api/v1/maps/{mapId}/navigation-copy") @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary="Create a new DRAFT map with corrected trinary reload thresholds; copies endpoints and preserves the original map/hash")
+    public MapBundleService.Imported navigationCopy(@PathVariable UUID mapId){return maps.navigationCopy(mapId);}
+    public record NavigationPoint(@jakarta.validation.constraints.NotNull Double xM,@jakarta.validation.constraints.NotNull Double yM) { }
+    @PostMapping("/api/v1/maps/{mapId}/validate-navigation-point") @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary="Validate a point centre against verified saved occupancy. Nav2 still checks the full footprint and route.")
+    public java.util.Map<String,Object> point(@PathVariable UUID mapId,@jakarta.validation.Valid @RequestBody NavigationPoint body){
+        if(!Double.isFinite(body.xM())||!Double.isFinite(body.yM()))throw new com.mediassistrover.backend.exception.BusinessRuleException("Finite map coordinates required");
+        maps.requireFreePoint(mapId,body.xM(),body.yM());return java.util.Map.of("mapId",mapId,"knownFree",true);
+    }
     @PostMapping(value="/api/v1/maps/import",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("hasRole('ADMIN')") @ResponseStatus(HttpStatus.CREATED)
     @Operation(summary="Upload map.yaml and map.pgm; creates a DRAFT map with verified geometry/hash")

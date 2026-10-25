@@ -31,6 +31,7 @@ public class NavigationProfileService {
     private final MqttWire wire;
     private final OrchestrationWorkService work;
     private final Clock clock;
+    private final NavigationSessionService navigationSessions;
     private static final List<JobStatus> HELD=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
     private static final List<String> IN_FLIGHT=List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED","RECOVERY_REQUIRED");
     public record Manifest(String profileVersion,UUID robotId,String profileHash,JsonNode profile) { }
@@ -43,12 +44,14 @@ public class NavigationProfileService {
     public Manifest manifest(DevicePrincipal principal) {return snapshot(device(principal));}
 
     public Manifest snapshot(Robot robot) {
-        FacilityMap map=robot.getCurrentMap();
+        var context=navigationSessions.current(robot.getRobotId());
+        FacilityMap map=context==null?robot.getCurrentMap():context.getMap();
         if(map==null || map.getStatus()!=MapStatus.ACTIVE || map.getAssetHash()==null || !map.getAssetHash().matches("[a-fA-F0-9]{64}")
                 || map.getFrameId()==null || map.getFrameId().isBlank()) throw new BusinessRuleException("Navigation profile requires an ACTIVE map, frame and SHA-256 asset hash");
         ObjectNode root=wire.object().put("map_id",map.getMapId().toString()).put("map_asset_sha256",map.getAssetHash().toLowerCase(Locale.ROOT))
                 .put("frame_id",map.getFrameId()).put("map_version",map.getVersionNo());
         ObjectNode targets=root.putObject("endpoints");
+        if(context!=null)root.put("navigation_session_id",context.getSessionId().toString()).put("initialization_revision",context.getInitializationRevision());
         endpoints.findByMapMapIdOrderByEndpointCodeAsc(map.getMapId()).stream().filter(e->e.isActive()&&e.isAccessible())
                 .sorted(Comparator.comparing(e->e.getEndpointId().toString())).forEach(e->targets.set(e.getEndpointId().toString(),wire.object()
                         .put("map_id",map.getMapId().toString()).put("x_m",number(e.getXM())).put("y_m",number(e.getYM())).put("yaw_rad",number(e.getYawRad()))));
@@ -85,11 +88,11 @@ public class NavigationProfileService {
         boolean move=false;for(JsonNode type:session.getHelloJson().path("enabledStepTypes")) if("MOVE".equals(type.asText())) move=true;
         if(!move) return null;
         Robot robot=robots.findById(robotId).orElseThrow();
-        if(robot.getCurrentMap()==null) return null;
+        if(robot.getCurrentMap()==null && navigationSessions.current(robotId)==null) return null;
         Manifest expected=snapshot(robot);
         RobotNavigationProfile prior=profiles.findById(robotId).orElse(null);
         if(prior!=null && matches(prior,robot,session,expected.profileHash())) return null;
-        if(expected.profile().path("endpoints").isEmpty()) return null;
+        if(expected.profile().path("endpoints").isEmpty() && navigationSessions.current(robotId)==null) return null;
         ObjectNode message=wire.object().put("messageType","NAV_PROFILE").put("robotId",robotId.toString())
                 .put("transportSessionId",session.getTransportSessionId().toString()).put("profileVersion",expected.profileVersion())
                 .put("profileHash",expected.profileHash());message.set("profile",expected.profile());return message;
@@ -127,13 +130,14 @@ public class NavigationProfileService {
     /** Null holds a selected MOVE until the authenticated Pi has applied and acknowledged its profile. */
     public String ready(Robot robot,RobotMqttSession session,JsonNode params) {
         Manifest manifest=snapshot(robot);RobotNavigationProfile ack=profiles.findById(robot.getRobotId()).orElse(null);
-        return ack!=null && matches(ack,robot,session,manifest.profileHash())
+        return navigationSessions.localized(robot.getRobotId(),session) && ack!=null && matches(ack,robot,session,manifest.profileHash())
                 && params.path("map_id").asText().equals(ack.getMapId().toString())
                 && manifest.profile().path("endpoints").has(params.path("endpoint_id").asText())?manifest.profileHash():null;
     }
     public boolean publicationReady(Robot robot,RobotMqttSession session,RobotCommandOutbox command) {
         RobotNavigationProfile ack=profiles.findById(robot.getRobotId()).orElse(null);
         if(command.getNavigationProfileHash()==null || ack==null || !matches(ack,robot,session,command.getNavigationProfileHash())) return false;
+        if(!navigationSessions.localized(robot.getRobotId(),session)||!navigationSessions.commandMatches(robot.getRobotId(),command.getPayloadJson().path("navigationContext")))return false;
         // Before first publication, catalog edits require a new operation, never mutation of the frozen command.
         return command.getSendAttempts()>0 || command.getNavigationProfileHash().equals(snapshot(robot).profileHash());
     }

@@ -37,7 +37,12 @@ public class MappingSessionController {
         result.set("preview",includePreview?previews.latest(s.getSessionId()):previews.metadata(s.getSessionId()));
         links.findById(s.getRobotId()).ifPresent(link->{
             result.put("motionObservedAt",link.getLastHeartbeatAt()==null?null:link.getLastHeartbeatAt().toString());
-            if(link.getHeartbeatJson()!=null)result.set("motionTelemetry",link.getHeartbeatJson().path("telemetry"));
+            if(link.getHeartbeatJson()!=null) {
+                result.set("motionTelemetry",link.getHeartbeatJson().path("telemetry"));
+                var report=link.getHeartbeatJson().path("mappingSession");
+                if(s.getSessionId().toString().equals(report.path("session_id").asText()))
+                    result.set("autonomy",report.path("autonomy"));
+            }
         });
         return result;
     }
@@ -45,6 +50,11 @@ public class MappingSessionController {
     @Operation(summary="Manual mapping pulse; zero velocities stop. HTTP 202 does not prove robot movement.")
     public MappingControlService.Receipt control(@PathVariable UUID jobId,@Valid @RequestBody MappingControlService.Request body,@AuthenticationPrincipal AccountPrincipal actor) {
         session(jobId,actor);return controls.send(jobId,body);
+    }
+    @PostMapping("/{jobId}/mapping-autonomy") @PreAuthorize("hasRole('ADMIN')") @ResponseStatus(HttpStatus.ACCEPTED)
+    @Operation(summary="Start/renew/stop bounded LiDAR exploration. Renew every 300 ms; HTTP 202 is not Pi acceptance. Does not imply map coverage or save.")
+    public MappingControlService.Receipt autonomy(@PathVariable UUID jobId,@Valid @RequestBody MappingControlService.AutonomyRequest body,@AuthenticationPrincipal AccountPrincipal actor) {
+        session(jobId,actor);return controls.sendAutonomy(jobId,body);
     }
     @GetMapping("/{jobId}/mapping-control") @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<MappingControlService.Receipt> controlStatus(@PathVariable UUID jobId,@AuthenticationPrincipal AccountPrincipal actor) {

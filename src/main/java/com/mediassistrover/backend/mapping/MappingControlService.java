@@ -36,8 +36,8 @@ public class MappingControlService {
     private record ClientCursor(long sequence,Instant seenAt) { }
     private final Map<ClientKey,ClientCursor> clientOrder=new ConcurrentHashMap<>();
     public record Request(@NotNull UUID mappingSessionId,
-            @NotNull @DecimalMin("-0.15") @DecimalMax("0.15") Double linearX,
-            @NotNull @DecimalMin("-0.5") @DecimalMax("0.5") Double angularZ,
+            @NotNull @DecimalMin("-0.30") @DecimalMax("0.30") Double linearX,
+            @NotNull @DecimalMin("-1.0") @DecimalMax("1.0") Double angularZ,
             @Min(100) @Max(900) int durationMs,
             UUID controlSessionId,@Min(1) Long controlSequence,Instant requestedAt) {
         public Request(UUID mappingSessionId,Double linearX,Double angularZ,int durationMs) {
@@ -47,16 +47,38 @@ public class MappingControlService {
     public record Receipt(UUID commandId,UUID jobId,UUID mappingSessionId,UUID transportSessionId,
             long sequenceNo,Instant issuedAt,Instant expiresAt,String status,String errorCode,Instant receivedAt) { }
 
+    public record Autonomy(@NotNull String action,@NotNull UUID runId,
+            @Min(10) @Max(600) int maxDurationSec,boolean stopOnReturn,boolean saveOnComplete) {
+        public Autonomy(String action,UUID runId,int maxDurationSec,boolean stopOnReturn){this(action,runId,maxDurationSec,stopOnReturn,false);}
+    }
+    public record AutonomyRequest(@NotNull UUID mappingSessionId,
+            @NotNull @jakarta.validation.Valid Autonomy autonomy,
+            @NotNull UUID controlSessionId,@NotNull @Min(1) Long controlSequence,@NotNull Instant requestedAt) { }
+
     @Transactional
-    public Receipt send(UUID jobId,Request input) {
+    public Receipt send(UUID jobId,Request input) { return publish(jobId,input,null); }
+
+    @Transactional
+    public Receipt sendAutonomy(UUID jobId,AutonomyRequest input) {
+        Autonomy options=input.autonomy();
+        if(options==null || options.runId()==null || options.action()==null || !Set.of("START","RENEW","STOP").contains(options.action())
+                || options.maxDurationSec()<10 || options.maxDurationSec()>600 || input.controlSessionId()==null
+                || input.controlSequence()==null || input.requestedAt()==null)
+            throw new BusinessRuleException("Invalid autonomy action, scope or duration");
+        return publish(jobId,new Request(input.mappingSessionId(),0.,0.,900,input.controlSessionId(),
+                input.controlSequence(),input.requestedAt()),options);
+    }
+
+    private Receipt publish(UUID jobId,Request input,Autonomy autonomy) {
         if(!mapping.isEnabled() || !mqtt.isDispatchEnabled())throw new BusinessRuleException("Mapping dispatch is disabled");
         Job job=jobs.lockById(jobId).orElseThrow(()->new ResourceNotFoundException("Job not found"));
         MappingSession session=mappingSessions.findByJobId(jobId).orElseThrow(()->new BusinessRuleException("Job has no mapping session"));
         if(!session.getSessionId().equals(input.mappingSessionId()) || !session.isPotentiallyOpen())
             throw new BusinessRuleException("Mapping session is closed or does not belong to Job");
-        boolean stop=input.linearX()!=null && input.angularZ()!=null && input.linearX()==0 && input.angularZ()==0;
+        boolean stop=input.linearX()!=null && input.angularZ()!=null && input.linearX()==0 && input.angularZ()==0
+                && (autonomy==null || "STOP".equals(autonomy.action()));
         if(input.linearX()==null || input.angularZ()==null || !Double.isFinite(input.linearX()) || !Double.isFinite(input.angularZ())
-                || Math.abs(input.linearX())>.15 || Math.abs(input.angularZ())>.5 || input.durationMs()<100 || input.durationMs()>900)
+                || Math.abs(input.linearX())>.30 || Math.abs(input.angularZ())>1.0 || input.durationMs()<100 || input.durationMs()>900)
             throw new BusinessRuleException("Invalid mapping velocity or duration");
         JobStep selected=job.getSelectedJobStep();
         if(!stop && (job.getStatus()!=JobStatus.RUNNING || job.getCancelRequestedAt()!=null || !"MAPPING".equals(session.getState())
@@ -67,6 +89,15 @@ public class MappingControlService {
         RobotMqttSession link=robotSessions.findById(robot).orElse(null);
         if(!mqtt.manages(robot) || !transport.connected() || !registry.fresh(link)
                 || !link.getHelloJson().path("mappingEnabled").asBoolean())throw new BusinessRuleException("Pi mapping connection is not ready");
+        if(!stop && autonomy==null && link.getHeartbeatJson()!=null
+                && "gamepad".equals(link.getHeartbeatJson().at("/mappingSession/autonomy/manual_control/source").asText()))
+            throw new BusinessRuleException("Local gamepad owns manual movement; STOP and autonomy remain available");
+        if(autonomy!=null && !stop) {
+            JsonNode report=link.getHeartbeatJson()==null?null:link.getHeartbeatJson().path("mappingSession");
+            if(report==null || !session.getSessionId().toString().equals(report.path("session_id").asText())
+                    || !report.path("autonomy").path("available").asBoolean())
+                throw new BusinessRuleException("Pi autonomy is not configured for this mapping session; install/configure the Pi patch first");
+        }
         // Keep manual-control timestamps compatible with Python 3.10 robots.
         // Durable commands pass through DB precision; this QoS 0 lane does not.
         Instant now=Instant.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
@@ -95,6 +126,9 @@ public class MappingControlService {
                 .put("mappingSessionId",session.getSessionId().toString()).put("commandId",receipt.commandId().toString())
                 .put("sequenceNo",receipt.sequenceNo()).put("issuedAt",now.toString()).put("expiresAt",receipt.expiresAt().toString())
                 .put("linearX",input.linearX()).put("angularZ",input.angularZ()).put("durationMs",input.durationMs());
+        if(autonomy!=null)command.set("autonomy",wire.object().put("action",autonomy.action())
+                .put("runId",autonomy.runId().toString()).put("maxDurationSec",autonomy.maxDurationSec())
+                .put("stopOnReturn",autonomy.stopOnReturn()).put("saveOnComplete",autonomy.saveOnComplete()));
         contracts.live(command);latest.put(robot,receipt);
         transport.publish(MqttTopics.topic(robot,"mapping/control"),wire.bytes(command),0).whenComplete((ignored,error)->
                 latest.computeIfPresent(robot,(id,current)->!current.commandId().equals(receipt.commandId()) || !"QUEUED".equals(current.status())?current:
