@@ -2,7 +2,10 @@ FROM maven:3.9.9-eclipse-temurin-21 AS build
 WORKDIR /workspace
 COPY pom.xml .
 COPY src src
-RUN --mount=type=cache,id=s/7c61045a-bacd-4265-a22e-75000517ebd4-/root/.m2,target=/root/.m2 mvn -B --no-transfer-progress -DskipTests package
+RUN --mount=type=cache,id=mar-maven-repository,target=/root/.m2 \
+    mvn -B --no-transfer-progress -DskipTests clean package && \
+    jar tf target/backend-*.jar > /tmp/backend-jar-entries && \
+    grep -q '^BOOT-INF/' /tmp/backend-jar-entries
 
 FROM eclipse-temurin:21-jre
 WORKDIR /app
