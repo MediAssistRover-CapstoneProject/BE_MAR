@@ -1,0 +1,9 @@
+# Explicit local simulation opt-in. Does not enable physical robot dispatch.
+services:
+  backend:
+    environment:
+      APP_SIMULATION_ENABLED: "true"
+      APP_SIMULATION_MAP_FILE: /app/local-simulation/map.json
+      APP_SIMULATION_ROBOT_ID: 9cd72e40-5778-4ee8-b5c3-e1030089e3a1
+    volumes:
+      - ../../FE/FE_WEB_MAR/src/features/maps/localMockMap.generated.json:/app/local-simulation/map.json:ro

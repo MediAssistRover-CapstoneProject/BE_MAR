@@ -19,6 +19,7 @@ public class PahoMqttTransport implements SmartLifecycle {
     private final com.mediassistrover.backend.mqtt.MqttProperties properties;
     private final MqttConnectionState state;
     private final ObjectProvider<MqttInboundRouter> router;
+    private final ObjectProvider<com.mediassistrover.backend.simulation.LocalSimulationGateway> simulation;
     private volatile MqttAsyncClient client;
     private volatile boolean running;
     private final MqttPublishQueue publications=new MqttPublishQueue();
@@ -59,10 +60,10 @@ public class PahoMqttTransport implements SmartLifecycle {
                 public void authPacketArrived(int reason,MqttProperties packet) { }
                 public void connectComplete(boolean reconnect,String uri) {
                     try {
-                        client.subscribe(subscriptions(),null,new MqttActionListener() {
+                        client.subscribe(activeSubscriptions(),null,new MqttActionListener() {
                             public void onSuccess(IMqttToken token) {
                                 int[] reasons=token.getReasonCodes();
-                                if (reasons==null || reasons.length!=subscriptions().length || java.util.Arrays.stream(reasons).anyMatch(code->code>=128)) {
+                                if (reasons==null || reasons.length!=activeSubscriptions().length || java.util.Arrays.stream(reasons).anyMatch(code->code>=128)) {
                                     state.disconnected();log.warn("MQTT SUBACK denied a required topic; session remains unavailable");
                                 } else {state.connectedNow();log.info("MQTT subscriptions ready: clientId={} connectionId={} reconnect={}",properties.getClientId(),state.connectionId(),reconnect);}
                             }
@@ -72,7 +73,11 @@ public class PahoMqttTransport implements SmartLifecycle {
                 }
                 public void messageArrived(String topic,MqttMessage message) {
                     byte[] bytes=message.getPayload().clone();int qos=message.getQos();boolean retained=message.isRetained();
-                    try {inbound.execute(()->router.getObject().receive(topic,bytes,qos,retained));}
+                    try {inbound.execute(()->{
+                        var sim=simulation.getObject();
+                        if(sim.accepts(topic)) sim.receive(topic,bytes,qos,retained);
+                        else router.getObject().receive(topic,bytes,qos,retained);
+                    });}
                     catch (RejectedExecutionException ex) {log.warn("MQTT inbound queue full; durable event receives no application ACK");}
                 }
             });
@@ -91,7 +96,7 @@ public class PahoMqttTransport implements SmartLifecycle {
     public CompletableFuture<Void> publish(String topic,byte[] bytes,int qos) {
         if (!connected()) return CompletableFuture.failedFuture(new IllegalStateException("MQTT is disconnected"));
         var payload=new MqttWire().parse(bytes);
-        boolean priority="SERVER_HEARTBEAT".equals(payload.path("messageType").asText()) || "CANCEL_STEP".equals(payload.path("commandType").asText())
+        boolean priority="CANCEL_PATROL".equals(payload.path("commandType").asText()) || "SERVER_HEARTBEAT".equals(payload.path("messageType").asText()) || "CANCEL_STEP".equals(payload.path("commandType").asText())
                 || "MAPPING_CONTROL".equals(payload.path("messageType").asText()) && payload.path("linearX").asDouble()==0 && payload.path("angularZ").asDouble()==0;
         return publications.offer(topic,bytes,qos,priority,properties.getPublishQueueCapacity());
     }
@@ -104,6 +109,16 @@ public class PahoMqttTransport implements SmartLifecycle {
             value.setRetainAsPublished(true);value.setRetainHandling(2);subscriptions[i]=value;
         }
         return subscriptions;
+    }
+    private MqttSubscription[] activeSubscriptions() {
+        var sim=simulation.getObject();
+        if(!sim.enabled()) return subscriptions();
+        var list=new java.util.ArrayList<>(java.util.Arrays.asList(subscriptions()));
+        for(String lane:java.util.List.of("telemetry","acks")) {
+            var sub=new MqttSubscription(sim.prefix()+lane,lane.equals("telemetry")?0:1);
+            sub.setRetainAsPublished(true);sub.setRetainHandling(2);list.add(sub);
+        }
+        return list.toArray(MqttSubscription[]::new);
     }
     private void drainPublication() {
         if(!connected()) return;
