@@ -5,8 +5,9 @@
 <style>
 #mapNavigation .nav-layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:20px}
 #mapNavigation .nav-map-wrap{display:flex;justify-content:center;align-items:start;background:#e7e7e7;min-height:180px;padding:8px;overflow:auto}
-#mapNavigation canvas{display:block;max-width:100%;height:auto;touch-action:none;cursor:crosshair;image-rendering:pixelated}
+#mapNavigation canvas{display:block;max-width:100%;height:auto;touch-action:none;cursor:crosshair;image-rendering:auto}
 #mapNavigation select,#mapNavigation input{width:100%;padding:9px;border:1px solid #999;border-radius:4px;background:#fff}
+#mapNavigation .nav-render-option input{width:auto;margin-right:6px}
 #mapNavigation .nav-inline{display:flex;gap:8px;align-items:end;flex-wrap:wrap}
 #mapNavigation .nav-inline label{flex:1;min-width:180px}
 #mapNavigation .nav-status{padding:10px;background:#eef4ff;white-space:pre-line;line-height:1.5}
@@ -21,7 +22,7 @@
 </style>
 <!-- END_NAVIGATION_STYLE -->
 <style>
-[hidden]{display:none!important}*{box-sizing:border-box}body{margin:24px auto;padding:0 20px;max-width:1200px;font:16px system-ui;color:#171717;background:#fafafa}h1{font-size:25px}label{display:block;font-size:13px;margin:8px 0}input{width:100%;padding:9px;border:1px solid #999;border-radius:4px}button{padding:10px 16px;margin:5px 5px 5px 0;background:white;border:1px solid #555;border-radius:4px;cursor:pointer}button:disabled{opacity:.45;cursor:default}.row{display:flex;gap:20px;align-items:start}.main{flex:3;min-width:0}.side{flex:1;min-width:250px}.panel{padding:16px;border:1px solid #bbb;background:white;margin:12px 0}.fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.map{width:100%;max-height:650px;object-fit:contain;background:#ddd;image-rendering:pixelated}.camera{width:100%;background:#ddd}small{display:block;color:#555;margin:8px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:250px;overflow:auto;font-size:13px}#notice{min-height:25px;font-weight:600}#stop{background:#222;color:white} @media(max-width:800px){.row{display:block}.fields{grid-template-columns:1fr}}
+[hidden]{display:none!important}*{box-sizing:border-box}body{margin:24px auto;padding:0 20px;max-width:1200px;font:16px system-ui;color:#171717;background:#fafafa}h1{font-size:25px}label{display:block;font-size:13px;margin:8px 0}input{width:100%;padding:9px;border:1px solid #999;border-radius:4px}button{padding:10px 16px;margin:5px 5px 5px 0;background:white;border:1px solid #555;border-radius:4px;cursor:pointer}button:disabled{opacity:.45;cursor:default}.row{display:flex;gap:20px;align-items:start}.main{flex:3;min-width:0}.side{flex:1;min-width:250px}.panel{padding:16px;border:1px solid #bbb;background:white;margin:12px 0}.fields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.map{width:100%;max-height:650px;object-fit:contain;background:#ddd;image-rendering:auto}.map[data-original-cells="true"]{image-rendering:pixelated}.map-render-option input{width:auto;margin-right:6px}.camera{width:100%;background:#ddd}small{display:block;color:#555;margin:8px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:250px;overflow:auto;font-size:13px}#notice{min-height:25px;font-weight:600}#stop{background:#222;color:white} @media(max-width:800px){.row{display:block}.fields{grid-template-columns:1fr}}
 </style>
 <h1>Quét bản đồ robot</h1>
 <p>Map cập nhật tối đa 1 giây/lần. Video mượt dùng server camera hãng cổng 8080. Ảnh MQTT là tùy chọn băng thông thấp.</p>
@@ -34,7 +35,7 @@
 </details>
 <div id="notice" role="status"></div>
 <button id="recover" disabled>Đóng job lỗi đã có bằng chứng dừng</button>
-<div class="row"><section class="main panel"><h2>Bản đồ đang quét</h2><div id="mapStage" style="position:relative;line-height:0"><img id="mapImage" class="map" style="display:block" alt="Chưa nhận dữ liệu bản đồ" hidden><div id="mapOverlay" hidden style="position:absolute;inset:0;pointer-events:none"><svg id="mapSvg" aria-label="Vị trí và hướng robot" style="width:100%;height:100%" preserveAspectRatio="xMidYMid meet"><g id="robotMarker"><circle id="robotDot" fill="#0879ee" fill-opacity=".7" stroke="white" stroke-width="1"/><path id="robotArrow" fill="#ff7900" stroke="white" stroke-width=".6"/></g></svg></div></div><small id="mapTime">Đang chờ dữ liệu mới từ Pi.</small><small id="mapGeometry">Kích thước map lấy từ dữ liệu quét, không cố định 3 × 5 m.</small><small id="robotPose">Chưa có vị trí robot trong phiên quét.</small></section>
+<div class="row"><section class="main panel"><h2>Bản đồ đang quét</h2><label class="map-render-option"><input id="liveOriginalCells" type="checkbox"> Xem ô bản đồ gốc</label><small>Nét hiển thị mượt mặc định; map lưu giữ nguyên dữ liệu quét.</small><div id="mapStage" style="position:relative;line-height:0"><img id="mapImage" class="map" style="display:block" alt="Chưa nhận dữ liệu bản đồ" hidden><div id="mapOverlay" hidden style="position:absolute;inset:0;pointer-events:none"><svg id="mapSvg" aria-label="Vị trí và hướng robot" style="width:100%;height:100%" preserveAspectRatio="xMidYMid meet"><g id="robotMarker"><circle id="robotDot" fill="#0879ee" fill-opacity=".7" stroke="white" stroke-width="1"/><path id="robotArrow" fill="#ff7900" stroke="white" stroke-width=".6"/></g></svg></div></div><small id="mapTime">Đang chờ dữ liệu mới từ Pi.</small><small id="mapGeometry">Kích thước map lấy từ dữ liệu quét, không cố định 3 × 5 m.</small><small id="robotPose">Chưa có vị trí robot trong phiên quét.</small></section>
 <aside class="side"><section class="panel"><h2>Camera robot</h2><img id="cameraImage" class="camera" alt="Chưa nhận ảnh camera" hidden><img id="cameraStreamImage" class="camera" alt="Video trực tiếp từ robot" hidden><small id="cameraTime">Chưa có ảnh.</small>
 <details><summary>Video trực tiếp cùng mạng</summary><label>URL video từ robot<input id="cameraStreamUrl" type="url" placeholder="http://IP_PI:8080/stream?topic=/ascamera/camera_publisher/rgb0/image&amp;type=mjpeg&amp;width=640&amp;height=480&amp;quality=60"></label><button id="startCameraStream">Xem video trực tiếp</button><button id="stopCameraStream">Dùng ảnh MQTT</button><small>Video trực tiếp cần laptop truy cập được Pi. Muốn dùng ảnh MQTT cần bật tùy chọn thumbnail trên Pi. Video cổng 8080 cần mạng truy cập trực tiếp hoặc đường hầm.</small></details></section>
 <section class="panel"><h2>Di chuyển</h2><small id="manualControlStatus">Đang chờ cấu hình điều khiển từ Pi.</small><p>Bấm một lần để chạy trong thời gian đã chọn. Trang gia hạn lệnh ngắn; có thể Dừng bất kỳ lúc nào.</p>
@@ -77,7 +78,7 @@
       if(!Number.isInteger(seconds)||seconds<10||seconds>600)throw Error('Thời gian tự chạy từ 10 đến 600 giây.');
       this.context={...context};this.saveAfter=saveAfter;this.stopMessage=null;
       this.run={action:'START',runId:crypto.randomUUID(),maxDurationSec:seconds,stopOnReturn:!!stopOnReturn,saveOnComplete:!!saveAfter};
-      this.active=true;this.confirmed=false;this.startedAt=performance.now();this.commandIds=new Set();const generation=++this.generation;
+      this.active=true;this.confirmed=false;this.startedAt=performance.now();this.commandIds=new Set();this.receiptTarget=null;const generation=++this.generation;
       this.limit=setTimeout(()=>this.stop('Hết thời gian trên trình duyệt; đã ngừng gia hạn.').catch(()=>{}),(seconds+3)*1000);
       this.onChange('Đã gửi yêu cầu tự chạy; đang chờ trạng thái từ Pi.');
       this.renew(generation,true);
@@ -100,6 +101,16 @@
       if(receipt.status==='PI_ACCEPTED')this.confirmed=true;
       if(['PI_REJECTED','NO_PI_ACK','PUBLISH_FAILED'].includes(receipt.status))
         this.stop('Pi chưa thực hiện lệnh: '+(receipt.errorCode||receipt.status)).catch(()=>{});
+      if(['PI_ACCEPTED','PI_REJECTED','NO_PI_ACK','PUBLISH_FAILED'].includes(receipt.status)){
+        this.commandIds.delete(receipt.commandId);if(this.receiptTarget===receipt.commandId)this.receiptTarget=null;
+      }
+    }
+    receiptCommandId(){
+      if(!this.active)return null;
+      if(!this.receiptTarget||!this.commandIds.has(this.receiptTarget)){
+        const ids=[...this.commandIds];this.receiptTarget=ids[Math.max(0,ids.length-4)]??null;
+      }
+      return this.receiptTarget;
     }
     cancel(){this.active=false;++this.generation;clearTimeout(this.timer);clearTimeout(this.limit);}
     async stop(message='Đã ngừng gia hạn tự chạy và gửi yêu cầu dừng.'){
@@ -151,6 +162,7 @@
     $('autoStop').onclick=async()=>{try{await run.stop();await host.manualStop();}catch(e){$('autoStatus').textContent='Chưa xác nhận dừng: '+e.message;}};
     return {
       observeReceipt(receipt){run.observeReceipt(receipt);},
+      receiptCommandId(){return run.receiptCommandId();},
       get active(){return run.active;},
       get owned(){return run.active||fresh&&!!report?.control_selected;},
       cancel(){run.cancel();},
@@ -186,6 +198,7 @@
   if(typeof module!=='undefined'&&module.exports)module.exports=api;
   else root.MappingAutonomy=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
+
 </script>
 <!-- END_AUTONOMY_SCRIPT -->
 <script>
@@ -247,10 +260,7 @@ function mapPoint(p,value){
 }
 function freshMapPose(sample,observed){const age=(Date.now()-Date.parse(observed))/1000;return sample?.fresh===true&&Number.isFinite(sample.age_sec)&&sample.age_sec>=0&&Number.isFinite(age)&&age>= -1&&Math.max(age,0)+sample.age_sec<=2.5}
 function scopedPose(state){
-  const heartbeat=state.motionTelemetry?.map_pose;
-  if(heartbeat?.value?.mapping_session_id===state.mapping_session_id&&freshMapPose(heartbeat,state.motionObservedAt)){
-    return {sample:heartbeat,observed:state.motionObservedAt};
-  }
+  // Pair the marker with the map snapshot's TF, never a newer heartbeat pose.
   return {sample:state.preview?.pose,observed:state.preview?.captured_at};
 }
 function renderMapView(state){
@@ -330,7 +340,7 @@ $('cameraStreamImage').onload=()=>{if(cameraStreaming)$('cameraTime').textConten
 $('cameraStreamImage').onerror=()=>{if(cameraStreaming){stopCameraStream();$('cameraTime').textContent='Không kết nối được video. Kiểm tra URL/Pi; đang dùng lại ảnh MQTT.'}};
 window.addEventListener('pagehide',stopCameraStream);
 function renderMotion(state){const manual=state.autonomy?.manual_control;manualSource=manual?.source??null;$('manualControlStatus').textContent=manual?('Nguồn: '+manual.source+' • '+manual.layout+' • '+manual.forward_mps+' m/s • '+manual.angular_rps+' rad/s'+(manual.continuous?' • giữ cần chạy liên tục':'')+(manual.session_required?' • cần phiên quét':' • joystick chạy cả khi chưa tạo job')):'Chưa nhận cấu hình điều khiển từ Pi.';const age=state.motionObservedAt?(Date.now()-Date.parse(state.motionObservedAt))/1000:Infinity;const sample=state.motionTelemetry?.gate;let gate;try{gate=JSON.parse(sample?.value??'null')}catch{}if(!gate||age>10){$('motionStatus').textContent='Chưa có phản hồi chuyển động mới từ Pi.';return}const labels={CLEAR:'Đường điều khiển đang cho phép chuyển động',NO_LEASE:'Đang dừng/chờ lệnh',STALE_COMMAND:'Chưa nhận được lệnh mới',STALE_OR_INVALID_US100:'Dừng: dữ liệu siêu âm chưa hợp lệ hoặc đã cũ',SIDE_OBSTACLE:'Dừng: có vật cản bên cạnh',REAR_OBSTACLE:'Dừng: có vật cản phía sau',REAR_LIDAR_NOT_READY:'Dừng: LiDAR phía sau chưa đủ dữ liệu',REAR_LIDAR_TF_NOT_READY:'Dừng: chưa xác định được hướng LiDAR phía sau',STALE_REAR_LIDAR:'Dừng: dữ liệu LiDAR phía sau đã cũ',REVERSE_NOT_ENABLED:'Chưa bật cấu hình lùi M1',NOT_COMMISSIONED:'Cấu hình chuyển động chưa được bật'};$('motionStatus').textContent=(labels[gate.reason]??('Robot dừng/giới hạn: '+gate.reason))+' • cập nhật '+Math.max(0,Math.round(age))+' giây trước'}
-async function poll(){if(!job||polling)return;polling=true;const epoch=watchEpoch,observedJob=job;try{const state=await api('/api/v1/jobs/'+encodeURIComponent(observedJob)+'/mapping-session?includePreview=false');if(epoch!==watchEpoch)return;session=state.mapping_session_id;renderMotion(state);recovery=state.job_status==='RECOVERY_REQUIRED';mapping=state.state==='MAPPING'&&state.potentially_open&&state.job_status==='RUNNING';autoMapping?.render(state);if(!mapping&&jog.active)await jog.stop('Nhiệm vụ không còn cho phép di chuyển.').catch(()=>{});notice(state.job_status==='RECOVERY_REQUIRED'?'Nhiệm vụ cần khôi phục. Đã khóa nút di chuyển; không tạo thêm nhiệm vụ.':mapping?'Đang quét bản đồ.':'Trạng thái nhiệm vụ: '+state.job_status+' / '+state.state);const p=state.preview;const summary={...state,preview:p?{revision:p.revision,width:p.width,height:p.height,resolution:p.resolution,captured_at:p.captured_at,pose:p.pose}:null};$('state').textContent=JSON.stringify(summary,null,2);buttons();await Promise.all([picture('mapping-preview.png','mapImage','mapTime',epoch,observedJob),picture('camera-preview.jpg','cameraImage','cameraTime',epoch,observedJob)]);if(epoch!==watchEpoch)return;renderMapView(state);if(state.job_status==='FAILED'){const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));const failed=detail.steps?.find(s=>s.status==='FAILED');if(failed)notice('Nhiệm vụ thất bại tại '+failed.stepCodeSnapshot+': '+(failed.errorCode||'Xem chi tiết nhiệm vụ')+(failed.errorCode==='MAP_UPLOAD_UNAUTHORIZED'?' — upload bị từ chối xác thực; map vẫn giữ trên Pi.':''))}const receipt=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control');if(receipt){autoMapping?.observeReceipt(receipt);$('receipt').textContent=JSON.stringify(receipt,null,2);if(jog.active&&receipt.commandId===jog.commandId&&['PI_REJECTED','NO_PI_ACK','PUBLISH_FAILED'].includes(receipt.status))await jog.stop('Pi chưa thực hiện lệnh: '+(receipt.errorCode||receipt.status)).catch(()=>{})}}catch(e){if(epoch!==watchEpoch)return;mapping=false;hideRobot();if(autoMapping?.active)await autoMapping.stop().catch(()=>{});if(jog.active)await jog.stop('Mất kết nối theo dõi nhiệm vụ.').catch(()=>{});buttons();if(e.status===404){try{const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));$('state').textContent=JSON.stringify(detail,null,2);if(['QUEUED','ACCEPTED','RUNNING'].includes(detail.job.status)){notice('Đang chờ Pi mở phiên quét.');return}}catch(lookup){notice(lookup.message)}}notice(e.message);clearImage('mapImage','mapTime','Mất kết nối hoặc chưa có phiên quét.');clearImage('cameraImage','cameraTime','Không có ảnh mới.')}finally{polling=false}}
+async function poll(){if(!job||polling)return;polling=true;const epoch=watchEpoch,observedJob=job;try{const state=await api('/api/v1/jobs/'+encodeURIComponent(observedJob)+'/mapping-session?includePreview=false');if(epoch!==watchEpoch)return;session=state.mapping_session_id;renderMotion(state);recovery=state.job_status==='RECOVERY_REQUIRED';mapping=state.state==='MAPPING'&&state.potentially_open&&state.job_status==='RUNNING';autoMapping?.render(state);if(!mapping&&jog.active)await jog.stop('Nhiệm vụ không còn cho phép di chuyển.').catch(()=>{});notice(state.job_status==='RECOVERY_REQUIRED'?'Nhiệm vụ cần khôi phục. Đã khóa nút di chuyển; không tạo thêm nhiệm vụ.':mapping?'Đang quét bản đồ.':'Trạng thái nhiệm vụ: '+state.job_status+' / '+state.state);const p=state.preview;const summary={...state,preview:p?{revision:p.revision,width:p.width,height:p.height,resolution:p.resolution,captured_at:p.captured_at,pose:p.pose}:null};$('state').textContent=JSON.stringify(summary,null,2);buttons();await Promise.all([picture('mapping-preview.png','mapImage','mapTime',epoch,observedJob),picture('camera-preview.jpg','cameraImage','cameraTime',epoch,observedJob)]);if(epoch!==watchEpoch)return;renderMapView(state);if(state.job_status==='FAILED'){const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));const failed=detail.steps?.find(s=>s.status==='FAILED');if(failed)notice('Nhiệm vụ thất bại tại '+failed.stepCodeSnapshot+': '+(failed.errorCode||'Xem chi tiết nhiệm vụ')+(failed.errorCode==='MAP_UPLOAD_UNAUTHORIZED'?' — upload bị từ chối xác thực; map vẫn giữ trên Pi.':''))}const receiptId=autoMapping?.receiptCommandId();const receipt=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control'+(receiptId?'?commandId='+encodeURIComponent(receiptId):''));if(receipt){autoMapping?.observeReceipt(receipt);$('receipt').textContent=JSON.stringify(receipt,null,2);if(jog.active&&receipt.commandId===jog.commandId&&['PI_REJECTED','NO_PI_ACK','PUBLISH_FAILED'].includes(receipt.status))await jog.stop('Pi chưa thực hiện lệnh: '+(receipt.errorCode||receipt.status)).catch(()=>{})}}catch(e){if(epoch!==watchEpoch)return;mapping=false;hideRobot();if(autoMapping?.active)await autoMapping.stop().catch(()=>{});if(jog.active)await jog.stop('Mất kết nối theo dõi nhiệm vụ.').catch(()=>{});buttons();if(e.status===404){try{const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));$('state').textContent=JSON.stringify(detail,null,2);if(['QUEUED','ACCEPTED','RUNNING'].includes(detail.job.status)){notice('Đang chờ Pi mở phiên quét.');return}}catch(lookup){notice(lookup.message)}}notice(e.message);clearImage('mapImage','mapTime','Mất kết nối hoặc chưa có phiên quét.');clearImage('cameraImage','cameraTime','Không có ảnh mới.')}finally{polling=false}}
 async function watch(){if(autoMapping?.active)await autoMapping.stop().catch(()=>{});if(jog.active)await jog.stop().catch(()=>{});if(timer)clearInterval(timer);job=$('job').value.trim();if(!job){notice('Cần jobId.');return}watchEpoch++;resetSavedMap();session='';mapping=false;recovery=false;clearImage('mapImage','mapTime','Đang chờ map của phiên mới.');$('mapGeometry').textContent='Đang chờ kích thước map mới.';clearImage('cameraImage','cameraTime','Đang chờ ảnh của phiên mới.');buttons();poll();timer=setInterval(poll,1000)}
 async function control(x,z){if(!session)throw Error('Chưa có phiên quét.');return api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control',{mappingSessionId:session,linearX:x,angularZ:z,durationMs:900,controlSessionId,controlSequence:++controlSequence,requestedAt:new Date().toISOString()},false,{timeoutMs:1200,keepalive:x===0&&z===0})}
 function jogVelocity(directionX,directionZ,speed,turn){if(!Number.isFinite(speed)||speed<0||speed>.30||!Number.isFinite(turn)||turn<0||turn>1.0)throw Error('Tốc độ không hợp lệ.');return [Math.sign(directionX)*speed,Math.sign(directionZ)*turn]}
@@ -360,6 +370,7 @@ $('recover').onclick=async()=>{busy=true;buttons();try{
   },false,{headers:{'Idempotency-Key':crypto.randomUUID()}});
   recovery=false;mapping=false;$('receipt').textContent=JSON.stringify(result,null,2);notice('Đã đóng job lỗi. Đợi Pi kết nối HELLO mới và dispatchReady=true trước khi tạo nhiệm vụ.');
 }catch(e){notice(e.message);$('receipt').textContent=e.message}finally{busy=false;buttons()}};
+$('liveOriginalCells').onchange=()=>{$('mapImage').dataset.originalCells=String($('liveOriginalCells').checked)};
 $('watch').onclick=watch;$('unwatch').onclick=()=>{if(autoMapping?.active)autoMapping.stop().catch(()=>{});watchEpoch++;if(jog.active)jog.stop('Đã ngừng theo dõi và ngừng gia hạn.').catch(()=>{});clearInterval(timer);timer=null;mapping=false;buttons();notice('Đã ngừng theo dõi. Nhiệm vụ trên BE vẫn còn; lệnh di chuyển tự hết hạn.');clearImage('mapImage','mapTime','Đã ngừng theo dõi.');clearImage('cameraImage','cameraTime','Đã ngừng theo dõi.')};
 document.addEventListener('visibilitychange',()=>{if(document.hidden){if(autoMapping?.active)autoMapping.stop().catch(()=>{});mapping=false;if(jog.active)jog.stop('Trang đã ẩn; đã ngừng gia hạn.').catch(()=>{});buttons()}});
 window.addEventListener('blur',()=>{if(jog.active)jog.stop('Cửa sổ mất focus; đã ngừng gia hạn.').catch(()=>{})});
@@ -434,6 +445,25 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
     const p = mapToPixel(meta, x, y);
     return p.u >= 0 && p.v >= 0 && p.u < meta.width_px && p.v < meta.height_px;
   }
+  // Display pixels are independent of occupancy cells and metric coordinates.
+  function renderSize(meta, cssWidth, deviceRatio, originalCells) {
+    const width = meta.width_px, height = meta.height_px;
+    const ratio = Number.isFinite(deviceRatio) ? Math.max(1, Math.min(2, deviceRatio)) : 1;
+    const requested = originalCells ? 1 : (cssWidth > 0 ? cssWidth : width) * ratio / width;
+    const scale = Math.min(requested, Math.sqrt(4000000 / (width * height)), 8192 / width, 8192 / height);
+    return {width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale))};
+  }
+  // Rotate only the view. Both pointer picking and markers share this transform.
+  function viewTransform(width, height, degrees) {
+    const radians = (Number.isFinite(degrees) ? degrees : 0) * Math.PI / 180;
+    const c = Math.cos(radians), s = Math.sin(radians);
+    const w = Math.abs(c) * width + Math.abs(s) * height;
+    const h = Math.abs(s) * width + Math.abs(c) * height;
+    return {width:w, height:h, radians,
+      forward(u,v) { const x=u-width/2,y=v-height/2; return {u:c*x-s*y+w/2,v:s*x+c*y+h/2}; },
+      inverse(u,v) { const x=u-w/2,y=v-h/2; return {u:c*x+s*y+width/2,v:-s*x+c*y+height/2}; }
+    };
+  }
   function freshPose(snapshot, meta, receivedAgeMs) {
     const pose = snapshot?.latestPose, robot = snapshot?.robot;
     const age = Date.parse(snapshot?.observedAt) - Date.parse(pose?.capturedAt);
@@ -447,6 +477,22 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
         Math.max(0, age) + receivedAgeMs > 3000 ||
         ![pose.xM, pose.yM, pose.yawRad].every(Number.isFinite) || !inside(meta, pose.xM, pose.yM)) return null;
     return pose;
+  }
+  function poseView(snapshot, meta, receivedAgeMs, nowMs, memory) {
+    const session=snapshot?.navigationSession;
+    const scope=snapshot ? stable([snapshot.robot?.robotId,meta.map_id,meta.asset_hash,meta.frame_id,
+      session?.sessionId??null,session?.initialization?.revision??0]) : null;
+    if(memory && (memory.mapId!==meta.map_id || memory.hash!==meta.asset_hash || memory.frame!==meta.frame_id ||
+        scope!==null && memory.scope!==scope || session && ['NONE','CLOSED','EXPIRED'].includes(session.state)))memory=null;
+    const current=freshPose(snapshot,meta,receivedAgeMs);
+    if(current){
+      const ageMs=Math.max(0,Date.parse(snapshot.observedAt)-Date.parse(current.capturedAt))+receivedAgeMs;
+      memory={scope,mapId:meta.map_id,hash:meta.asset_hash,frame:meta.frame_id,pose:{...current},at:nowMs-ageMs};
+      return {memory,pose:current,live:true,ageMs};
+    }
+    const ageMs=memory ? nowMs-memory.at : Infinity;
+    if(!Number.isFinite(ageMs)||ageMs<0||ageMs>600000)memory=null;
+    return {memory,pose:memory?.pose??null,live:false,ageMs};
   }
   function workflowContract(detail) {
     const w = detail?.workflow;
@@ -495,8 +541,12 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       <button id="navSendSeed" disabled>Gửi vị trí khởi tạo cho AMCL</button><button id="navGlobal" disabled>Yêu cầu tự tìm vị trí toàn cục</button>
       <small>Mũi tên khởi tạo là ước lượng do người dùng đặt. Chỉ mũi tên xanh khi Pi xác minh READY mới là vị trí robot. Phòng đối xứng hoặc ít đặc trưng có thể cần đặt vị trí khởi tạo.</small>
       <div class="nav-layout"><div>
+        <label class="nav-render-option"><input id="navOriginalCells" type="checkbox"> Xem ô bản đồ gốc</label>
+        <small>Nét hiển thị mượt mặc định. Tọa độ và dữ liệu dẫn đường dùng bản đồ gốc.</small>
+        <label>Góc xoay hiển thị (độ)<input id="navViewAngle" type="number" min="-180" max="180" step="1" value="0"></label>
+        <small>Xoay để căn tường theo chiều ngang. Chỉ đổi góc nhìn; tọa độ endpoint, hướng robot và file map giữ nguyên.</small>
         <div class="nav-map-wrap"><canvas id="navCanvas" width="640" height="360" hidden aria-label="Bản đồ chọn vị trí và hướng endpoint"></canvas></div>
-        <div class="nav-legend"><span style="--marker:#0879ee">Robot còn dữ liệu mới</span><span style="--marker:#157347">Endpoint đã lưu</span><span style="--marker:#dc7400">Điểm đang đặt</span></div>
+        <div class="nav-legend"><span style="--marker:#0879ee">Robot còn dữ liệu mới</span><span style="--marker:#777">Vị trí cuối đang chờ định vị</span><span style="--marker:#157347">Endpoint đã lưu</span><span style="--marker:#dc7400">Điểm đang đặt</span></div>
         <div id="navPose" class="nav-status" role="status">Chưa có vị trí robot trên map này.</div>
         <small id="navRobotStatus">Chưa theo dõi robot.</small>
       </div><div>
@@ -514,7 +564,7 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       <h3>Chạy workflow MOVE</h3>
       <label>Workflow NAVIGATION một step MOVE<input id="navWorkflowId" readonly></label>
       <button id="navPrepare">Chuẩn bị workflow MOVE</button>
-      <small>Tốc độ tối đa của workflow mẫu là 0,05 m/s. Không tạo StepType mới; dùng MOVE đã có.</small>
+      <small>Tốc độ tối đa của workflow mẫu là 0,15 m/s. Không tạo StepType mới; dùng MOVE đã có.</small>
       <button id="navRefresh">Kiểm tra vị trí và trạng thái</button>
       <button id="navMove" disabled>Đi tới endpoint bằng robot của phiên</button>
       <button id="navCancel" disabled>Hủy yêu cầu dẫn đường</button>
@@ -623,17 +673,33 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
     }
     function draw() {
       if (!state.image || !state.meta) return;
-      ctx.imageSmoothingEnabled = false; ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(state.image, 0, 0, canvas.width, canvas.height);
+      const original = $('navOriginalCells').checked;
+      const transform = viewTransform(state.meta.width_px,state.meta.height_px,Number($('navViewAngle').value));
+      canvas.style.width = 'min(100%, ' + Math.max(180,650*transform.width/transform.height) + 'px)';
+      const size = renderSize({width_px:transform.width,height_px:transform.height}, canvas.getBoundingClientRect().width, window.devicePixelRatio, original);
+      if (canvas.width !== size.width || canvas.height !== size.height) {
+        canvas.width = size.width; canvas.height = size.height;
+      }
+      canvas.style.imageRendering = original ? 'pixelated' : 'auto';
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.setTransform(canvas.width / transform.width, 0, 0, canvas.height / transform.height, 0, 0);
+      ctx.translate(transform.width/2,transform.height/2); ctx.rotate(transform.radians);
+      ctx.translate(-state.meta.width_px/2,-state.meta.height_px/2);
+      ctx.imageSmoothingEnabled = !original; ctx.imageSmoothingQuality = 'high';
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.drawImage(state.image, 0, 0, state.meta.width_px, state.meta.height_px);
       const radius = Math.max(1.5, .07 / state.meta.resolution_m_per_pixel);
       for (const e of state.endpoints) if (inside(state.meta, e.xM, e.yM)) arrow(e.xM, e.yM, e.yawRad, e.endpointId === selected()?.endpointId ? '#7427bd' : '#157347', e.endpointCode, radius);
       if (state.draft) arrow(state.draft.xM, state.draft.yM, state.draft.yawRad, '#dc7400', '', radius);
       if(state.seed)arrow(state.seed.xM,state.seed.yM,state.seed.yawRad,'#bd7515','Ước lượng khởi tạo',radius*1.4);
-      const current = pose();
+      const view=poseView(state.snapshot,state.meta,performance.now()-state.receivedAt,performance.now(),state.remembered);
+      state.remembered=view.memory;
+      const current = view.pose;
       if (current) {
-        arrow(current.xM, current.yM, current.yawRad, '#0879ee', '', radius * 1.6);
+        arrow(current.xM, current.yM, current.yawRad, view.live?'#0879ee':'#777', '', radius * 1.6);
         $('navPose').textContent = `Robot ${current.robotId}\nX=${current.xM.toFixed(3)} m · Y=${current.yM.toFixed(3)} m · hướng ${(current.yawRad * 180 / Math.PI).toFixed(1)}°`;
-      } else $('navPose').textContent = 'Chưa có vị trí mới, đúng map và hash đã chọn. Cần Pi nạp map, định vị AMCL và gửi pose mới; không hiển thị pose cũ.';
+        if(!view.live)$('navPose').textContent+=`\nVị trí cuối ${Math.ceil(view.ageMs/1000)} giây trước; đang chờ định vị mới. Chỉ để xem, MOVE đang khóa.`;
+      } else $('navPose').textContent = 'Chưa có vị trí mới, đúng map và hash đã chọn. Cần Pi nạp map, định vị AMCL và gửi pose mới.';
     }
     function showEndpoints(id = '') {
       $('navEndpoints').replaceChildren(new Option('Chọn endpoint', ''));
@@ -654,7 +720,7 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       if (active() && state.meta) throw Error('Theo dõi/hủy yêu cầu hiện tại trước khi đổi map.');
       const id = $('navMapId').value.trim(); if (!UUID.test(id)) throw Error('Map ID không hợp lệ.');
       const generation = ++state.generation; clearTimeout(state.timer);
-      state.seed=null;state.dragging=null;
+      state.seed=null;state.dragging=null;state.remembered=null;
       for(const field of ['navSeedX','navSeedY'])$(field).value='';
       state.meta = state.map = state.image = state.snapshot = null; canvas.hidden = true; clearPoint();
       if (state.imageUrl) URL.revokeObjectURL(state.imageUrl); state.imageUrl = null;
@@ -713,7 +779,7 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
     async function poll(generation) {
       if (state.closed || generation !== state.generation || !state.meta) return;
       try { await trackRequest(); await snapshot(); }
-      catch (error) { state.snapshot = null; $('navRobotStatus').textContent = 'Chưa cập nhật được: ' + error.message; draw();
+      catch (error) { state.snapshot = null; $('navRobotStatus').textContent = 'Chưa cập nhật được: ' + error.message; controls();draw();
         if (error.status === 401 || error.status === 403) return; }
       if (!state.closed && generation === state.generation) state.timer = setTimeout(() => poll(generation), 1000);
     }
@@ -833,7 +899,7 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
     async function initialize(mode){
       const session=state.snapshot?.navigationSession;if(!session?.sessionId||session.mapId!==mapId())throw Error('Mở phiên của đúng map trước.');
       await api('/api/v1/robots/'+robotId()+'/navigation-session/initialization',{method:'POST',body:{sessionId:session.sessionId,mode,...(mode==='SEED'?state.seed:{})}});
-      state.snapshot=null;draw();await snapshot();say('Đã yêu cầu khởi tạo; chờ AMCL xác minh. Chưa gửi MOVE.');
+      state.snapshot=null;state.remembered=null;draw();await snapshot();say('Đã yêu cầu khởi tạo; chờ AMCL xác minh. Chưa gửi MOVE.');
     }
     $('navSendSeed').onclick=()=>mutate(()=>initialize('SEED'));
     $('navGlobal').onclick=()=>mutate(()=>initialize('GLOBAL'));
@@ -851,10 +917,16 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       clearTimeout(state.timer); state.timer = setTimeout(() => poll(state.generation), 1000);
       say(pose() ? 'Đã nhận vị trí mới đúng map.' : 'Chưa có pose hợp lệ trên map đã chọn; xem trạng thái robot.');
     });
-    const pointer = event => { const box = canvas.getBoundingClientRect(); return {u: (event.clientX - box.left) * canvas.width / box.width, v: (event.clientY - box.top) * canvas.height / box.height}; };
+    $('navOriginalCells').onchange = draw;
+    $('navViewAngle').oninput = draw;
+    const pointer = event => {
+      const box = canvas.getBoundingClientRect();
+      const transform = viewTransform(state.meta.width_px,state.meta.height_px,Number($('navViewAngle').value));
+      return transform.inverse((event.clientX-box.left)*transform.width/box.width,(event.clientY-box.top)*transform.height/box.height);
+    };
     canvas.addEventListener('pointerdown', event => {
       if (!state.meta || state.busy || active() || event.button !== 0) return;
-      const p = pointer(event); if (p.u < 0 || p.v < 0 || p.u >= canvas.width || p.v >= canvas.height) return;
+      const p = pointer(event); if (p.u < 0 || p.v < 0 || p.u >= state.meta.width_px || p.v >= state.meta.height_px) return;
       if($('navSeedMode').checked){
         const point=pixelToMap(state.meta,Math.floor(p.u)+.5,Math.floor(p.v)+.5);
         $('navSeedX').value=point.xM;$('navSeedY').value=point.yM;
@@ -879,12 +951,12 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       state.seed=null;for(const id of ['navSeedX','navSeedY'])$(id).value='';
       $('navPose').textContent = 'Chưa tải map mới.'; controls();
     });
-    const expiryTimer = setInterval(draw, 250);
+    const expiryTimer = setInterval(()=>{controls();draw();}, 250);
     window.addEventListener('pagehide', () => { state.closed = true; state.generation++; clearTimeout(state.timer); clearInterval(expiryTimer); if (state.imageUrl) URL.revokeObjectURL(state.imageUrl); });
     controls();
     return {loadMap, state};
   }
-  return {geometry, pixelToMap, mapToPixel, inside, freshPose, workflowContract, templateContract, mount};
+  return {geometry, pixelToMap, mapToPixel, inside, renderSize, viewTransform, freshPose, poseView, workflowContract, templateContract, mount};
 });
 
 </script>

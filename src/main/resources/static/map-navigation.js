@@ -38,6 +38,25 @@
     const p = mapToPixel(meta, x, y);
     return p.u >= 0 && p.v >= 0 && p.u < meta.width_px && p.v < meta.height_px;
   }
+  // Display pixels are independent of occupancy cells and metric coordinates.
+  function renderSize(meta, cssWidth, deviceRatio, originalCells) {
+    const width = meta.width_px, height = meta.height_px;
+    const ratio = Number.isFinite(deviceRatio) ? Math.max(1, Math.min(2, deviceRatio)) : 1;
+    const requested = originalCells ? 1 : (cssWidth > 0 ? cssWidth : width) * ratio / width;
+    const scale = Math.min(requested, Math.sqrt(4000000 / (width * height)), 8192 / width, 8192 / height);
+    return {width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale))};
+  }
+  // Rotate only the view. Both pointer picking and markers share this transform.
+  function viewTransform(width, height, degrees) {
+    const radians = (Number.isFinite(degrees) ? degrees : 0) * Math.PI / 180;
+    const c = Math.cos(radians), s = Math.sin(radians);
+    const w = Math.abs(c) * width + Math.abs(s) * height;
+    const h = Math.abs(s) * width + Math.abs(c) * height;
+    return {width:w, height:h, radians,
+      forward(u,v) { const x=u-width/2,y=v-height/2; return {u:c*x-s*y+w/2,v:s*x+c*y+h/2}; },
+      inverse(u,v) { const x=u-w/2,y=v-h/2; return {u:c*x+s*y+width/2,v:-s*x+c*y+height/2}; }
+    };
+  }
   function freshPose(snapshot, meta, receivedAgeMs) {
     const pose = snapshot?.latestPose, robot = snapshot?.robot;
     const age = Date.parse(snapshot?.observedAt) - Date.parse(pose?.capturedAt);
@@ -51,6 +70,22 @@
         Math.max(0, age) + receivedAgeMs > 3000 ||
         ![pose.xM, pose.yM, pose.yawRad].every(Number.isFinite) || !inside(meta, pose.xM, pose.yM)) return null;
     return pose;
+  }
+  function poseView(snapshot, meta, receivedAgeMs, nowMs, memory) {
+    const session=snapshot?.navigationSession;
+    const scope=snapshot ? stable([snapshot.robot?.robotId,meta.map_id,meta.asset_hash,meta.frame_id,
+      session?.sessionId??null,session?.initialization?.revision??0]) : null;
+    if(memory && (memory.mapId!==meta.map_id || memory.hash!==meta.asset_hash || memory.frame!==meta.frame_id ||
+        scope!==null && memory.scope!==scope || session && ['NONE','CLOSED','EXPIRED'].includes(session.state)))memory=null;
+    const current=freshPose(snapshot,meta,receivedAgeMs);
+    if(current){
+      const ageMs=Math.max(0,Date.parse(snapshot.observedAt)-Date.parse(current.capturedAt))+receivedAgeMs;
+      memory={scope,mapId:meta.map_id,hash:meta.asset_hash,frame:meta.frame_id,pose:{...current},at:nowMs-ageMs};
+      return {memory,pose:current,live:true,ageMs};
+    }
+    const ageMs=memory ? nowMs-memory.at : Infinity;
+    if(!Number.isFinite(ageMs)||ageMs<0||ageMs>600000)memory=null;
+    return {memory,pose:memory?.pose??null,live:false,ageMs};
   }
   function workflowContract(detail) {
     const w = detail?.workflow;
@@ -99,8 +134,12 @@
       <button id="navSendSeed" disabled>Gửi vị trí khởi tạo cho AMCL</button><button id="navGlobal" disabled>Yêu cầu tự tìm vị trí toàn cục</button>
       <small>Mũi tên khởi tạo là ước lượng do người dùng đặt. Chỉ mũi tên xanh khi Pi xác minh READY mới là vị trí robot. Phòng đối xứng hoặc ít đặc trưng có thể cần đặt vị trí khởi tạo.</small>
       <div class="nav-layout"><div>
+        <label class="nav-render-option"><input id="navOriginalCells" type="checkbox"> Xem ô bản đồ gốc</label>
+        <small>Nét hiển thị mượt mặc định. Tọa độ và dữ liệu dẫn đường dùng bản đồ gốc.</small>
+        <label>Góc xoay hiển thị (độ)<input id="navViewAngle" type="number" min="-180" max="180" step="1" value="0"></label>
+        <small>Xoay để căn tường theo chiều ngang. Chỉ đổi góc nhìn; tọa độ endpoint, hướng robot và file map giữ nguyên.</small>
         <div class="nav-map-wrap"><canvas id="navCanvas" width="640" height="360" hidden aria-label="Bản đồ chọn vị trí và hướng endpoint"></canvas></div>
-        <div class="nav-legend"><span style="--marker:#0879ee">Robot còn dữ liệu mới</span><span style="--marker:#157347">Endpoint đã lưu</span><span style="--marker:#dc7400">Điểm đang đặt</span></div>
+        <div class="nav-legend"><span style="--marker:#0879ee">Robot còn dữ liệu mới</span><span style="--marker:#777">Vị trí cuối đang chờ định vị</span><span style="--marker:#157347">Endpoint đã lưu</span><span style="--marker:#dc7400">Điểm đang đặt</span></div>
         <div id="navPose" class="nav-status" role="status">Chưa có vị trí robot trên map này.</div>
         <small id="navRobotStatus">Chưa theo dõi robot.</small>
       </div><div>
@@ -118,7 +157,7 @@
       <h3>Chạy workflow MOVE</h3>
       <label>Workflow NAVIGATION một step MOVE<input id="navWorkflowId" readonly></label>
       <button id="navPrepare">Chuẩn bị workflow MOVE</button>
-      <small>Tốc độ tối đa của workflow mẫu là 0,05 m/s. Không tạo StepType mới; dùng MOVE đã có.</small>
+      <small>Tốc độ tối đa của workflow mẫu là 0,15 m/s. Không tạo StepType mới; dùng MOVE đã có.</small>
       <button id="navRefresh">Kiểm tra vị trí và trạng thái</button>
       <button id="navMove" disabled>Đi tới endpoint bằng robot của phiên</button>
       <button id="navCancel" disabled>Hủy yêu cầu dẫn đường</button>
@@ -227,17 +266,33 @@
     }
     function draw() {
       if (!state.image || !state.meta) return;
-      ctx.imageSmoothingEnabled = false; ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(state.image, 0, 0, canvas.width, canvas.height);
+      const original = $('navOriginalCells').checked;
+      const transform = viewTransform(state.meta.width_px,state.meta.height_px,Number($('navViewAngle').value));
+      canvas.style.width = 'min(100%, ' + Math.max(180,650*transform.width/transform.height) + 'px)';
+      const size = renderSize({width_px:transform.width,height_px:transform.height}, canvas.getBoundingClientRect().width, window.devicePixelRatio, original);
+      if (canvas.width !== size.width || canvas.height !== size.height) {
+        canvas.width = size.width; canvas.height = size.height;
+      }
+      canvas.style.imageRendering = original ? 'pixelated' : 'auto';
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.setTransform(canvas.width / transform.width, 0, 0, canvas.height / transform.height, 0, 0);
+      ctx.translate(transform.width/2,transform.height/2); ctx.rotate(transform.radians);
+      ctx.translate(-state.meta.width_px/2,-state.meta.height_px/2);
+      ctx.imageSmoothingEnabled = !original; ctx.imageSmoothingQuality = 'high';
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.drawImage(state.image, 0, 0, state.meta.width_px, state.meta.height_px);
       const radius = Math.max(1.5, .07 / state.meta.resolution_m_per_pixel);
       for (const e of state.endpoints) if (inside(state.meta, e.xM, e.yM)) arrow(e.xM, e.yM, e.yawRad, e.endpointId === selected()?.endpointId ? '#7427bd' : '#157347', e.endpointCode, radius);
       if (state.draft) arrow(state.draft.xM, state.draft.yM, state.draft.yawRad, '#dc7400', '', radius);
       if(state.seed)arrow(state.seed.xM,state.seed.yM,state.seed.yawRad,'#bd7515','Ước lượng khởi tạo',radius*1.4);
-      const current = pose();
+      const view=poseView(state.snapshot,state.meta,performance.now()-state.receivedAt,performance.now(),state.remembered);
+      state.remembered=view.memory;
+      const current = view.pose;
       if (current) {
-        arrow(current.xM, current.yM, current.yawRad, '#0879ee', '', radius * 1.6);
+        arrow(current.xM, current.yM, current.yawRad, view.live?'#0879ee':'#777', '', radius * 1.6);
         $('navPose').textContent = `Robot ${current.robotId}\nX=${current.xM.toFixed(3)} m · Y=${current.yM.toFixed(3)} m · hướng ${(current.yawRad * 180 / Math.PI).toFixed(1)}°`;
-      } else $('navPose').textContent = 'Chưa có vị trí mới, đúng map và hash đã chọn. Cần Pi nạp map, định vị AMCL và gửi pose mới; không hiển thị pose cũ.';
+        if(!view.live)$('navPose').textContent+=`\nVị trí cuối ${Math.ceil(view.ageMs/1000)} giây trước; đang chờ định vị mới. Chỉ để xem, MOVE đang khóa.`;
+      } else $('navPose').textContent = 'Chưa có vị trí mới, đúng map và hash đã chọn. Cần Pi nạp map, định vị AMCL và gửi pose mới.';
     }
     function showEndpoints(id = '') {
       $('navEndpoints').replaceChildren(new Option('Chọn endpoint', ''));
@@ -258,7 +313,7 @@
       if (active() && state.meta) throw Error('Theo dõi/hủy yêu cầu hiện tại trước khi đổi map.');
       const id = $('navMapId').value.trim(); if (!UUID.test(id)) throw Error('Map ID không hợp lệ.');
       const generation = ++state.generation; clearTimeout(state.timer);
-      state.seed=null;state.dragging=null;
+      state.seed=null;state.dragging=null;state.remembered=null;
       for(const field of ['navSeedX','navSeedY'])$(field).value='';
       state.meta = state.map = state.image = state.snapshot = null; canvas.hidden = true; clearPoint();
       if (state.imageUrl) URL.revokeObjectURL(state.imageUrl); state.imageUrl = null;
@@ -317,7 +372,7 @@
     async function poll(generation) {
       if (state.closed || generation !== state.generation || !state.meta) return;
       try { await trackRequest(); await snapshot(); }
-      catch (error) { state.snapshot = null; $('navRobotStatus').textContent = 'Chưa cập nhật được: ' + error.message; draw();
+      catch (error) { state.snapshot = null; $('navRobotStatus').textContent = 'Chưa cập nhật được: ' + error.message; controls();draw();
         if (error.status === 401 || error.status === 403) return; }
       if (!state.closed && generation === state.generation) state.timer = setTimeout(() => poll(generation), 1000);
     }
@@ -437,7 +492,7 @@
     async function initialize(mode){
       const session=state.snapshot?.navigationSession;if(!session?.sessionId||session.mapId!==mapId())throw Error('Mở phiên của đúng map trước.');
       await api('/api/v1/robots/'+robotId()+'/navigation-session/initialization',{method:'POST',body:{sessionId:session.sessionId,mode,...(mode==='SEED'?state.seed:{})}});
-      state.snapshot=null;draw();await snapshot();say('Đã yêu cầu khởi tạo; chờ AMCL xác minh. Chưa gửi MOVE.');
+      state.snapshot=null;state.remembered=null;draw();await snapshot();say('Đã yêu cầu khởi tạo; chờ AMCL xác minh. Chưa gửi MOVE.');
     }
     $('navSendSeed').onclick=()=>mutate(()=>initialize('SEED'));
     $('navGlobal').onclick=()=>mutate(()=>initialize('GLOBAL'));
@@ -455,10 +510,16 @@
       clearTimeout(state.timer); state.timer = setTimeout(() => poll(state.generation), 1000);
       say(pose() ? 'Đã nhận vị trí mới đúng map.' : 'Chưa có pose hợp lệ trên map đã chọn; xem trạng thái robot.');
     });
-    const pointer = event => { const box = canvas.getBoundingClientRect(); return {u: (event.clientX - box.left) * canvas.width / box.width, v: (event.clientY - box.top) * canvas.height / box.height}; };
+    $('navOriginalCells').onchange = draw;
+    $('navViewAngle').oninput = draw;
+    const pointer = event => {
+      const box = canvas.getBoundingClientRect();
+      const transform = viewTransform(state.meta.width_px,state.meta.height_px,Number($('navViewAngle').value));
+      return transform.inverse((event.clientX-box.left)*transform.width/box.width,(event.clientY-box.top)*transform.height/box.height);
+    };
     canvas.addEventListener('pointerdown', event => {
       if (!state.meta || state.busy || active() || event.button !== 0) return;
-      const p = pointer(event); if (p.u < 0 || p.v < 0 || p.u >= canvas.width || p.v >= canvas.height) return;
+      const p = pointer(event); if (p.u < 0 || p.v < 0 || p.u >= state.meta.width_px || p.v >= state.meta.height_px) return;
       if($('navSeedMode').checked){
         const point=pixelToMap(state.meta,Math.floor(p.u)+.5,Math.floor(p.v)+.5);
         $('navSeedX').value=point.xM;$('navSeedY').value=point.yM;
@@ -483,10 +544,10 @@
       state.seed=null;for(const id of ['navSeedX','navSeedY'])$(id).value='';
       $('navPose').textContent = 'Chưa tải map mới.'; controls();
     });
-    const expiryTimer = setInterval(draw, 250);
+    const expiryTimer = setInterval(()=>{controls();draw();}, 250);
     window.addEventListener('pagehide', () => { state.closed = true; state.generation++; clearTimeout(state.timer); clearInterval(expiryTimer); if (state.imageUrl) URL.revokeObjectURL(state.imageUrl); });
     controls();
     return {loadMap, state};
   }
-  return {geometry, pixelToMap, mapToPixel, inside, freshPose, workflowContract, templateContract, mount};
+  return {geometry, pixelToMap, mapToPixel, inside, renderSize, viewTransform, freshPose, poseView, workflowContract, templateContract, mount};
 });

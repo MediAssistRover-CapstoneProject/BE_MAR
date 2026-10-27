@@ -92,3 +92,17 @@ test('missing start confirmation has a bounded wait and never falls back to RENE
   await run.renew(run.generation);
   assert.equal(run.active,false);assert.deepEqual(calls,['START','STOP']);
 });
+test('receipt poll follows a pending command while renewals continue',async()=>{
+  let count=0;
+  const run=new AutonomyRun(async()=>({commandId:'c'+(++count),status:'MQTT_PUBLISHED'}),()=>{},()=>{});
+  try {
+    run.start(context,30,false,false);await tick();clearTimeout(run.timer);
+    const first=run.receiptCommandId();
+    await run.renew(run.generation);clearTimeout(run.timer);
+    assert.equal(run.receiptCommandId(),first);
+    run.observeReceipt({commandId:first,status:'PI_ACCEPTED'});
+    assert.equal(run.confirmed,true);assert.notEqual(run.receiptCommandId(),first);
+    run.observeReceipt({commandId:run.receiptCommandId(),status:'PI_REJECTED',errorCode:'AUTONOMY_RUN_FINISHED'});await tick();
+    assert.equal(run.active,false);assert.equal(run.receiptCommandId(),null);
+  } finally {run.cancel();}
+});

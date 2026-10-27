@@ -57,8 +57,9 @@ public class MappingSessionController {
         session(jobId,actor);return controls.sendAutonomy(jobId,body);
     }
     @GetMapping("/{jobId}/mapping-control") @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<MappingControlService.Receipt> controlStatus(@PathVariable UUID jobId,@AuthenticationPrincipal AccountPrincipal actor) {
-        session(jobId,actor);var receipt=controls.status(jobId);
+    public ResponseEntity<MappingControlService.Receipt> controlStatus(@PathVariable UUID jobId,
+            @RequestParam(required=false) UUID commandId,@AuthenticationPrincipal AccountPrincipal actor) {
+        session(jobId,actor);var receipt=controls.status(jobId,commandId);
         return receipt==null?ResponseEntity.noContent().build():ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(receipt);
     }
     @GetMapping(value="/{jobId}/mapping-preview.png",produces=MediaType.IMAGE_PNG_VALUE) @PreAuthorize("hasRole('ADMIN')")

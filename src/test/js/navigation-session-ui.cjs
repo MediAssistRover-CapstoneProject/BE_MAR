@@ -22,7 +22,7 @@ function detail(){return {workflow:{...definition.workflow,workflowId,startStepI
 (async()=>{
  const browser=await chromium.launch({headless:true,channel:'chrome'});
  try{
-  const page=await browser.newPage({viewport:{width:1100,height:1000}}),errors=[],calls=[];
+  const page=await browser.newPage({viewport:{width:1100,height:1000},deviceScaleFactor:Number(process.env.MAR_TEST_DPR||1)}),errors=[],calls=[];
   let session=null,endpoints=[],request=null,job=null;
   page.on('pageerror',e=>errors.push(e.message));
   function snapshot(){const now=new Date().toISOString();return {observedAt:now,mqttConnected:true,heartbeatFresh:true,dispatchReady:true,activeJobId:null,
@@ -32,7 +32,7 @@ function detail(){return {workflow:{...definition.workflow,workflowId,startStepI
    const r=route.request(),p=new URL(r.url()).pathname,method=r.method();
    const json=body=>route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
    const paged=content=>json({content,totalPages:1,last:true});
-   if(p==='/')return route.fulfill({contentType:'text/html',body:'<meta charset="UTF-8"><div id="host"></div><script src="/map-navigation.js"></script>'});
+   if(p==='/')return route.fulfill({contentType:'text/html',body:'<meta charset="UTF-8"><style>'+fs.readFileSync(root+'/map-navigation.css','utf8')+'</style><div id="mapNavigation"></div><script src="/map-navigation.js"></script>'});
    if(p==='/map-navigation.js')return route.fulfill({contentType:'application/javascript',body:fs.readFileSync(root+p)});
    if(p==='/navigation-move-workflow.json')return json(definition);
    if(p==='/favicon.ico')return route.fulfill({status:204});
@@ -59,7 +59,7 @@ function detail(){return {workflow:{...definition.workflow,workflowId,startStepI
   });
   await page.goto('http://127.0.0.1:18884/');
   await page.evaluate(({robotId,mapId})=>{
-   window.testNav=SavedMapNavigation.mount({element:document.querySelector('#host'),getRobotId:()=>robotId,getToken:()=> 'test-admin',isMappingActive:()=>false,getSavedMapId:()=>mapId});
+   window.testNav=SavedMapNavigation.mount({element:document.querySelector('#mapNavigation'),getRobotId:()=>robotId,getToken:()=> 'test-admin',isMappingActive:()=>false,getSavedMapId:()=>mapId});
    document.querySelector('#navMapId').value=mapId;
   },{robotId,mapId});
   await page.click('#navLoad');await page.waitForFunction(()=>!document.querySelector('#navLoad').disabled&&!document.querySelector('#navCanvas').hidden);
@@ -69,6 +69,31 @@ function detail(){return {workflow:{...definition.workflow,workflowId,startStepI
   assert((await page.textContent('#navPiCommand')).includes(sessionId));
   assert((await page.textContent('#navPose')).includes('Chưa có vị trí'));
   await page.check('#navSeedMode');
+  const originalMeta=await page.evaluate(()=>JSON.stringify(testNav.state.meta));
+  const originalImage=await page.evaluate(()=>testNav.state.image.src);
+  let selectedCell;
+  for(const original of [false,true,false]){
+   await page.locator('#navOriginalCells').setChecked(original);
+   const rect=await page.locator('#navCanvas').boundingBox();
+   await page.mouse.click(rect.x+rect.width*.405,rect.y+rect.height*.505);
+   const point=[Number(await page.inputValue('#navSeedX')),Number(await page.inputValue('#navSeedY'))];
+   if(selectedCell)assert.deepEqual(point,selectedCell,'rendering mode must not change selected occupancy cell');
+   selectedCell=point;
+   assert.equal(await page.evaluate(()=>JSON.stringify(testNav.state.meta)),originalMeta);
+   assert.equal(await page.evaluate(()=>testNav.state.image.src),originalImage);
+   const pixels=await page.locator('#navCanvas').evaluate(c=>c.width);
+   assert(original ? pixels===100 : pixels>100);
+  }
+  for(const degrees of [-45,30,90]) {
+   await page.fill('#navViewAngle',String(degrees));
+   const rect=await page.locator('#navCanvas').boundingBox();
+   const view=require('../../main/resources/static/map-navigation.js').viewTransform(100,100,degrees);
+   const point=view.forward(40.5,50.5);
+   await page.mouse.click(rect.x+rect.width*point.u/view.width,rect.y+rect.height*point.v/view.height);
+   assert.deepEqual([Number(await page.inputValue('#navSeedX')),Number(await page.inputValue('#navSeedY'))],selectedCell);
+   assert.equal(await page.evaluate(()=>JSON.stringify(testNav.state.meta)),originalMeta);
+  }
+  await page.fill('#navViewAngle','0');
   const box=await page.locator('#navCanvas').boundingBox();
   await page.mouse.move(box.x+box.width*.4,box.y+box.height*.5);await page.mouse.down();
   await page.mouse.move(box.x+box.width*.4,box.y+box.height*.3);await page.mouse.up();
@@ -84,6 +109,11 @@ function detail(){return {workflow:{...definition.workflow,workflowId,startStepI
   await page.click('#navSavePoint');await page.waitForFunction(id=>document.querySelector('#navEndpoints').value===id,endpointId);
   assert(calls.some(c=>c.p.endsWith('/validate-navigation-point')));
   await page.click('#navPrepare');await page.waitForFunction(id=>document.querySelector('#navWorkflowId').value===id,workflowId);
+  session.state='LOCALIZING';await page.click('#navRefresh');
+  await page.waitForFunction(()=>document.querySelector('#navPose').textContent.includes('Vị trí cuối'));
+  assert(await page.isDisabled('#navMove'));
+  session.state='READY';await page.click('#navRefresh');
+  await page.waitForFunction(()=>!document.querySelector('#navMove').disabled);
   await page.click('#navMove');await page.waitForFunction(()=>document.querySelector('#navReceipt').textContent.includes('QUEUED'));
   const move=calls.find(c=>c.p==='/api/v1/navigation-requests').body;
   assert.equal(move.robotId,robotId);assert.equal(move.navigationSessionId,sessionId);

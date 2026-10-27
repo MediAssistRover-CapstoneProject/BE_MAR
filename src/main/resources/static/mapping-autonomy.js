@@ -11,7 +11,7 @@
       if(!Number.isInteger(seconds)||seconds<10||seconds>600)throw Error('Thời gian tự chạy từ 10 đến 600 giây.');
       this.context={...context};this.saveAfter=saveAfter;this.stopMessage=null;
       this.run={action:'START',runId:crypto.randomUUID(),maxDurationSec:seconds,stopOnReturn:!!stopOnReturn,saveOnComplete:!!saveAfter};
-      this.active=true;this.confirmed=false;this.startedAt=performance.now();this.commandIds=new Set();const generation=++this.generation;
+      this.active=true;this.confirmed=false;this.startedAt=performance.now();this.commandIds=new Set();this.receiptTarget=null;const generation=++this.generation;
       this.limit=setTimeout(()=>this.stop('Hết thời gian trên trình duyệt; đã ngừng gia hạn.').catch(()=>{}),(seconds+3)*1000);
       this.onChange('Đã gửi yêu cầu tự chạy; đang chờ trạng thái từ Pi.');
       this.renew(generation,true);
@@ -34,6 +34,16 @@
       if(receipt.status==='PI_ACCEPTED')this.confirmed=true;
       if(['PI_REJECTED','NO_PI_ACK','PUBLISH_FAILED'].includes(receipt.status))
         this.stop('Pi chưa thực hiện lệnh: '+(receipt.errorCode||receipt.status)).catch(()=>{});
+      if(['PI_ACCEPTED','PI_REJECTED','NO_PI_ACK','PUBLISH_FAILED'].includes(receipt.status)){
+        this.commandIds.delete(receipt.commandId);if(this.receiptTarget===receipt.commandId)this.receiptTarget=null;
+      }
+    }
+    receiptCommandId(){
+      if(!this.active)return null;
+      if(!this.receiptTarget||!this.commandIds.has(this.receiptTarget)){
+        const ids=[...this.commandIds];this.receiptTarget=ids[Math.max(0,ids.length-4)]??null;
+      }
+      return this.receiptTarget;
     }
     cancel(){this.active=false;++this.generation;clearTimeout(this.timer);clearTimeout(this.limit);}
     async stop(message='Đã ngừng gia hạn tự chạy và gửi yêu cầu dừng.'){
@@ -85,6 +95,7 @@
     $('autoStop').onclick=async()=>{try{await run.stop();await host.manualStop();}catch(e){$('autoStatus').textContent='Chưa xác nhận dừng: '+e.message;}};
     return {
       observeReceipt(receipt){run.observeReceipt(receipt);},
+      receiptCommandId(){return run.receiptCommandId();},
       get active(){return run.active;},
       get owned(){return run.active||fresh&&!!report?.control_selected;},
       cancel(){run.cancel();},

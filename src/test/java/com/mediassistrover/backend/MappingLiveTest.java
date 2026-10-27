@@ -60,6 +60,35 @@ class MappingLiveTest {
         assertThatThrownBy(()->controls.send(jobId,new MappingControlService.Request(sid,.05,0.,400))).hasMessageContaining("Move only");
         assertThatCode(()->controls.send(jobId,new MappingControlService.Request(sid,0.,0.,400))).doesNotThrowAnyException();
     }
+    @Test void lateAckRemainsQueryableAfterNewerCommandWithoutReplacingLatest() {
+        var first=controls.send(jobId,new MappingControlService.Request(sid,.05,0.,400));
+        ObjectNode ack=published.deepCopy();
+        ack.put("producerSessionId",link.getProducerSessionId().toString()).put("accepted",false)
+                .put("errorCode","AUTONOMY_RUN_FINISHED");
+        var second=controls.send(jobId,new MappingControlService.Request(sid,0.,0.,400));
+        controls.acknowledge(robot,ack);
+        assertThat(controls.status(jobId,first.commandId()).status()).isEqualTo("PI_REJECTED");
+        assertThat(controls.status(jobId,first.commandId()).errorCode()).isEqualTo("AUTONOMY_RUN_FINISHED");
+        assertThat(controls.status(jobId).commandId()).isEqualTo(second.commandId());
+        assertThat(controls.status(jobId).status()).isEqualTo("MQTT_PUBLISHED");
+        assertThat(controls.status(jobId,UUID.randomUUID())).isNull();
+        UUID other=UUID.randomUUID();when(sessions.findByJobId(other)).thenReturn(Optional.of(session));
+        assertThat(controls.status(other,first.commandId())).isNull();
+    }
+    @Test void historicalAckStillRequiresCorrectSessionProducerAndSequence() {
+        var first=controls.send(jobId,new MappingControlService.Request(sid,.05,0.,400));
+        ObjectNode ack=published.deepCopy();
+        ack.put("producerSessionId",link.getProducerSessionId().toString()).put("accepted",true).putNull("errorCode");
+        controls.send(jobId,new MappingControlService.Request(sid,0.,0.,400));
+        for(String field:List.of("jobId","mappingSessionId","transportSessionId","producerSessionId")) {
+            ObjectNode bad=ack.deepCopy();bad.put(field,UUID.randomUUID().toString());controls.acknowledge(robot,bad);
+            assertThat(controls.status(jobId,first.commandId()).status()).isEqualTo("MQTT_PUBLISHED");
+        }
+        ObjectNode bad=ack.deepCopy();bad.put("sequenceNo",first.sequenceNo()+1);controls.acknowledge(robot,bad);
+        assertThat(controls.status(jobId,first.commandId()).status()).isEqualTo("MQTT_PUBLISHED");
+        controls.acknowledge(robot,ack);
+        assertThat(controls.status(jobId,first.commandId()).status()).isEqualTo("PI_ACCEPTED");
+    }
     @Test void realtimeJavaClockSerializesControlWithMillisecondPrecision() {
         var nanos=Clock.fixed(Instant.parse("2026-10-20T15:30:40.225096447Z"),ZoneOffset.UTC);
         var service=new MappingControlService(jobs,sessions,links,registry,mqtt,properties,transport,wire,contracts,nanos);

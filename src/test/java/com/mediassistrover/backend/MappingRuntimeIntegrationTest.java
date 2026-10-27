@@ -215,6 +215,38 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
     MappingRecoveryRequest recoveryRequest() {
         return new MappingRecoveryRequest(selected().getJobStepId(),fixture.transportId,true,JobRequests.ReconcileOutcome.CONFIRM_CANCELLED,"Close failed local SAVE after verified stop");
     }
+    void rejectedCleanupStop() {
+        recoverableUnsentStop();
+        tx.executeWithoutResult(s->{
+            var step=steps.findById(selected().getJobStepId()).orElseThrow();
+            var c=commands.findByJobStepId(step.getJobStepId()).orElseGet(()->commands.save(RobotCommandOutbox.builder()
+                .commandId(UUID.randomUUID()).robotId(fixture.robotId).jobId(fixture.jobId).jobStepId(step.getJobStepId())
+                .operationKey(step.getOperationKey()).commandType("EXECUTE_STEP").state("REJECTED").payloadJson(json.createObjectNode())
+                .expiresAt(Instant.now().plusSeconds(60)).createdAt(Instant.now()).build()));
+            c.setState("REJECTED");c.setSendAttempts(1);c.setLastPublishAt(Instant.now());
+            step.setMappingCleanup(false); // normal STOP after successful SAVE/COMMIT also needs closure
+            step.setStatus(JobStepStatus.FAILED);step.setErrorCode("RETURN_GAMEPAD_TO_NEUTRAL");step.setEndedAt(Instant.now());
+            step.setErrorDetailsJson(json.createObjectNode().put("commandId",c.getCommandId().toString())
+                .put("commandType","EXECUTE_STEP").put("accepted",false).put("errorCode","RETURN_GAMEPAD_TO_NEUTRAL"));
+        });
+    }
+    @Test void rejectedCleanupStopCanCloseAfterFreshVerifiedClosedMapWithoutInventingPiResult() {
+        rejectedCleanupStop();var request=recoveryRequest();
+        assertThat(recovery.evidence(fixture.jobId,actor()).path("canReconcile").asBoolean()).isTrue();
+        var result=recover(UUID.randomUUID().toString(),request);
+        assertThat(result.path("status").asText()).isEqualTo("CANCELLED");
+        assertThat(result.path("stopWasExecuted").asBoolean()).isFalse();
+        assertThat(session().isPotentiallyOpen()).isFalse();
+    }
+    @Test void rejectedCleanupRecoveryRejectsContradictoryAckOrActualStart() {
+        rejectedCleanupStop();var request=recoveryRequest();
+        tx.executeWithoutResult(s->{var step=steps.findById(request.jobStepId()).orElseThrow();
+            ((ObjectNode)step.getErrorDetailsJson()).put("accepted",true);});
+        assertThatThrownBy(()->recover(UUID.randomUUID().toString(),request)).hasMessageContaining("MAY_HAVE_BEEN_SENT");
+        tx.executeWithoutResult(s->{var step=steps.findById(request.jobStepId()).orElseThrow();
+            ((ObjectNode)step.getErrorDetailsJson()).put("accepted",false);step.setStartedAt(Instant.now());});
+        assertThatThrownBy(()->recover(UUID.randomUUID().toString(),request)).hasMessageContaining("UNSTARTED_MAPPING_CLEANUP_STOP");
+    }
     JsonNode recover(String key,MappingRecoveryRequest request) {
         return recovery.reconcile(fixture.jobId,key,request,actor(),new RequestMetadata("test","test","test"));
     }

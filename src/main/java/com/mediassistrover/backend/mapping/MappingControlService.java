@@ -32,6 +32,9 @@ public class MappingControlService {
     // Epoch-based start also advances across normal BE restarts. Pi rejects old sequences.
     private final AtomicLong sequence=new AtomicLong(System.currentTimeMillis()*1000);
     private final Map<UUID,Receipt> latest=new ConcurrentHashMap<>();
+    // Renewals may overtake the preceding ACK. Retain bounded, ephemeral receipts
+    // by command instead of discarding that ACK when 'latest' has advanced.
+    private final Map<UUID,Map<UUID,Receipt>> recent=new ConcurrentHashMap<>();
     private record ClientKey(UUID robot,UUID mapping,UUID client) { }
     private record ClientCursor(long sequence,Instant seenAt) { }
     private final Map<ClientKey,ClientCursor> clientOrder=new ConcurrentHashMap<>();
@@ -130,8 +133,13 @@ public class MappingControlService {
                 .put("runId",autonomy.runId().toString()).put("maxDurationSec",autonomy.maxDurationSec())
                 .put("stopOnReturn",autonomy.stopOnReturn()).put("saveOnComplete",autonomy.saveOnComplete()));
         contracts.live(command);latest.put(robot,receipt);
+        var history=recent.computeIfAbsent(robot,ignored->new ConcurrentHashMap<>());
+        history.entrySet().removeIf(entry->entry.getValue().issuedAt().isBefore(now.minusSeconds(30)));
+        if(history.size()>=64)history.values().stream().min(Comparator.comparingLong(Receipt::sequenceNo))
+                .ifPresent(old->history.remove(old.commandId()));
+        history.put(receipt.commandId(),receipt);
         transport.publish(MqttTopics.topic(robot,"mapping/control"),wire.bytes(command),0).whenComplete((ignored,error)->
-                latest.computeIfPresent(robot,(id,current)->!current.commandId().equals(receipt.commandId()) || !"QUEUED".equals(current.status())?current:
+                updateCommand(robot,receipt.commandId(),current->!"QUEUED".equals(current.status())?current:
                         update(current,error==null?"MQTT_PUBLISHED":"PUBLISH_FAILED",error==null?null:"MQTT_PUBLISH_FAILED",null)));
         return receipt;
     }
@@ -139,8 +147,11 @@ public class MappingControlService {
         RobotMqttSession link=robotSessions.findById(robot).orElse(null);
         if(!registry.fresh(link) || !link.getTransportSessionId().toString().equals(ack.path("transportSessionId").asText())
                 || !link.getProducerSessionId().toString().equals(ack.path("producerSessionId").asText()))return;
-        latest.computeIfPresent(robot,(id,current)->{
+        UUID commandId;
+        try{commandId=UUID.fromString(ack.path("commandId").asText());}catch(IllegalArgumentException error){return;}
+        updateCommand(robot,commandId,current->{
             if(!current.commandId().toString().equals(ack.path("commandId").asText())
+                    || !current.transportSessionId().toString().equals(ack.path("transportSessionId").asText())
                     || !current.jobId().toString().equals(ack.path("jobId").asText())
                     || !current.mappingSessionId().toString().equals(ack.path("mappingSessionId").asText())
                     || current.sequenceNo()!=ack.path("sequenceNo").asLong())return current;
@@ -149,12 +160,24 @@ public class MappingControlService {
         });
     }
     public Receipt status(UUID jobId) {
+        return status(jobId,null);
+    }
+    public Receipt status(UUID jobId,UUID commandId) {
         var session=mappingSessions.findByJobId(jobId).orElseThrow(()->new ResourceNotFoundException("Mapping session not found"));
-        Receipt receipt=latest.get(session.getRobotId());
+        Receipt receipt=commandId==null?latest.get(session.getRobotId()):recent.getOrDefault(session.getRobotId(),Map.of()).get(commandId);
         if(receipt==null || !receipt.jobId().equals(jobId))return null;
         if(Set.of("QUEUED","MQTT_PUBLISHED").contains(receipt.status()) && receipt.expiresAt().plusSeconds(2).isBefore(Instant.now(clock)))
             return update(receipt,"NO_PI_ACK","NO_PI_ACK",null);
         return receipt;
+    }
+    private void updateCommand(UUID robot,UUID command,java.util.function.UnaryOperator<Receipt> operation) {
+        var history=recent.get(robot);
+        if(history==null)return;
+        history.computeIfPresent(command,(id,current)->{
+            Receipt updated=operation.apply(current);
+            latest.computeIfPresent(robot,(r,last)->last.commandId().equals(command)?updated:last);
+            return updated;
+        });
     }
     private Receipt update(Receipt r,String status,String error,Instant received) {
         return new Receipt(r.commandId(),r.jobId(),r.mappingSessionId(),r.transportSessionId(),r.sequenceNo(),r.issuedAt(),r.expiresAt(),status,error,received);

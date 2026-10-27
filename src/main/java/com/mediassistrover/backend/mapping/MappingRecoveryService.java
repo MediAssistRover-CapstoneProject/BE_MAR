@@ -293,7 +293,7 @@ public class MappingRecoveryService {
     int executed = 0;
     for (var command : all) {
       if (stop != null && command.getJobStepId().equals(stop.getJobStepId())) {
-        if (!neverSent(command))
+        if (!neverSent(command) && !rejectedBeforeStart(command,stop))
           blockers.add("CLEANUP_STOP_MAY_HAVE_BEEN_SENT_USE_OPERATION_RECOVERY");
         continue;
       }
@@ -353,8 +353,10 @@ public class MappingRecoveryService {
 
   private boolean unsentCleanup(JobStep step) {
     return step != null
-        && step.isMappingCleanup()
-        && step.getStatus() == JobStepStatus.PENDING
+        && (step.isMappingCleanup()
+            || step.getStatus() == JobStepStatus.FAILED && "RETURN_GAMEPAD_TO_NEUTRAL".equals(step.getErrorCode()))
+        && (step.getStatus() == JobStepStatus.PENDING
+            || step.getStatus() == JobStepStatus.FAILED && "RETURN_GAMEPAD_TO_NEUTRAL".equals(step.getErrorCode()))
         && step.getStartedAt() == null
         && MappingLifecycleService.mapping(step)
         && "STOP".equals(step.getResolvedInputsJson().path("action").asText());
@@ -368,6 +370,25 @@ public class MappingRecoveryService {
         && command.getAcknowledgedAt() == null
         && command.getResultEnvelopeJson() == null
         && command.getPhysicalStopConfirmed() == null;
+  }
+
+  private boolean rejectedBeforeStart(RobotCommandOutbox command, JobStep step) {
+    // This rejection is emitted by Pi before store.accept or any execution.
+    // State and errorDetails were committed by the validated MQTT ACK handler.
+    // All previous stop receipts, matching closed map and fresh zero odometry
+    // are still required by inspect(); this does not manufacture a STOP result.
+    JsonNode ack=step.getErrorDetailsJson();
+    return "EXECUTE_STEP".equals(command.getCommandType())
+        && "REJECTED".equals(command.getState())
+        && command.getSendAttempts()>0 && command.getLastPublishAt()!=null
+        && command.getAcknowledgedAt()==null && command.getResultEnvelopeJson()==null
+        && command.getPhysicalStopConfirmed()==null && step.getStartedAt()==null
+        && step.getStatus()==JobStepStatus.FAILED
+        && "RETURN_GAMEPAD_TO_NEUTRAL".equals(step.getErrorCode())
+        && ack!=null && ack.path("accepted").isBoolean() && !ack.path("accepted").asBoolean()
+        && command.getCommandId().toString().equals(ack.path("commandId").asText())
+        && "EXECUTE_STEP".equals(ack.path("commandType").asText())
+        && "RETURN_GAMEPAD_TO_NEUTRAL".equals(ack.path("errorCode").asText());
   }
 
   private boolean closedReport(JsonNode report, Job job, MappingSession map) {
