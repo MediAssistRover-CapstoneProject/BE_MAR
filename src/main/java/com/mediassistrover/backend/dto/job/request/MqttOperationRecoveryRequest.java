@@ -9,5 +9,5 @@ public record MqttOperationRecoveryRequest(
         @NotNull @AssertTrue Boolean confirmedStopped,
         @NotNull JobRequests.ReconcileOutcome outcome,
         @NotBlank @Size(max=2000) String note) {
-    public enum Evidence { PI_STOP_CONFIRMED, STAFF_INSPECTED_STOP }
+    public enum Evidence { PI_STOP_CONFIRMED, STAFF_INSPECTED_STOP, COMMAND_NOT_ACCEPTED }
 }

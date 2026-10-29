@@ -86,11 +86,15 @@ public class MqttOperationRecoveryService {
             return previous.getResponseJson().deepCopy();}
         if(!job.isBeOrchestrated() || job.getStatus()!=JobStatus.RECOVERY_REQUIRED || job.getSelectedJobStep()==null || !stepId.equals(job.getSelectedJobStep().getJobStepId()))
             throw new BusinessRuleException("Recovery requires the selected operation of a BE recovery Job");
-        if(request.commandId()==null || !step.getOperationKey().equals(request.operationKey()) || !Boolean.TRUE.equals(request.confirmedStopped())
+        boolean rejectedOnly=request.evidence()==MqttOperationRecoveryRequest.Evidence.COMMAND_NOT_ACCEPTED;
+        if(request.commandId()==null || !step.getOperationKey().equals(request.operationKey()) || (!rejectedOnly && !Boolean.TRUE.equals(request.confirmedStopped()))
                 || request.outcome()==null || request.evidence()==null || request.note()==null || request.note().isBlank())throw new BusinessRuleException("Recovery requires operation identity, stop evidence and note");
         RobotCommandOutbox execute=commands.findByJobStepId(stepId).orElseThrow(()->new BusinessRuleException("No executed MQTT operation"));
         if(!execute.getCommandId().equals(request.commandId()))throw new BusinessRuleException("Recovery commandId does not match operation");
         robots.findByIdForUpdate(job.getRobot().getRobotId()).orElseThrow();var session=sessions.lock(job.getRobot().getRobotId()).orElse(null);Instant now=Instant.now(clock);
+        if(rejectedOnly) {
+            verifyRejected(job,step,execute,now);
+        } else {
         if(!registry.owned(session) || !session.isHandshakeAcked() || !session.getTransportSessionId().equals(request.transportSessionId())
                 || session.getLastHeartbeatAt()==null || !session.getLastHeartbeatAt().isAfter(now.minusSeconds(15))
                 || session.getLastHeartbeatAt().isBefore(session.getHelloReceivedAt()))throw new BusinessRuleException("Recovery requires current HELLO and fresh heartbeat after HELLO");
@@ -119,6 +123,7 @@ public class MqttOperationRecoveryService {
                     || !inbox.findById(UUID.fromString(receipt.path("messageId").asText())).map(r->Boolean.TRUE.equals(r.getAccepted())).orElse(false))
                 throw new BusinessRuleException("Staff inspection requires committed Pi OPERATOR_RECONCILED and CANCELLED journal");
         }
+        }
         JobStatus status=request.outcome()==JobRequests.ReconcileOutcome.CONFIRM_CANCELLED?JobStatus.CANCELLED:JobStatus.FAILED;
         if(Set.of(JobStepStatus.PENDING,JobStepStatus.RUNNING,JobStepStatus.RECOVERY_REQUIRED).contains(step.getStatus())) {
             step.setStatus(status==JobStatus.CANCELLED?JobStepStatus.CANCELLED:JobStepStatus.FAILED);step.setEndedAt(now);
@@ -128,14 +133,30 @@ public class MqttOperationRecoveryService {
         for(JobTask task:tasks.findByJobJobIdOrderBySequenceNoAsc(jobId))if(task.getStartedAt()!=null && task.getEndedAt()==null){task.setStatus(status==JobStatus.CANCELLED?JobTaskStatus.CANCELLED:JobTaskStatus.FAILED);task.setEndedAt(now);}
         for(var command:commands.findByJobIdOrderByCreatedAt(jobId))if(command.getJobStepId().equals(stepId))command.setState("RESOLVED_BY_STAFF");
         // An inspection is separate evidence. Never set Pi hardware verified/physicalStopConfirmed from client data.
-        job.getRobot().setStatus(RobotStatus.STARTING);session.setDispatchReady(false);session.setClosed(true);session.setFailureReason("Recovery closed; new HELLO/heartbeat required before dispatch");
+        if(!rejectedOnly) {job.getRobot().setStatus(RobotStatus.STARTING);session.setDispatchReady(false);session.setClosed(true);session.setFailureReason("Recovery closed; new HELLO/heartbeat required before dispatch");}
         UUID id=UUID.randomUUID();var response=wire.object().put("receiptId",id.toString()).put("jobId",jobId.toString()).put("jobStepId",stepId.toString())
-                .put("status",status.name()).put("stepStatus",step.getStatus().name()).put("evidence",request.evidence().name()).put("actorAccountId",actor.getAccountId().toString()).put("requiresNewHello",true);
+                .put("status",status.name()).put("stepStatus",step.getStatus().name()).put("evidence",request.evidence().name()).put("actorAccountId",actor.getAccountId().toString()).put("requiresNewHello",!rejectedOnly);
         receipts.save(MqttOperationRecoveryReceipt.builder().receiptId(id).jobStepId(stepId).actorAccountId(actor.getAccountId()).idempotencyKey(key).requestJson(body).responseJson(response).createdAt(now).build());
         events.save(JobEvent.builder().jobEventId(UUID.randomUUID()).job(job).jobStep(step).jobTask(step.getJobTask()).robot(job.getRobot()).actorAccount(actor)
                 .producerType(JobEventProducerType.valueOf(actor.getRole().name())).producerSessionId(UUID.randomUUID()).sequenceNo(1).eventType("MQTT_OPERATION_RECONCILED")
                 .statusScope("JOB").previousStatus(JobStatus.RECOVERY_REQUIRED.name()).newStatus(status.name()).eventDataJson(body).occurredAt(now).receivedAt(now).persistedAt(now).build());
         audit.record(actor,"MQTT_OPERATION_RECONCILED","Job",jobId,null,Map.of("receipt",response),metadata);wakeups.request(job);updates.publishEvent(new RuntimeChanged(jobId));return response;
+    }
+    private void verifyRejected(Job job,JobStep step,RobotCommandOutbox command,Instant now) {
+        if(!"REJECTED".equals(command.getState()) || command.getSendAttempts()!=1 || command.getAcknowledgedAt()!=null || step.getStartedAt()!=null
+                || command.getExpiresAt()==null || !command.getExpiresAt().isBefore(now)
+                || !"MOVE".equals(step.getStepTypeSnapshot()) || !"LOCALIZATION_NOT_READY".equals(step.getErrorCode()))
+            throw new BusinessRuleException("Requires expired MOVE rejected before acceptance with LOCALIZATION_NOT_READY");
+        var all=commands.findByJobIdOrderByCreatedAt(job.getJobId());
+        if(all.size()!=1 || !all.getFirst().getCommandId().equals(command.getCommandId()))
+            throw new BusinessRuleException("Other commands require normal operation recovery");
+        var ackEvents=events.findByJobJobIdAndEventType(job.getJobId(),"COMMAND_ACK");
+        boolean proved=false;
+        for(var event:ackEvents) {
+            var stored=inbox.findById(event.getJobEventId()).orElse(null);
+            if(stored!=null && RejectedCommandEvidence.matches(stored,command)) proved=true;
+        }
+        if(!proved)throw new BusinessRuleException("No committed matching rejection ACK; cannot close as unexecuted");
     }
     private Account authorize(Job job,AccountPrincipal actor) {
         scopePolicy.requireJobAccess(job,actor);

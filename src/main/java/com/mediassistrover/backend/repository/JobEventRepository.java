@@ -8,6 +8,7 @@ import jakarta.persistence.LockModeType;
 import java.time.Instant;
 import java.util.*;
 public interface JobEventRepository extends JpaRepository<JobEvent,UUID> {
+    List<JobEvent> findByJobJobIdAndEventType(UUID jobId,String eventType);
     boolean existsByProducerSessionIdAndSequenceNo(UUID sessionId,long sequenceNo);
     Page<JobEvent> findByJobJobId(UUID jobId,Pageable pageable);
     @Lock(LockModeType.PESSIMISTIC_WRITE)

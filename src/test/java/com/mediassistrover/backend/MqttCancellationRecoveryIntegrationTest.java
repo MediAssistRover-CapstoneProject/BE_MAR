@@ -193,4 +193,23 @@ class MqttCancellationRecoveryIntegrationTest extends MySqlIntegrationTest {
         states.addObject().put("jobId",f.jobId.toString()).put("jobStepId",f.endStepId.toString()).put("operationKey",f.jobId+":END:1").put("status","RUNNING");receive(hello);heartbeat();
         assertThatThrownBy(()->recovery.reconcile(f.jobId,f.piStepId,"other-active",body(MqttOperationRecoveryRequest.Evidence.PI_STOP_CONFIRMED),admin,null)).hasMessageContaining("every operation");
         assertThat(job().getStatus()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(robots.findById(f.robotId).orElseThrow().getStatus()).isEqualTo(RobotStatus.ERROR);}
+
+    @Test void expiredUnacceptedMoveCanCloseOfflineWithoutFabricatedStopEvidence() {
+        fixture(StepType.MOVE); dispatch(false);
+        receive(f.event(json,"COMMAND_ACK",json.createObjectNode()
+            .put("commandId",f.commandId.toString()).put("commandType","EXECUTE_STEP")
+            .put("accepted",false).put("errorCode","LOCALIZATION_NOT_READY")));
+        assertThat(jobs.findById(f.jobId).orElseThrow().getStatus()).isEqualTo(JobStatus.RECOVERY_REQUIRED);
+        var request=new MqttOperationRecoveryRequest(f.commandId,f.operationKey,null,
+            MqttOperationRecoveryRequest.Evidence.COMMAND_NOT_ACCEPTED,false,
+            JobRequests.ReconcileOutcome.CONFIRM_CANCELLED,"Close rejected, unexecuted MOVE");
+        assertThatThrownBy(()->recovery.reconcile(f.jobId,f.piStepId,"rejected-close",request,admin,null))
+            .isInstanceOf(com.mediassistrover.backend.exception.BusinessRuleException.class);
+        tx.executeWithoutResult(s->{commands.findById(f.commandId).orElseThrow().setExpiresAt(Instant.now().minusSeconds(60));
+            sessions.findById(f.robotId).orElseThrow().setLastHeartbeatAt(Instant.now().minusSeconds(3600));});
+        var result=recovery.reconcile(f.jobId,f.piStepId,"rejected-close",request,admin,null);
+        assertThat(result.path("status").asText()).isEqualTo("CANCELLED");
+        assertThat(commands.findById(f.commandId).orElseThrow().getPhysicalStopConfirmed()).isNull();
+        assertThat(recovery.reconcile(f.jobId,f.piStepId,"rejected-close",request,admin,null)).isEqualTo(result);
+    }
 }
