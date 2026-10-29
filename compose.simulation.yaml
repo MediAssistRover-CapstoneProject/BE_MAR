@@ -7,3 +7,31 @@ services:
       APP_SIMULATION_ROBOT_ID: 9cd72e40-5778-4ee8-b5c3-e1030089e3a1
     volumes:
       - ../../FE/FE_WEB_MAR/src/features/maps/localMockMap.generated.json:/app/local-simulation/map.json:ro
+  simulator:
+    # Image da duoc build san. Source code trong /app da duoc mount qua volumes ben duoi nen khong can build lai.
+    image: mar-gazebo-jazzy:local
+    init: true
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      FE_ORIGIN: ${FE_ORIGIN:-http://localhost:5173}
+      SIM_GUI: ${SIM_GUI:-true}
+      ROS_DOMAIN_ID: "77"
+      ROS_AUTOMATIC_DISCOVERY_RANGE: LOCALHOST
+      SIM_MQTT_ENABLED: "true"
+      SIM_ROBOT_ID: 9cd72e40-5778-4ee8-b5c3-e1030089e3a1
+      MQTT_BROKER_URI: ${MQTT_BROKER_URI:?MQTT broker required}
+      MQTT_USERNAME: ${MQTT_USERNAME:?MQTT username required}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT password required}
+    ports:
+      - "127.0.0.1:8765:8765"
+      - "127.0.0.1:6080:6080"
+    volumes:
+      - ../../FE/FE_WEB_MAR/public/mock-map-4b43a4f2:/input:ro
+      - ../../FE/FE_WEB_MAR/gazebo:/app:ro
+      - ../../FE/FE_WEB_MAR/gazebo/generated:/app/generated
+    shm_size: 1gb
+    cpus: 2.5
+    mem_limit: 3g
+    stop_grace_period: 15s
