@@ -66,8 +66,8 @@
         pose.robotId !== robot?.robotId || robot.currentMapId !== meta.map_id ||
         robot.mapAssetHash?.toLowerCase() !== meta.asset_hash.toLowerCase() ||
         pose.mapId !== meta.map_id || pose.frameId !== meta.frame_id ||
-        !Number.isFinite(age) || age < -1000 || age > 3000 || receivedAgeMs < 0 || receivedAgeMs > 3000 ||
-        Math.max(0, age) + receivedAgeMs > 3000 ||
+        !Number.isFinite(age) || age < -1000 || age > 5000 || receivedAgeMs < 0 || receivedAgeMs > 5000 ||
+        Math.max(0, age) + receivedAgeMs > 5000 ||
         ![pose.xM, pose.yM, pose.yawRad].every(Number.isFinite) || !inside(meta, pose.xM, pose.yM)) return null;
     return pose;
   }

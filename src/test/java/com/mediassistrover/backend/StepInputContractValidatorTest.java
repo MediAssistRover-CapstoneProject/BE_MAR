@@ -47,7 +47,7 @@ class StepInputContractValidatorTest {
 
     static Stream<Arguments> validInputs() {
         return Stream.of(
-                Arguments.of(StepType.MOVE, "{\"map_id\":\"" + ID + "\",\"endpoint_id\":\"" + ID + "\",\"max_speed_mps\":0.05}"),
+                Arguments.of(StepType.MOVE, "{\"map_id\":\"" + ID + "\",\"endpoint_id\":\"" + ID + "\",\"max_speed_mps\":0.8}"),
                 Arguments.of(StepType.CONTROL_HARDWARE, "{\"action\":\"LOCK_COMPARTMENT\",\"compartment_id\":\"CART_MAIN\"}"),
                 Arguments.of(StepType.EXECUTE_SENSING, "{\"sensing_type\":\"CROWD_DENSITY\",\"zone_id\":\"" + ID + "\",\"window_sec\":3}"),
                 Arguments.of(StepType.WAIT, "{\"wait_type\":\"DURATION\",\"duration_sec\":2}"),
@@ -77,7 +77,7 @@ class StepInputContractValidatorTest {
                 Arguments.of(StepType.EXECUTE_SENSING, "{\"sensing_type\":\"CROWD_DENSITY\",\"window_sec\":31}", "window_sec"),
                 Arguments.of(StepType.MOVE, "{\"map_id\":\"1-1-1-1-1\"}", "map_id"),
                 Arguments.of(StepType.MOVE, "{\"max_speed_mps\":0}", "max_speed_mps"),
-                Arguments.of(StepType.MOVE, "{\"max_speed_mps\":0.301}", "max_speed_mps"),
+                Arguments.of(StepType.MOVE, "{\"max_speed_mps\":0.801}", "max_speed_mps"),
                 Arguments.of(StepType.MOVE, "{\"endpoint_group_id\":\"" + ID + "\"}", "endpoint_group_id"),
                 Arguments.of(StepType.CONTROL_HARDWARE, "{\"action\":\"LOCK\",\"gpio\":18}", "gpio"),
                 Arguments.of(StepType.NOTIFY, "{\"notification_type\":\"HELP\",\"recipients\":[],\"require_ack\":\"true\"}", "require_ack"),

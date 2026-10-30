@@ -4,7 +4,7 @@
     "versionNo": 2,
     "workflowName": "Đi tới endpoint trên map đã lưu",
     "serviceType": "NAVIGATION",
-    "description": "Một step MOVE qua BE/MQTT tới endpoint thật, tốc độ tối đa 0,15 m/s. Không chạy trực tiếp cmd_vel từ web.",
+    "description": "Một step MOVE qua BE/MQTT tới endpoint thật, tốc độ tối đa 0,8 m/s theo giới hạn Pi và LiDAR. Không chạy trực tiếp cmd_vel từ web.",
     "inputSchemaJson": {
       "type": "object",
       "properties": {
@@ -62,7 +62,7 @@
         "sequenceNo": 1,
         "paramsJson": {
           "mode": "NORMAL",
-          "max_speed_mps": 0.15
+          "max_speed_mps": 0.8
         },
         "inputMappingJson": {
           "map_id": {

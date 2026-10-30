@@ -210,7 +210,7 @@ public class StepInputContractValidator {
                         n,
                         "max_speed_mps",
                         0,
-                        .3,
+                        .8,
                         true,
                         required && modern,
                         template

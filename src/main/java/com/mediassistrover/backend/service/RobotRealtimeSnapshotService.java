@@ -34,7 +34,7 @@ public class RobotRealtimeSnapshotService {
     private final MqttSessionRegistry registry;
     private final Clock clock;
     private final NavigationSessionService navigationSessions;
-    @Value("${app.operations.robot-pose-freshness-seconds:3}") private long poseFreshnessSeconds;
+    @Value("${app.operations.robot-pose-freshness-seconds:5}") private long poseFreshnessSeconds;
 
     @Transactional(readOnly=true)
     public Snapshot snapshot(UUID robotId) {
