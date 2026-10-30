@@ -24,7 +24,8 @@ public class RobotRealtimeSnapshotService {
     public record Snapshot(Instant observedAt,RobotResponse robot,boolean mqttConnected,boolean heartbeatFresh,
                            Double heartbeatAgeSeconds,boolean dispatchReady,String sessionFailureReason,
                            UUID activeJobId,UUID selectedJobStepId,String selectedStepType,String selectedStepCode,
-                           Pose latestPose,com.fasterxml.jackson.databind.JsonNode navigationSession) { }
+                           Pose latestPose,com.fasterxml.jackson.databind.JsonNode navigationSession,
+                           com.fasterxml.jackson.databind.JsonNode navigationPlan) { }
 
     private final RobotRepository robots;
     private final RobotLocationHistoryRepository locations;
@@ -65,6 +66,7 @@ public class RobotRealtimeSnapshotService {
         return new Snapshot(now,mapper.toResponse(robot),mqttConnected,heartbeatFresh,heartbeatAge,
                 registry.fresh(session),session==null?"HELLO required":session.getFailureReason(),
                 active==null?null:active.getJobId(),selected==null?null:selected.getJobStepId(),
-                selected==null?null:selected.getStepTypeSnapshot(),selected==null?null:selected.getStepCodeSnapshot(),pose,navigationSessions.status(robotId));
+                selected==null?null:selected.getStepTypeSnapshot(),selected==null?null:selected.getStepCodeSnapshot(),pose,
+                navigationSessions.status(robotId),navigationSessions.currentPlan(robotId,active));
     }
 }

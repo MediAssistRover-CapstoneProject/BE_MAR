@@ -135,12 +135,14 @@ public class FacilityServiceImpl implements FacilityService {
     @Override public MapResponse getMap(UUID id){return mapper.toResponse(facilityMap(id));}
 
     @Override @Transactional public ZoneResponse createZone(ZoneRequest r,UUID a,RequestMetadata md){
+        com.mediassistrover.backend.service.ZonePolicy.validate(r.zoneType(),r.polygonJson(),r.speedLimitMps());
         if(zoneRepository.existsByMapMapIdAndZoneCodeIgnoreCase(r.mapId(),r.zoneCode()))throw new ConflictException("Zone code already exists in this map");
         Zone e=mapper.toEntity(r);e.setMap(facilityMap(r.mapId()));e=zoneRepository.save(e);audit(account(a),"ZONE_CREATED","Zone",e.getZoneId(),md);return mapper.toResponse(e);}
     @Override @Transactional public ZoneResponse updateZone(UUID id,ZoneRequest r,UUID a,RequestMetadata md){Zone e=zone(id);
+        com.mediassistrover.backend.service.ZonePolicy.validate(r.zoneType(),r.polygonJson(),r.speedLimitMps());
         if((!e.getMap().getMapId().equals(r.mapId())||!e.getZoneCode().equalsIgnoreCase(r.zoneCode()))&&zoneRepository.existsByMapMapIdAndZoneCodeIgnoreCase(r.mapId(),r.zoneCode()))throw new ConflictException("Zone code already exists in this map");
         mapper.update(r,e);e.setMap(facilityMap(r.mapId()));audit(account(a),"ZONE_UPDATED","Zone",id,md);return mapper.toResponse(e);}
-    @Override @Transactional public ZoneResponse setZoneActive(UUID id,boolean active,UUID a,RequestMetadata md){Zone e=zone(id);e.setActive(active);audit(account(a),active?"ZONE_ACTIVATED":"ZONE_DEACTIVATED","Zone",id,md);return mapper.toResponse(e);}
+    @Override @Transactional public ZoneResponse setZoneActive(UUID id,boolean active,UUID a,RequestMetadata md){Zone e=zone(id);if(active)com.mediassistrover.backend.service.ZonePolicy.validate(e.getZoneType(),e.getPolygonJson(),e.getSpeedLimitMps());e.setActive(active);audit(account(a),active?"ZONE_ACTIVATED":"ZONE_DEACTIVATED","Zone",id,md);return mapper.toResponse(e);}
     @Override public Page<ZoneResponse> listZones(Pageable p){return zoneRepository.findAll(p).map(mapper::toResponse);}
     @Override public ZoneResponse getZone(UUID id){return mapper.toResponse(zone(id));}
 

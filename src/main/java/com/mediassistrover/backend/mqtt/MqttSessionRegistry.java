@@ -77,6 +77,11 @@ public class MqttSessionRegistry {
         for (JsonNode state:hello.path("states")) {
             if (journal.put(state.path("operationKey").asText(),state)!=null) throw new BusinessRuleException("Duplicate operation in HELLO journal");
             JobStep known=steps.findById(UUID.fromString(state.path("jobStepId").asText())).orElse(null);
+            // Historical completed receipts may belong to a previous BE database.
+            // Keep local deduplication history without blocking a new idle session.
+            // Known foreign identities and every unresolved receipt remain blocked.
+            if(known==null && Set.of("SUCCEEDED","FAILED","CANCELLED","TIMED_OUT").contains(state.path("status").asText()))
+                continue;
             if (known==null || !known.getOperationKey().equals(state.path("operationKey").asText())
                     || !known.getJobTask().getJob().getJobId().equals(UUID.fromString(state.path("jobId").asText()))
                     || known.getJobTask().getJob().getRobot()==null || !known.getJobTask().getJob().getRobot().getRobotId().equals(e.robotId())) {

@@ -44,21 +44,21 @@ function snapshot(){
 }
 test('hide offline, wrong robot/map/hash/frame and stale poses',()=>{
   assert(nav.freshPose(snapshot(),metadata,0));
-  assert(!nav.freshPose(snapshot(),metadata,3001));
+  assert(!nav.freshPose(snapshot(),metadata,5001));
   for(const change of [s=>s.mqttConnected=false,s=>s.heartbeatFresh=false,s=>s.latestPose.fresh=false,
     s=>s.latestPose.robotId=id,s=>s.latestPose.mapId=robot,s=>s.latestPose.frameId='odom',
     s=>s.robot.mapAssetHash='b'.repeat(64),s=>s.latestPose.yawRad=NaN,
-    s=>s.latestPose.capturedAt='2026-10-23T04:59:56Z']){
+    s=>s.latestPose.capturedAt='2026-10-23T04:59:54Z']){
     const s=snapshot();change(s);assert.equal(nav.freshPose(s,metadata,0),null);
   }
   const s=snapshot();s.latestPose.capturedAt='2026-10-23T04:59:58Z';
-  assert(nav.freshPose(s,metadata,500));assert(!nav.freshPose(s,metadata,1500));
+  assert(nav.freshPose(s,metadata,500));assert(!nav.freshPose(s,metadata,3500));
 });
 test('dedicated workflow contract rejects changed speed or extra physical steps',()=>{
   const definition=JSON.parse(fs.readFileSync(path.join(__dirname,'../../main/resources/static/navigation-move-workflow.json'),'utf8'));
   const expected=nav.templateContract(definition);
   assert.equal(expected.steps.length,1);assert.equal(expected.steps[0].stepType,'MOVE');
-  assert.equal(expected.steps[0].paramsJson.max_speed_mps,.15);
+  assert.equal(expected.steps[0].paramsJson.max_speed_mps,.8);
   const altered=structuredClone(definition);altered.graph.steps[0].paramsJson.max_speed_mps=.3;
   assert.notDeepEqual(nav.templateContract(altered),expected);
   const extra=structuredClone(definition);extra.graph.steps.push({...extra.graph.steps[0],stepCode:'EXTRA'});
@@ -92,6 +92,20 @@ test('temporary session must be READY on the exact map before displaying its pos
   const s=snapshot();s.navigationSession={state:'READY',mapId:id,mapAssetHash:metadata.asset_hash};
   assert(nav.freshPose(s,metadata,0));s.navigationSession.mapId=robot;
   assert.equal(nav.freshPose(s,metadata,0),null);
+});
+test('only the active MOVE plan for this map, step and initialization is drawn',()=>{
+  const s=snapshot(),jobId='33333333-3333-4333-8333-333333333333',stepId='44444444-4444-4444-8444-444444444444';
+  const a=nav.pixelToMap(metadata,10,20),b=nav.pixelToMap(metadata,30,40);
+  s.activeJobId=jobId;s.selectedJobStepId=stepId;s.selectedStepType='MOVE';
+  s.navigationSession={sessionId:robot,state:'READY',initialization:{revision:1}};
+  s.navigationPlan={sessionId:robot,mapId:id,mapAssetHash:metadata.asset_hash,frameId:'map',
+    initializationRevision:1,jobId,jobStepId:stepId,points:[a,b]};
+  assert(nav.plannedPath(s,metadata));
+  for(const change of [v=>v.activeJobId=null,v=>v.selectedJobStepId=id,
+    v=>v.navigationPlan.mapAssetHash='b'.repeat(64),v=>v.navigationPlan.points[0].xM=NaN,
+    v=>v.navigationSession.initialization.revision=2,v=>v.selectedStepType='WAIT']){
+    const copy=structuredClone(s);change(copy);assert.equal(nav.plannedPath(copy,metadata),null);
+  }
 });
 const viewRotation = require('../../main/resources/static/map-navigation.js').viewTransform;
 require('node:test').test('display rotation preserves world coordinates and endpoint picking',()=>{

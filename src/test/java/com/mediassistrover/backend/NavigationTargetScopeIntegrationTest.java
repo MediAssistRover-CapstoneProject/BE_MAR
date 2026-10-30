@@ -66,6 +66,10 @@ class NavigationTargetScopeIntegrationTest extends MySqlIntegrationTest {
         Zone zone=Zone.builder().map(job.getMap()).zoneCode("Z").zoneName("Zone").zoneType(ZoneType.KEEP_OUT).polygonJson(polygon).active(true).build();em.persist(zone);em.flush();
         DevicePrincipal device=new DevicePrincipal(job.getRobot().getRobotId(),job.getRobot().getRobotCode(),0,"test",Instant.now().plusSeconds(300));var config=profiles.zoneConfiguration(f.mapId,device);
         assertThat(config.path("config").path("frame_id").asText()).isEqualTo(job.getMap().getFrameId());assertThat(config.path("config").path("zones").get(0).path("polygon")).isEqualTo(polygon);
+        assertThat(profiles.snapshot(job.getRobot()).profile().path("zones").get(0).path("zone_type").asText()).isEqualTo("KEEP_OUT");
+        zone.setZoneType(ZoneType.SPEED);zone.setSpeedLimitMps(new BigDecimal("0.15"));
+        assertThat(profiles.snapshot(job.getRobot()).profile().path("zones").get(0).path("speed_limit_mps").decimalValue()).isEqualByComparingTo("0.15");
+        assertThat(profiles.zoneConfiguration(f.mapId,device).path("config").path("zones").get(0).path("speed_limit_mps").decimalValue()).isEqualByComparingTo("0.15");
         zone.setActive(false);assertThat(profiles.zoneConfiguration(f.mapId,device).path("config").path("zones")).isEmpty();
         assertThatThrownBy(()->profiles.zoneConfiguration(UUID.randomUUID(),device)).isInstanceOf(org.springframework.security.access.AccessDeniedException.class);}
 }

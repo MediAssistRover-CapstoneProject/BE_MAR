@@ -23,7 +23,7 @@ function detail(){return {workflow:{...definition.workflow,workflowId,startStepI
  const browser=await chromium.launch({headless:true,channel:'chrome'});
  try{
   const page=await browser.newPage({viewport:{width:1100,height:1000},deviceScaleFactor:Number(process.env.MAR_TEST_DPR||1)}),errors=[],calls=[];
-  let session=null,endpoints=[],request=null,job=null;
+  let session=null,endpoints=[],request=null,job=null,zones=[];
   page.on('pageerror',e=>errors.push(e.message));
   function snapshot(){const now=new Date().toISOString();return {observedAt:now,mqttConnected:true,heartbeatFresh:true,dispatchReady:true,activeJobId:null,
     robot:{robotId,status:'IDLE',currentMapId:mapId,mapAssetHash:hash},navigationSession:session||{state:'NONE'},
@@ -42,12 +42,15 @@ function detail(){return {workflow:{...definition.workflow,workflowId,startStepI
    if(p.endsWith('/image-metadata'))return json(meta);
    if(p==='/api/v1/maps/'+mapId)return json({mapId,assetHash:hash,mapName:'Synthetic map',status:'ACTIVE'});
    if(p.endsWith('/snapshot'))return json(snapshot());
+   if(p.endsWith('/navigation-zones'))return json({mapId,profileAcknowledged:true,zoneCount:zones.filter(z=>z.active).length});
+   if(p==='/api/v1/zones'){if(method==='GET')return paged(zones);const z={...body,zoneId:'77777777-7777-4777-8777-777777777777'};zones=[z];return json(z);}
+   if(p.startsWith('/api/v1/zones/')){if(p.endsWith('/deactivate'))zones[0].active=false;else if(p.endsWith('/activate'))zones[0].active=true;else zones[0]={...body,zoneId:zones[0].zoneId};return json(zones[0]);}
    if(p.endsWith('/navigation-session')&&method==='POST'){session={sessionId,mapId,mapAssetHash:hash,state:'WAITING_FOR_PI',expiresAt:'2099-01-01T00:00:00Z'};return json(session);}
    if(p.endsWith('/navigation-session/initialization')){session.state='LOCALIZING';return json(session);}
    if(p.endsWith('/navigation-session/close')){session.state='CLOSED';return json(session);}
    if(p.endsWith('/validate-navigation-point'))return json({knownFree:true});
    if(p==='/api/v1/endpoints'){if(method==='GET')return paged(endpoints);endpoints=[{...body,endpointId}];return json(endpoints[0]);}
-   if(p==='/api/v1/endpoints/'+endpointId)return json(endpoints[0]);
+   if(p==='/api/v1/endpoints/'+endpointId){if(method==='PUT')endpoints[0]={...body,endpointId};return json(endpoints[0]);}
    if(p==='/api/v1/admin/workflows')return paged([detail().workflow]);
    if(p==='/api/v1/admin/workflows/'+workflowId)return json(detail());
    if(p==='/api/v1/navigation-requests'){request={serviceRequestId:requestId,status:'DRAFT'};return json({request});}
@@ -65,6 +68,14 @@ function detail(){return {workflow:{...definition.workflow,workflowId,startStepI
   await page.click('#navLoad');await page.waitForFunction(()=>!document.querySelector('#navLoad').disabled&&!document.querySelector('#navCanvas').hidden);
   assert.equal(calls.filter(c=>c.method!=='GET').length,0);
   assert(await page.isDisabled('#navMove'));
+  await page.click('#navNewZone');await page.fill('#navZoneCode','SLOW_TEST');await page.fill('#navZoneName','Slow test');
+  await page.fill('#navZonePoints','[[0.2,0.2],[0.6,0.2],[0.6,0.6],[0.2,0.6]]');
+  await page.click('#navSaveZone');await page.waitForFunction(()=>document.querySelector('#navZones').value!=='');
+  assert.equal(zones[0].zoneType,'SPEED');assert.equal(zones[0].speedLimitMps,.15);assert.equal(zones[0].polygonJson.points.length,4);
+  await page.selectOption('#navZoneType','KEEP_OUT');await page.click('#navSaveZone');await page.waitForFunction(()=>!document.querySelector('#navLoad').disabled);
+  assert.equal(zones[0].zoneType,'KEEP_OUT');assert.equal(zones[0].speedLimitMps,null);
+  await page.click('#navToggleZone');await page.waitForFunction(()=>!document.querySelector('#navLoad').disabled);assert.equal(zones[0].active,false);
+  await page.click('#navToggleZone');await page.waitForFunction(()=>!document.querySelector('#navLoad').disabled);assert.equal(zones[0].active,true);
   await page.click('#navAssign');await page.waitForFunction(()=>document.querySelector('#navSessionStatus').textContent.includes('WAITING_FOR_PI'));
   assert((await page.textContent('#navPiCommand')).includes(sessionId));
   assert((await page.textContent('#navPose')).includes('Chưa có vị trí'));
@@ -107,6 +118,12 @@ function detail(){return {workflow:{...definition.workflow,workflowId,startStepI
   await page.fill('#navX','1.5');await page.fill('#navY','1.2');await page.fill('#navYaw','45');
   await page.fill('#navPointCode','POINT_TEST');await page.fill('#navPointName','Synthetic endpoint');
   await page.click('#navSavePoint');await page.waitForFunction(id=>document.querySelector('#navEndpoints').value===id,endpointId);
+  await page.selectOption('#navPointType','PARK');await page.click('#navSavePoint');await page.waitForFunction(()=>!document.querySelector('#navLoad').disabled);
+  assert.equal(endpoints[0].endpointType,'PARK');assert(await page.isDisabled('#navParkingSeed'));
+  const beforeParking=calls.filter(c=>c.p.endsWith('/initialization')).length;
+  await page.check('#navAtParking');await page.click('#navParkingSeed');assert.equal(Number(await page.inputValue('#navSeedX')),1.5);
+  assert.equal(calls.filter(c=>c.p.endsWith('/initialization')).length,beforeParking);
+  await page.selectOption('#navPointType','CHARGER');await page.click('#navSavePoint');await page.waitForFunction(()=>!document.querySelector('#navLoad').disabled);assert.equal(endpoints[0].endpointType,'CHARGER');
   assert(calls.some(c=>c.p.endsWith('/validate-navigation-point')));
   await page.click('#navPrepare');await page.waitForFunction(id=>document.querySelector('#navWorkflowId').value===id,workflowId);
   session.state='LOCALIZING';await page.click('#navRefresh');

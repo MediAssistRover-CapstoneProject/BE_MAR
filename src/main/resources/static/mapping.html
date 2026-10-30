@@ -494,6 +494,17 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
     if(!Number.isFinite(ageMs)||ageMs<0||ageMs>600000)memory=null;
     return {memory,pose:memory?.pose??null,live:false,ageMs};
   }
+  function plannedPath(snapshot, meta) {
+    const plan=snapshot?.navigationPlan, session=snapshot?.navigationSession;
+    if (!plan || !session || plan.sessionId!==session.sessionId ||
+        plan.mapId!==meta.map_id || plan.mapAssetHash?.toLowerCase()!==meta.asset_hash.toLowerCase() ||
+        plan.frameId!==meta.frame_id || plan.initializationRevision!==session.initialization?.revision ||
+        plan.jobId!==snapshot.activeJobId || plan.jobStepId!==snapshot.selectedJobStepId ||
+        snapshot.selectedStepType!=='MOVE' || !Array.isArray(plan.points) ||
+        plan.points.length<2 || plan.points.length>256 ||
+        !plan.points.every(p=>Number.isFinite(p.xM)&&Number.isFinite(p.yM)&&inside(meta,p.xM,p.yM)))return null;
+    return plan;
+  }
   function workflowContract(detail) {
     const w = detail?.workflow;
     if (!w || !Array.isArray(detail.steps) || !Array.isArray(detail.transitions)) return null;
@@ -546,7 +557,8 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
         <label>Góc xoay hiển thị (độ)<input id="navViewAngle" type="number" min="-180" max="180" step="1" value="0"></label>
         <small>Xoay để căn tường theo chiều ngang. Chỉ đổi góc nhìn; tọa độ endpoint, hướng robot và file map giữ nguyên.</small>
         <div class="nav-map-wrap"><canvas id="navCanvas" width="640" height="360" hidden aria-label="Bản đồ chọn vị trí và hướng endpoint"></canvas></div>
-        <div class="nav-legend"><span style="--marker:#0879ee">Robot còn dữ liệu mới</span><span style="--marker:#777">Vị trí cuối đang chờ định vị</span><span style="--marker:#157347">Endpoint đã lưu</span><span style="--marker:#dc7400">Điểm đang đặt</span></div>
+        <div class="nav-legend"><span style="--marker:#0879ee">Robot còn dữ liệu mới</span><span style="--marker:#777">Vị trí cuối đang chờ định vị</span><span style="--marker:#157347">Endpoint đã lưu</span><span style="--marker:#dc7400">Điểm đang đặt</span><span style="--marker:#2563eb">Đường Nav2 dự kiến</span></div>
+        <small id="navPlanStatus">Chưa có đường Nav2 cho MOVE hiện tại.</small>
         <div id="navPose" class="nav-status" role="status">Chưa có vị trí robot trên map này.</div>
         <small id="navRobotStatus">Chưa theo dõi robot.</small>
       </div><div>
@@ -555,18 +567,36 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
         <small>Đặt điểm mới: bấm trên vùng sàn đã quét, kéo rồi thả để chọn hướng. Chọn endpoint trong danh sách để sửa hoặc chạy.</small>
         <label>Mã endpoint<input id="navPointCode" maxlength="64" placeholder="DEMO_POINT_A"></label>
         <label>Tên endpoint<input id="navPointName" maxlength="160" placeholder="Điểm trước cửa phòng"></label>
+        <label>Loại endpoint<select id="navPointType"><option value="WAYPOINT">Waypoint — điểm đến</option><option value="PARK">Parking — vị trí đỗ / khởi tạo</option><option value="CHARGER">Manual Charger — vị trí sạc thủ công</option><option value="STAGING" hidden>Staging — điểm chờ cũ</option></select></label>
+        <label>Zone gắn với endpoint<select id="navPointZone"><option value="">Không gắn zone</option></select></label>
         <div class="fields"><label>X (m)<input id="navX" type="number" step="any"></label><label>Y (m)<input id="navY" type="number" step="any"></label></div>
         <label>Hướng thân robot trên map (độ)<input id="navYaw" type="number" step="1" min="-180" max="180" value="0"></label>
         <small>0° theo +X map; 90° theo +Y. Mũi tên thể hiện hướng thân robot; cần hiệu chuẩn góc lắp camera.</small>
         <button id="navSavePoint" disabled>Lưu endpoint</button>
-        <small id="navPointId">Chưa chọn điểm. Endpoint mới dùng loại WAYPOINT, active và accessible.</small>
+        <small id="navPointId">CHARGER chỉ là điểm đến để cắm sạc thủ công; không tự xác nhận đang sạc.</small>
+        <label class="nav-render-option"><input id="navAtParking" type="checkbox"> Robot thật đang ở đúng parking đã chọn</label>
+        <button id="navParkingSeed" disabled>Dùng parking làm vị trí khởi tạo</button>
       </div></div>
+      <h3>Zone trên map</h3>
+      <p>Vẽ đa giác bằng cách bấm từng đỉnh trên map. Restricted zone cấm robot đi vào; Speed limit zone giới hạn vận tốc tiến/lùi của MOVE.</p>
+      <div class="nav-inline"><label>Zone đã lưu<select id="navZones"><option value="">Chọn zone</option></select></label><button id="navNewZone">Zone mới</button><button id="navReloadZones">Tải lại zone</button></div>
+      <label class="nav-render-option"><input id="navZoneMode" type="checkbox"> Bấm map để vẽ zone (tạm ngừng đặt endpoint)</label>
+      <div class="fields"><label>Mã zone<input id="navZoneCode" maxlength="64"></label><label>Tên zone<input id="navZoneName" maxlength="160"></label>
+      <label>Rule<select id="navZoneType"><option value="SPEED">Speed limit zone</option><option value="KEEP_OUT">Restricted zone</option></select></label>
+      <label>Giới hạn tốc độ (m/s)<input id="navZoneSpeed" type="number" min="0.01" max="0.8" step="0.01" value="0.15"></label></div>
+      <label class="nav-render-option"><input id="navZoneActive" type="checkbox" checked> Zone đang bật</label>
+      <label>Các đỉnh [x,y] theo mét trên map<textarea id="navZonePoints" rows="3" style="width:100%" placeholder="[[0,0],[1,0],[1,1],[0,1]]"></textarea></label>
+      <button id="navZoneUndo">Bỏ đỉnh cuối</button><button id="navSaveZone">Lưu zone</button><button id="navToggleZone">Bật/tắt zone đã chọn</button>
+      <small id="navZoneStatus">Tải map để cấu hình zone. Rule được Pi đồng bộ khi rảnh, trước MOVE tiếp theo.</small>
+      <small id="navZoneSync">Chưa có xác nhận cấu hình từ Pi.</small>
+      <details><summary>JSON zone để dùng Swagger</summary><pre id="navZoneSwagger">Chưa chọn zone.</pre></details>
       <h3>Chạy workflow MOVE</h3>
       <label>Workflow NAVIGATION một step MOVE<input id="navWorkflowId" readonly></label>
       <button id="navPrepare">Chuẩn bị workflow MOVE</button>
-      <small>Tốc độ tối đa của workflow mẫu là 0,15 m/s. Không tạo StepType mới; dùng MOVE đã có.</small>
+      <small>Workflow mẫu đặt trần 0,8 m/s; tốc độ thực còn bị giới hạn bởi zone, vật cản và cấu hình Pi. MOVE không đi ngang.</small>
       <button id="navRefresh">Kiểm tra vị trí và trạng thái</button>
       <button id="navMove" disabled>Đi tới endpoint bằng robot của phiên</button>
+      <p id="navMoveReadiness" role="status"></p>
       <button id="navCancel" disabled>Hủy yêu cầu dẫn đường</button>
       <small>MOVE được gắn đúng robot, map và phiên định vị. Vị trí hoặc hướng endpoint thay đổi cần lưu trước; vị trí robot luôn lấy từ Pi.</small>
       <p id="navAction" class="nav-status" role="status">Tải map để bắt đầu.</p>
@@ -575,7 +605,8 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
     const $ = id => host.querySelector('#' + id), canvas = $('navCanvas'), ctx = canvas.getContext('2d');
     const state = {meta: null, map: null, image: null, imageUrl: null, endpoints: [], draft: null, editing: null,
       snapshot: null, receivedAt: 0, robotId: '', busy: false, generation: 0, timer: null, closed: false,
-      workflow: null, template: null, pending: null, job: null, request: null, dragging: null,seed:null};
+      workflow: null, template: null, pending: null, job: null, request: null, dragging: null,seed:null,
+      zones:[],zoneEditing:null,zonePoints:[],zoneSyncAt:0,zoneAck:null};
     const say = (message, error = false) => { $('navAction').textContent = message; $('navAction').classList.toggle('nav-error', error); };
     const active = () => state.pending && !state.pending.done;
     function persist() {
@@ -633,8 +664,24 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       for(const id of ['navSeedMode','navSeedX','navSeedY','navSeedYaw'])$(id).disabled=!loaded||locked;
       for (const id of ['navNewPoint', 'navEndpoints', 'navPointCode', 'navPointName', 'navX', 'navY', 'navYaw']) $(id).disabled = !loaded || locked;
       $('navSavePoint').disabled = !loaded || locked || !state.draft;
+      for(const id of ['navPointType','navPointZone','navAtParking','navNewZone','navReloadZones','navZoneMode','navZones','navZoneCode','navZoneName','navZoneType','navZoneActive','navZonePoints','navZoneUndo','navSaveZone'])$(id).disabled=!loaded||locked;
+      $('navZoneSpeed').disabled=!loaded||locked||$('navZoneType').value!=='SPEED';
+      $('navToggleZone').disabled=!loaded||locked||!state.zoneEditing;
+      $('navParkingSeed').disabled=!loaded||locked||selected()?.endpointType!=='PARK'||!$('navAtParking').checked;
       $('navPrepare').disabled = locked;
-      $('navMove').disabled = state.busy || !loaded || (active() ? !state.pending.retryable : !selected() || !state.workflow || session?.state!=='READY'||!pose());
+      const reasons=[];
+      if(state.busy)reasons.push('đang xử lý yêu cầu');
+      if(!loaded)reasons.push('chưa tải đúng map');
+      if(active()) { if(!state.pending.retryable)reasons.push('đang theo dõi yêu cầu MOVE hiện tại'); }
+      else {
+        if(!selected())reasons.push('chưa chọn endpoint đã lưu');
+        if(!state.workflow)reasons.push('chưa chuẩn bị workflow MOVE');
+        if(session?.state!=='READY')reasons.push('phiên định vị chưa READY');
+        if(!pose())reasons.push('chưa có vị trí mới đúng map');
+        if(state.zones.some(z=>z.active)&&state.zoneAck!==true)reasons.push('Pi chưa xác nhận profile endpoint/zone mới');
+      }
+      $('navMove').disabled = reasons.length>0;
+      $('navMoveReadiness').textContent=reasons.length?'MOVE chưa sẵn sàng: '+reasons.join('; ')+'.':'Sẵn sàng gửi MOVE tới endpoint đã chọn.';
       $('navMove').textContent = active() && state.pending.retryable ? 'Tiếp tục yêu cầu vừa gửi' : 'Đi tới endpoint bằng robot của phiên';
       $('navCancel').disabled = state.busy || !active() || !state.pending.requestId;
     }
@@ -650,9 +697,9 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       const xM = Number($('navX').value), yM = Number($('navY').value), degrees = Number($('navYaw').value);
       if (!Number.isFinite(degrees) || degrees < -180 || degrees > 180 || !inside(state.meta, xM, yM)) throw Error('Điểm phải nằm trong map; hướng từ -180° đến 180°.');
       const old = state.editing;
-      return {mapId: state.meta.map_id, zoneId: old?.zoneId ?? null, roomId: old?.roomId ?? null,
+      return {mapId: state.meta.map_id, zoneId: $('navPointZone').value || null, roomId: old?.roomId ?? null,
         endpointCode: $('navPointCode').value.trim(), endpointName: $('navPointName').value.trim(),
-        endpointType: old?.endpointType ?? 'WAYPOINT', xM, yM, yawRad: angle(degrees * Math.PI / 180),
+        endpointType: $('navPointType').value, xM, yM, yawRad: angle(degrees * Math.PI / 180),
         active: old?.active ?? true, accessible: old?.accessible ?? true, publicVisible: old?.publicVisible ?? false,
         description: old?.description ?? 'Đặt trên map đã lưu qua trang điều khiển'};
     }
@@ -688,6 +735,26 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       ctx.imageSmoothingEnabled = !original; ctx.imageSmoothingQuality = 'high';
       ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       ctx.drawImage(state.image, 0, 0, state.meta.width_px, state.meta.height_px);
+      function polygon(points,type,label,draft=false){
+        if(!Array.isArray(points)||!points.length)return;
+        ctx.beginPath();points.forEach((point,i)=>{const p=mapToPixel(state.meta,Number(point[0]),Number(point[1]));if(!i)ctx.moveTo(p.u,p.v);else ctx.lineTo(p.u,p.v);});
+        if(points.length>=3)ctx.closePath();ctx.fillStyle=type==='KEEP_OUT'?'rgba(210,30,30,.22)':'rgba(240,170,0,.23)';
+        if(points.length>=3)ctx.fill();ctx.strokeStyle=draft?'#7427bd':type==='KEEP_OUT'?'#c22':'#aa7400';ctx.lineWidth=Math.max(.8,.025/state.meta.resolution_m_per_pixel);ctx.stroke();
+        const p=mapToPixel(state.meta,points[0][0],points[0][1]);ctx.font='4px system-ui';ctx.fillStyle=ctx.strokeStyle;ctx.fillText(label,p.u,p.v-2);
+      }
+      for(const z of state.zones)if(z.active&&z.zoneId!==state.zoneEditing?.zoneId)polygon(z.polygonJson?.points||z.polygonJson,z.zoneType,z.zoneCode+(z.zoneType==='SPEED'?' '+z.speedLimitMps+' m/s':''));
+      polygon(state.zonePoints,$('navZoneType').value,'Zone đang sửa',true);
+      const plan=plannedPath(state.snapshot,state.meta);
+      if(plan){
+        ctx.beginPath();
+        plan.points.forEach((point,index)=>{const pixel=mapToPixel(state.meta,point.xM,point.yM);
+          if(index===0)ctx.moveTo(pixel.u,pixel.v);else ctx.lineTo(pixel.u,pixel.v);});
+        ctx.strokeStyle='#2563eb';ctx.lineWidth=Math.max(2,.055/state.meta.resolution_m_per_pixel);
+        ctx.lineJoin='round';ctx.lineCap='round';ctx.setLineDash([6,3]);ctx.stroke();ctx.setLineDash([]);
+      }
+      $('navPlanStatus').textContent=plan
+        ?'Đường Nav2 dự kiến đã được Pi gửi và BE xác nhận trước khi robot bắt đầu MOVE. Nav2 có thể tính lại đường khi gặp vật cản; đường này chỉ là kế hoạch ban đầu.'
+        :'Chưa có đường Nav2 được xác nhận cho MOVE hiện tại.';
       const radius = Math.max(1.5, .07 / state.meta.resolution_m_per_pixel);
       for (const e of state.endpoints) if (inside(state.meta, e.xM, e.yM)) arrow(e.xM, e.yM, e.yawRad, e.endpointId === selected()?.endpointId ? '#7427bd' : '#157347', e.endpointCode, radius);
       if (state.draft) arrow(state.draft.xM, state.draft.yM, state.draft.yawRad, '#dc7400', '', radius);
@@ -708,13 +775,39 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
     }
     function clearPoint() {
       state.draft = state.editing = null; $('navEndpoints').value = '';
+      $('navPointType').value='WAYPOINT';$('navPointZone').value='';$('navAtParking').checked=false;
       for (const id of ['navX', 'navY', 'navPointCode', 'navPointName']) $(id).value = '';
       $('navYaw').value = '0'; $('navPointId').textContent = 'Đang đặt endpoint mới. Bấm rồi kéo trên map để chọn hướng.';
       $('navSwagger').textContent = 'Chọn vị trí trên map để lấy JSON.'; controls(); draw();
     }
     async function endpoints(id = '') {
       state.endpoints = (await pages('/api/v1/endpoints')).filter(e => e.mapId === state.meta.map_id);
+      state.zoneAck=null;state.zoneSyncAt=0;
       showEndpoints(id); draw();
+    }
+    function clearZone(){state.zoneEditing=null;state.zonePoints=[];$('navZones').value='';$('navZoneCode').value='';$('navZoneName').value='';$('navZoneType').value='SPEED';$('navZoneSpeed').value='.15';$('navZoneActive').checked=true;zoneDraft();}
+    function zoneBody(){
+      mapId();const points=JSON.parse($('navZonePoints').value||'[]');
+      if(!Array.isArray(points)||points.length<3||points.length>256||points.some(p=>!Array.isArray(p)||p.length!==2||!p.every(Number.isFinite)||!inside(state.meta,p[0],p[1])))throw Error('Cần 3–256 đỉnh [x,y] nằm trong map.');
+      const type=$('navZoneType').value,speed=Number($('navZoneSpeed').value);
+      if(type==='SPEED'&&(!Number.isFinite(speed)||speed<=0||speed>.8))throw Error('Tốc độ zone phải lớn hơn 0 và không quá 0,8 m/s.');
+      const old=state.zoneEditing;
+      return {mapId:mapId(),zoneCode:$('navZoneCode').value.trim(),zoneName:$('navZoneName').value.trim(),zoneType:type,polygonJson:{points},speedLimitMps:type==='SPEED'?speed:null,
+        active:$('navZoneActive').checked,publicVisible:old?.publicVisible??false,capacityLimit:old?.capacityLimit??null,calibratedAreaM2:old?.calibratedAreaM2??null,cameraSourceRef:old?.cameraSourceRef??null,cameraRoiJson:old?.cameraRoiJson??null,description:old?.description??'Thiết lập rule dẫn đường trên map'};
+    }
+    function zoneDraft(fromText=false){
+      if(fromText){try{const p=JSON.parse($('navZonePoints').value);if(Array.isArray(p)&&p.every(a=>Array.isArray(a)&&a.length===2&&a.every(Number.isFinite)))state.zonePoints=p;}catch(_){}}
+      else $('navZonePoints').value=JSON.stringify(state.zonePoints);
+      try{$('navZoneSwagger').textContent=JSON.stringify(zoneBody(),null,2);}catch(e){$('navZoneSwagger').textContent=e.message;}
+      controls();draw();
+    }
+    async function zones(id=''){
+      state.zones=(await pages('/api/v1/zones')).filter(z=>z.mapId===mapId()&&['SPEED','KEEP_OUT'].includes(z.zoneType));
+      $('navZones').replaceChildren(new Option('Chọn zone',''));const bound=$('navPointZone').value;
+      $('navPointZone').replaceChildren(new Option('Không gắn zone',''));
+      for(const z of state.zones){$('navZones').add(new Option(z.zoneCode+' — '+z.zoneName+(z.active?'':' (đã tắt)'),z.zoneId));$('navPointZone').add(new Option(z.zoneCode,z.zoneId));}
+      $('navPointZone').value=bound;$('navZones').value=id;state.zoneSyncAt=0;state.zoneAck=null;
+      $('navZoneStatus').textContent=state.zones.length+' zone trên map. Rule mới đồng bộ khi robot rảnh; không đổi giữa MOVE.';draw();
     }
     async function loadMap() {
       if (active() && state.meta) throw Error('Theo dõi/hủy yêu cầu hiện tại trước khi đổi map.');
@@ -739,7 +832,7 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       canvas.width = meta.width_px; canvas.height = meta.height_px;
       canvas.style.width = 'min(100%, ' + Math.max(180, 650 * meta.width_px / meta.height_px) + 'px)'; canvas.hidden = false;
       $('navMapInfo').textContent = `${map.mapName} · ${map.status} · ${meta.width_px} × ${meta.height_px} ô · ${(meta.resolution_m_per_pixel * 100).toFixed(1)} cm/ô · frame ${meta.frame_id}`;
-      await endpoints();
+      clearZone();$('navZoneMode').checked=false;await zones();await endpoints();
       if (state.pending?.body.mapId === id) {
         $('navEndpoints').value = state.pending.body.destinationEndpointId;
         if (selected()) $('navEndpoints').onchange();
@@ -751,6 +844,14 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       const value = await api('/api/v1/robots/' + robotId() + '/snapshot');
       if (value.robot?.robotId !== robotId()) throw Error('Snapshot không đúng robot.');
       state.snapshot = value; state.receivedAt = performance.now();
+      if(value.navigationSession?.sessionId&&performance.now()-state.zoneSyncAt>5000){
+        state.zoneSyncAt=performance.now();
+        try{const sync=await api('/api/v1/robots/'+robotId()+'/navigation-zones');state.zoneAck=sync.mapId===mapId()&&sync.profileAcknowledged;
+          $('navZoneSync').textContent=state.zoneAck?(typeof sync.speedZoneCount==='number'?
+            'Pi đã xác nhận '+sync.restrictedZoneCount+' vùng cấm và '+sync.speedZoneCount+' vùng giới hạn tốc độ.':
+            'Pi đã xác nhận profile chứa '+sync.zoneCount+' zone.'):'Chưa có ACK profile mới từ Pi; chờ robot rảnh và kết nối.';}
+        catch(e){state.zoneAck=null;$('navZoneSync').textContent='Chưa kiểm tra được đồng bộ zone: '+e.message;}
+      }
       const session=value.navigationSession;
       $('navSessionStatus').textContent=session?.sessionId?`Phiên ${session.sessionId} · ${session.state} · ${session.localization?.reason||'chờ Pi nạp map và xác minh vị trí'} · hết hạn ${session.expiresAt}`:'Chưa mở phiên map tạm.';
       $('navPiCommand').textContent=session?.sessionId&&session.mapId===state.meta?.map_id&&['WAITING_FOR_PI','LOCALIZING','READY'].includes(session.state)?'Trong container, sau khi dừng robot.zsh run:\ncd /home/ubuntu/mediassist-mqtt-2026-10-08\nzsh tools/navigation_session.zsh --session-id '+session.sessionId:'Mở phiên để lấy lệnh khởi động Pi.';
@@ -855,10 +956,24 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
     $('navEndpoints').onchange = () => {
       const point = selected(); if (!point) return clearPoint();
       state.editing = point;
+      $('navPointType').value=point.endpointType;$('navPointZone').value=point.zoneId||'';$('navAtParking').checked=false;
+      if(point.zoneId&&!Array.from($('navPointZone').options).some(o=>o.value===point.zoneId)){$('navPointZone').add(new Option('Zone đã gắn: '+point.zoneId,point.zoneId));$('navPointZone').value=point.zoneId;}
       for (const [id, value] of Object.entries({navX: point.xM, navY: point.yM, navYaw: point.yawRad * 180 / Math.PI, navPointCode: point.endpointCode, navPointName: point.endpointName})) $(id).value = value;
       $('navPointId').textContent = 'Endpoint ID: ' + point.endpointId; updateDraft();
     };
-    for (const id of ['navX', 'navY', 'navYaw', 'navPointCode', 'navPointName']) $(id).addEventListener('input', updateDraft);
+    for (const id of ['navX', 'navY', 'navYaw', 'navPointCode', 'navPointName','navPointType','navPointZone']) $(id).addEventListener('input', updateDraft);
+    $('navAtParking').onchange=controls;
+    $('navParkingSeed').onclick=()=>{const p=selected();if(!p||p.endpointType!=='PARK'||!$('navAtParking').checked)return;for(const [id,v] of Object.entries({navSeedX:p.xM,navSeedY:p.yM,navSeedYaw:p.yawRad*180/Math.PI}))$(id).value=v;updateSeed();say('Đã điền vị trí parking. Bấm Gửi vị trí khởi tạo cho AMCL khi phiên map sẵn sàng; chờ Pi xác minh.');};
+    $('navNewZone').onclick=()=>{clearZone();$('navZoneMode').checked=true;$('navSeedMode').checked=false;};
+    $('navReloadZones').onclick=()=>mutate(()=>zones());
+    $('navZoneMode').onchange=()=>{if($('navZoneMode').checked)$('navSeedMode').checked=false;};
+    $('navSeedMode').onchange=()=>{if($('navSeedMode').checked)$('navZoneMode').checked=false;};
+    $('navZones').onchange=()=>{const z=state.zones.find(z=>z.zoneId===$('navZones').value);if(!z)return clearZone();state.zoneEditing=z;state.zonePoints=z.polygonJson?.points||z.polygonJson;for(const [id,v] of Object.entries({navZoneCode:z.zoneCode,navZoneName:z.zoneName,navZoneType:z.zoneType,navZoneSpeed:z.speedLimitMps??.15}))$(id).value=v;$('navZoneActive').checked=z.active;zoneDraft();};
+    for(const id of ['navZoneCode','navZoneName','navZoneType','navZoneSpeed','navZoneActive'])$(id).addEventListener('input',()=>zoneDraft());
+    $('navZonePoints').addEventListener('input',()=>zoneDraft(true));
+    $('navZoneUndo').onclick=()=>{state.zonePoints=state.zonePoints.slice(0,-1);zoneDraft();};
+    $('navSaveZone').onclick=()=>mutate(async()=>{const body=zoneBody();if(!body.zoneCode||!body.zoneName)throw Error('Cần mã và tên zone.');const saved=await api('/api/v1/zones'+(state.zoneEditing?'/'+state.zoneEditing.zoneId:''),{method:state.zoneEditing?'PUT':'POST',body});await zones(saved.zoneId);$('navZones').onchange();$('navZoneMode').checked=false;say('Đã lưu zone. Chờ Pi ACK profile mới khi rảnh trước khi thử MOVE.');});
+    $('navToggleZone').onclick=()=>mutate(async()=>{const z=state.zoneEditing;if(!z)throw Error('Chọn zone trước.');await api('/api/v1/zones/'+z.zoneId+(z.active?'/deactivate':'/activate'),{method:'POST',body:{}});await zones(z.zoneId);$('navZones').onchange();});
     $('navSavePoint').onclick = () => mutate(async () => {
       if (active()) throw Error('Không sửa endpoint trong khi yêu cầu đang chạy.');
       const body = endpointBody(); if (!body.endpointCode || !body.endpointName) throw Error('Cần mã và tên endpoint.');
@@ -927,6 +1042,7 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
     canvas.addEventListener('pointerdown', event => {
       if (!state.meta || state.busy || active() || event.button !== 0) return;
       const p = pointer(event); if (p.u < 0 || p.v < 0 || p.u >= state.meta.width_px || p.v >= state.meta.height_px) return;
+      if($('navZoneMode').checked){if(state.zonePoints.length>=256)return;const point=pixelToMap(state.meta,Math.floor(p.u)+.5,Math.floor(p.v)+.5);state.zonePoints=[...state.zonePoints,[point.xM,point.yM]];zoneDraft();return;}
       if($('navSeedMode').checked){
         const point=pixelToMap(state.meta,Math.floor(p.u)+.5,Math.floor(p.v)+.5);
         $('navSeedX').value=point.xM;$('navSeedY').value=point.yM;
@@ -948,6 +1064,7 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
     $('navMapId').addEventListener('input', () => {
       state.generation++; clearTimeout(state.timer); state.meta = state.image = state.snapshot = null; canvas.hidden = true;
       state.endpoints = []; showEndpoints(); clearPoint(); $('navMapInfo').textContent = 'Map ID đã đổi; tải map trước khi thao tác.';
+      state.zones=[];clearZone();$('navZoneMode').checked=false;$('navZoneSync').textContent='Tải map mới để kiểm tra zone.';
       state.seed=null;for(const id of ['navSeedX','navSeedY'])$(id).value='';
       $('navPose').textContent = 'Chưa tải map mới.'; controls();
     });
@@ -956,7 +1073,7 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
     controls();
     return {loadMap, state};
   }
-  return {geometry, pixelToMap, mapToPixel, inside, renderSize, viewTransform, freshPose, poseView, workflowContract, templateContract, mount};
+  return {geometry, pixelToMap, mapToPixel, inside, renderSize, viewTransform, freshPose, poseView, plannedPath, workflowContract, templateContract, mount};
 });
 
 </script>

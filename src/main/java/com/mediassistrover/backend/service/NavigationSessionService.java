@@ -24,6 +24,7 @@ public class NavigationSessionService {
     private final RobotMqttSessionRepository links;
     private final RobotNavigationProfileRepository profiles;
     private final JobRepository jobs;
+    private final EndpointRepository endpoints;
     private final MapBundleService bundles;
     private final MqttWire wire;
     private final Clock clock;
@@ -32,6 +33,11 @@ public class NavigationSessionService {
     public record Initialize(@NotNull UUID sessionId,@NotBlank @Pattern(regexp="SEED|GLOBAL") String mode,
                              Double xM,Double yM,Double yawRad) { }
     public record Close(@NotNull UUID sessionId) { }
+    public record PlanPoint(double xM,double yM) { }
+    public record PlannedPath(@NotNull UUID sessionId,@NotNull UUID mapId,@NotNull UUID jobId,
+                              @NotNull UUID jobStepId,@NotNull UUID endpointId,
+                              @NotBlank String mapAssetHash,long initializationRevision,
+                              @NotNull List<PlanPoint> points) { }
 
     public RobotNavigationSession current(UUID robotId){return rows.findById(robotId).filter(r->r.open(Instant.now(clock))).orElse(null);}
     @Transactional
@@ -65,13 +71,67 @@ public class NavigationSessionService {
             row.setInitialPoseJson(null);
         }
         row.setInitializationMode(request.mode());row.setInitializationRevision(row.getInitializationRevision()+1);
-        profiles.deleteById(robotId);return describe(row);
+        row.setPlannedPathJson(null);profiles.deleteById(robotId);return describe(row);
     }
     @Transactional
     public ObjectNode close(UUID robotId,UUID id){idle(robotId);var row=rows.findById(robotId).orElseThrow();if(!row.getSessionId().equals(id))throw new BusinessRuleException("Navigation session changed");
-        if(row.getClosedAt()==null)row.setClosedAt(Instant.now(clock));profiles.deleteById(robotId);return describe(row);}
+        if(row.getClosedAt()==null)row.setClosedAt(Instant.now(clock));row.setPlannedPathJson(null);profiles.deleteById(robotId);return describe(row);}
     @Transactional
     public ObjectNode closeDevice(DevicePrincipal device,UUID id){requireDevice(device);return close(device.robotId(),id);}
+
+    /** Pi publishes the actual Nav2 global plan before enabling the MOVE goal. */
+    @Transactional
+    public ObjectNode publishPlan(DevicePrincipal device,PlannedPath request){
+        requireDevice(device);
+        var row=required(device.robotId(),request.sessionId());
+        var link=links.findById(device.robotId()).orElse(null);
+        if(!peer(device.robotId(),link)||!localized(device.robotId(),link)
+                ||!row.getMap().getMapId().equals(request.mapId())
+                ||!row.getMapAssetHash().equalsIgnoreCase(request.mapAssetHash())
+                ||row.getInitializationRevision()!=request.initializationRevision())
+            throw new BusinessRuleException("Navigation plan session or localization changed");
+        var job=jobs.findById(request.jobId()).orElseThrow(()->new ResourceNotFoundException("Job not found"));
+        var step=job.getSelectedJobStep();
+        if(job.getStatus()!=JobStatus.RUNNING||job.getRobot()==null||!job.getRobot().getRobotId().equals(device.robotId())
+                ||job.getMap()==null||!job.getMap().getMapId().equals(request.mapId())
+                ||step==null||!step.getJobStepId().equals(request.jobStepId())
+                ||!"MOVE".equals(step.getStepTypeSnapshot())||step.getStatus()!=JobStepStatus.RUNNING)
+            throw new BusinessRuleException("Navigation plan does not belong to the active MOVE step");
+        var point=endpoints.findById(request.endpointId()).orElseThrow(()->new ResourceNotFoundException("Endpoint not found"));
+        boolean selectedTarget=request.endpointId().toString().equals(step.getResolvedInputsJson().path("endpoint_id").asText());
+        for(var candidate:step.getResolvedInputsJson().path("candidate_endpoint_ids"))
+            if(request.endpointId().toString().equals(candidate.asText()))selectedTarget=true;
+        if(!point.getMap().getMapId().equals(request.mapId())||!selectedTarget)
+            throw new BusinessRuleException("Navigation plan endpoint differs from MOVE target");
+        if(request.points()==null||request.points().size()<2||request.points().size()>256)
+            throw new BusinessRuleException("Navigation plan requires 2..256 points");
+        var path=wire.object().put("sessionId",request.sessionId().toString()).put("mapId",request.mapId().toString())
+                .put("mapAssetHash",row.getMapAssetHash()).put("initializationRevision",row.getInitializationRevision())
+                .put("jobId",request.jobId().toString()).put("jobStepId",request.jobStepId().toString())
+                .put("endpointId",request.endpointId().toString()).put("frameId",row.getMap().getFrameId())
+                .put("plannedAt",Instant.now(clock).toString());
+        var points=path.putArray("points");
+        for(var p:request.points()){
+            if(p==null||!Double.isFinite(p.xM())||!Double.isFinite(p.yM())
+                    ||Math.abs(p.xM())>100000||Math.abs(p.yM())>100000)
+                throw new BusinessRuleException("Navigation plan contains invalid coordinates");
+            points.addObject().put("xM",p.xM()).put("yM",p.yM());
+        }
+        row.setPlannedPathJson(path);
+        return wire.object().put("accepted",true).put("jobStepId",request.jobStepId().toString());
+    }
+
+    @Transactional(readOnly=true)
+    public JsonNode currentPlan(UUID robotId,Job active){
+        if(active==null||active.getStatus()!=JobStatus.RUNNING||active.getSelectedJobStep()==null)return null;
+        var row=current(robotId);if(row==null||row.getPlannedPathJson()==null)return null;
+        var plan=row.getPlannedPathJson();
+        if(!active.getJobId().toString().equals(plan.path("jobId").asText())
+                ||!active.getSelectedJobStep().getJobStepId().toString().equals(plan.path("jobStepId").asText())
+                ||!row.getSessionId().toString().equals(plan.path("sessionId").asText())
+                ||row.getInitializationRevision()!=plan.path("initializationRevision").asLong(-1))return null;
+        return plan;
+    }
 
     /** Called after the caller has locked Robot. Never accepts a context from another process. */
     public void hello(UUID robotId,UUID producer,JsonNode context){

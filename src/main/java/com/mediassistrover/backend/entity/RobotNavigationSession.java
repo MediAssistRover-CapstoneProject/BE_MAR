@@ -22,5 +22,6 @@ public class RobotNavigationSession {
     @Column(name="initialization_mode",nullable=false,length=16) private String initializationMode;
     @Column(name="initialization_revision",nullable=false) private long initializationRevision;
     @JdbcTypeCode(SqlTypes.JSON) @Column(name="initial_pose_json",columnDefinition="json") private JsonNode initialPoseJson;
+    @JdbcTypeCode(SqlTypes.JSON) @Column(name="planned_path_json",columnDefinition="json") private JsonNode plannedPathJson;
     public boolean open(Instant now){return closedAt==null && expiresAt.isAfter(now);}
 }

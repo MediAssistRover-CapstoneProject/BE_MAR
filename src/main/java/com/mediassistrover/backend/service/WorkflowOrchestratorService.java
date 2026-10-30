@@ -160,6 +160,7 @@ public class WorkflowOrchestratorService {
         if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(finishingStep) && "STOP".equals(finishingStep.getResolvedInputsJson().path("action").asText())
                 && finishingStep.getStatus()!=JobStepStatus.SUCCEEDED && mapping.open(job.getJobId()))terminal=TerminalStatus.RECOVERY_REQUIRED;
         if(mapping.deferTerminal(job,terminal)) {updates.publishEvent(new RuntimeChanged(job.getJobId()));return;}
+        JobFailureSummary.apply(job,terminal);
         Instant now=Instant.now(clock); job.setStatus(JobStatus.valueOf(terminal.name()));
         if (terminal!=TerminalStatus.RECOVERY_REQUIRED) job.setEndedAt(now);
         List<JobStep> all=steps.findByJobId(job.getJobId());

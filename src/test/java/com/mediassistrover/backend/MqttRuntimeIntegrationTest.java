@@ -68,6 +68,28 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
     private ObjectNode error(String status,Boolean stopped) {var p=json.createObjectNode().put("stepType",fixture.type.name()).put("status",status).put("errorCode","TEST_ERROR").put("errorMessage","test error").put("retryable",false);p.putNull("details");if(stopped!=null)p.put("physicalStopConfirmed",stopped);return fixture.event(json,"STEP_ERROR",p);}
     private Job currentJob() {return jobs.findById(fixture.jobId).orElseThrow();}
 
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"SUCCEEDED","FAILED","CANCELLED","TIMED_OUT"})
+    void historicalUnknownTerminalJournalDoesNotBlockFreshDispatch(String status) {
+        fixture(StepType.WAIT,null);ObjectNode hello=fixture.hello(json);
+        ((com.fasterxml.jackson.databind.node.ArrayNode)hello.path("payload").path("states")).addObject()
+            .put("jobId",UUID.randomUUID().toString()).put("jobStepId",UUID.randomUUID().toString())
+            .put("operationKey",UUID.randomUUID()+":HISTORICAL:1").put("status",status);
+        receive(hello);heartbeat();orchestrator.advance(fixture.jobId);
+        assertThat(sessionRows.findById(fixture.robotId).orElseThrow().isDispatchReady()).isTrue();
+        assertThat(commands.findByJobStepId(fixture.piStepId)).isPresent();
+    }
+
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"ACCEPTED","RUNNING","RECOVERY_REQUIRED"})
+    void unknownUnresolvedJournalStillBlocksDispatch(String status) {
+        fixture(StepType.WAIT,null);ObjectNode hello=fixture.hello(json);
+        ((com.fasterxml.jackson.databind.node.ArrayNode)hello.path("payload").path("states")).addObject()
+            .put("jobId",UUID.randomUUID().toString()).put("jobStepId",UUID.randomUUID().toString())
+            .put("operationKey",UUID.randomUUID()+":UNRESOLVED:1").put("status",status);
+        receive(hello);
+        assertThat(sessionRows.findById(fixture.robotId).orElseThrow().isDispatchReady()).isFalse();
+        assertThat(commands.findByJobStepId(fixture.piStepId)).isEmpty();
+    }
+
     @Test void speechDispatchAcceptsStartedAndAudioResultWithoutInventingChassisStop() {
         fixture(StepType.INTERACT,"SPEAK");var c=dispatch();
         assertThat(c.getPayloadJson().path("step").path("params").path("data").path("text").asText()).isEqualTo("Xin chào");

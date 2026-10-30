@@ -13,6 +13,25 @@ import java.util.stream.*;
 import static org.assertj.core.api.Assertions.*;
 
 class MqttWireContractTest {
+    @Test void navigationProfileAllowsZoneRulesAndRejectsMissingSpeed() {
+        var message=wire.parse("""
+            {"messageType":"NAV_PROFILE","robotId":"11111111-1111-4111-8111-111111111111",
+             "transportSessionId":"22222222-2222-4222-8222-222222222222","profileVersion":"BE-NAV-PROFILE-1",
+             "profileHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+             "profile":{"map_id":"33333333-3333-4333-8333-333333333333","map_version":1,"frame_id":"map",
+              "map_asset_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "endpoints":{"44444444-4444-4444-8444-444444444444":{"map_id":"33333333-3333-4333-8333-333333333333","x_m":0,"y_m":0,"yaw_rad":0}},
+              "zones":[{"zone_id":"55555555-5555-4555-8555-555555555555","zone_type":"KEEP_OUT","polygon":{"points":[[0,0],[1,0],[1,1]]}}]}}
+            """.getBytes(StandardCharsets.UTF_8));
+        assertThatCode(()->validator.response(message)).doesNotThrowAnyException();
+        var zone=(ObjectNode)message.at("/profile/zones/0");
+        zone.put("zone_type","SPEED");
+        assertThatThrownBy(()->validator.response(message)).hasMessageContaining("contract");
+        zone.put("speed_limit_mps",.15);
+        assertThatCode(()->validator.response(message)).doesNotThrowAnyException();
+        zone.put("speed_limit_mps",0);
+        assertThatThrownBy(()->validator.response(message)).hasMessageContaining("contract");
+    }
     private final MqttWire wire=new MqttWire();
     private final MqttContractValidator validator=new MqttContractValidator();
     record Case(String name,String schema,boolean valid,JsonNode instance) { }

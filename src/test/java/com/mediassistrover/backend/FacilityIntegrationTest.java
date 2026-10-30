@@ -37,6 +37,35 @@ class FacilityIntegrationTest extends MySqlIntegrationTest {
     private Account admin;
     private String adminToken;
 
+    @Test
+    void navigationZonesAndEndpointKindsRoundTripThroughApi() throws Exception {
+        UUID mapId=createMap(createFloor(createHospitalProfile(true,true)),"ZONE-TEST",1);
+        var body=objectMapper.createObjectNode().put("mapId",mapId.toString()).put("zoneCode","SLOW_01")
+            .put("zoneName","Speed limit").put("zoneType","SPEED").put("active",true).put("speedLimitMps",.15);
+        body.set("polygonJson",objectMapper.readTree("{\"points\":[[0,0],[1,0],[1,1],[0,1]]}"));
+        var response=mockMvc.perform(post("/api/v1/zones").header("Authorization",bearer(adminToken))
+            .contentType(MediaType.APPLICATION_JSON).content(body.toString())).andExpect(status().isCreated())
+            .andExpect(jsonPath("$.speedLimitMps").value(.15)).andReturn();
+        String id=objectMapper.readTree(response.getResponse().getContentAsString()).path("zoneId").asText();
+        body.put("zoneType","KEEP_OUT").put("zoneName","Restricted").putNull("speedLimitMps");
+        mockMvc.perform(put("/api/v1/zones/"+id).header("Authorization",bearer(adminToken)).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.zoneType").value("KEEP_OUT"));
+        mockMvc.perform(post("/api/v1/zones/"+id+"/deactivate").header("Authorization",bearer(adminToken)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.active").value(false));
+        mockMvc.perform(post("/api/v1/zones/"+id+"/activate").header("Authorization",bearer(adminToken)))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.active").value(true));
+        body.put("zoneType","SPEED");
+        mockMvc.perform(put("/api/v1/zones/"+id).header("Authorization",bearer(adminToken)).contentType(MediaType.APPLICATION_JSON).content(body.toString()))
+            .andExpect(status().isUnprocessableEntity());
+        for(String kind:new String[]{"PARK","WAYPOINT","CHARGER"}){
+            var endpoint=objectMapper.createObjectNode().put("mapId",mapId.toString()).put("endpointCode",kind+"_01")
+                .put("endpointName",kind).put("endpointType",kind).put("xM",.5).put("yM",.5).put("yawRad",0)
+                .put("active",true).put("accessible",true);
+            mockMvc.perform(post("/api/v1/endpoints").header("Authorization",bearer(adminToken)).contentType(MediaType.APPLICATION_JSON).content(endpoint.toString()))
+                .andExpect(status().isCreated()).andExpect(jsonPath("$.endpointType").value(kind));
+        }
+    }
+
     @BeforeEach
     void cleanAndCreateAdmin() {
         jdbcTemplate.execute("SET FOREIGN_KEY_CHECKS=0");

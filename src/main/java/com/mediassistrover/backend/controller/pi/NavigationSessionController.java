@@ -23,6 +23,10 @@ public class NavigationSessionController {
     public ObjectNode close(@PathVariable UUID robotId,@Valid @RequestBody NavigationSessionService.Close body){return sessions.close(robotId,body.sessionId());}
     @GetMapping("/api/v1/pi/navigation-session") @PreAuthorize("hasRole('DEVICE')")
     public ObjectNode device(@AuthenticationPrincipal DevicePrincipal device){return sessions.device(device);}
+    @PostMapping("/api/v1/pi/navigation-session/plan") @PreAuthorize("hasRole('DEVICE')")
+    public ObjectNode plan(@AuthenticationPrincipal DevicePrincipal device,@Valid @RequestBody NavigationSessionService.PlannedPath body){
+        return sessions.publishPlan(device,body);
+    }
     @PostMapping("/api/v1/pi/navigation-session/close") @PreAuthorize("hasRole('DEVICE')")
     public ObjectNode closeDevice(@AuthenticationPrincipal DevicePrincipal device,@Valid @RequestBody NavigationSessionService.Close body){return sessions.closeDevice(device,body.sessionId());}
 }

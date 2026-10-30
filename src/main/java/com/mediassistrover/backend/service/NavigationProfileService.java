@@ -34,6 +34,26 @@ public class NavigationProfileService {
     private final NavigationSessionService navigationSessions;
     private static final List<JobStatus> HELD=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
     private static final List<String> IN_FLIGHT=List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED","RECOVERY_REQUIRED");
+    @Transactional(readOnly=true)
+    public JsonNode zoneStatus(UUID robotId) {
+        Robot robot=robots.findById(robotId).orElseThrow();
+        if(robot.getCurrentMap()==null && navigationSessions.current(robotId)==null)
+            return wire.object().put("robotId",robotId.toString()).put("state","NO_MAP")
+                .put("profileAcknowledged",false).put("zoneCount",0).put("note","Open a saved-map navigation session first");
+        Manifest expected=snapshot(robot);var prior=profiles.findById(robotId).orElse(null);
+        var session=sessions.findById(robotId).orElse(null);
+        boolean acknowledged=prior!=null && registry.fresh(session) && matches(prior,robot,session,expected.profileHash());
+        int speedCount=0,restrictedCount=0;
+        for(var rule:expected.profile().path("zones")) {
+            if("SPEED".equals(rule.path("zone_type").asText()))speedCount++;
+            if("KEEP_OUT".equals(rule.path("zone_type").asText()))restrictedCount++;
+        }
+        return wire.object().put("robotId",robotId.toString()).put("mapId",expected.profile().path("map_id").asText())
+            .put("profileHash",expected.profileHash()).put("acknowledgedProfileHash",prior==null?null:prior.getProfileHash())
+            .put("profileAcknowledged",acknowledged).put("zoneCount",expected.profile().path("zones").size())
+            .put("speedZoneCount",speedCount).put("restrictedZoneCount",restrictedCount)
+            .put("note",acknowledged?"Pi acknowledged this profile; runtime verification still requires ROS and pose":"Wait for an idle connected Pi to acknowledge the current profile");
+    }
     public record Manifest(String profileVersion,UUID robotId,String profileHash,JsonNode profile) { }
     public record Confirm(@NotNull UUID transportSessionId,@NotNull UUID producerSessionId,@NotNull UUID mapId,
                           @NotBlank @Pattern(regexp="[a-fA-F0-9]{64}") String mapAssetHash,
@@ -55,6 +75,17 @@ public class NavigationProfileService {
         endpoints.findByMapMapIdOrderByEndpointCodeAsc(map.getMapId()).stream().filter(e->e.isActive()&&e.isAccessible())
                 .sorted(Comparator.comparing(e->e.getEndpointId().toString())).forEach(e->targets.set(e.getEndpointId().toString(),wire.object()
                         .put("map_id",map.getMapId().toString()).put("x_m",number(e.getXM())).put("y_m",number(e.getYM())).put("yaw_rad",number(e.getYawRad()))));
+        var rules=root.putArray("zones");
+        zones.findByMapMapIdOrderByZoneCodeAsc(map.getMapId()).stream().filter(Zone::isActive)
+            .filter(z->z.getZoneType()==ZoneType.KEEP_OUT || z.getZoneType()==ZoneType.SPEED).forEach(z->{
+                var rule=rules.addObject().put("zone_id",z.getZoneId().toString()).put("zone_type",z.getZoneType().name());
+                rule.set("polygon",z.getPolygonJson().deepCopy());
+                if(z.getZoneType()==ZoneType.SPEED){
+                    if(z.getSpeedLimitMps()==null || z.getSpeedLimitMps().signum()<=0)
+                        throw new BusinessRuleException("Active SPEED zone requires speedLimitMps");
+                    rule.put("speed_limit_mps",number(z.getSpeedLimitMps()));
+                }
+            });
         return new Manifest("BE-NAV-PROFILE-1",robot.getRobotId(),wire.canonicalHash(root),root);
     }
 
@@ -154,6 +185,7 @@ public class NavigationProfileService {
         var list=config.putArray("zones");
         zones.findByMapMapIdOrderByZoneCodeAsc(mapId).stream().filter(Zone::isActive).forEach(z->{ObjectNode value=list.addObject().put("zone_id",z.getZoneId().toString())
                 .put("map_id",mapId.toString()).put("zone_code",z.getZoneCode()).put("zone_type",z.getZoneType().name());value.set("polygon",z.getPolygonJson().deepCopy());
+            value.put("speed_limit_mps",z.getSpeedLimitMps());
             value.put("capacity_limit",z.getCapacityLimit());value.put("calibrated_area_m2",z.getCalibratedAreaM2());value.put("camera_source_ref",z.getCameraSourceRef());
             value.set("camera_roi",z.getCameraRoiJson()==null?wire.object().nullNode():z.getCameraRoiJson().deepCopy());});
         return wire.object().put("configVersion","BE-ZONE-CONFIG-1").put("configHash",wire.canonicalHash(config)).set("config",config);
