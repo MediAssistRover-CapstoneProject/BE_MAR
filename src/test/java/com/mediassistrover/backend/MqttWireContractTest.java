@@ -83,6 +83,11 @@ class MqttWireContractTest {
         autonomous.set("manual_control",wire.object().put("source","gamepad").put("layout","vendor_mecanum")
                 .put("session_required",false).put("forward_mps",.25).put("angular_rps",.8).put("continuous",true));
         assertThatCode(()->validator.inbound(heartbeat)).doesNotThrowAnyException();
+        ((ObjectNode)autonomous.path("manual_control")).put("angular_rps",2.0);
+        assertThatCode(()->validator.inbound(heartbeat)).doesNotThrowAnyException();
+        ((ObjectNode)autonomous.path("manual_control")).put("angular_rps",2.01);
+        assertThatThrownBy(()->validator.inbound(heartbeat)).hasMessageContaining("contract");
+        ((ObjectNode)autonomous.path("manual_control")).put("angular_rps",2.0);
         autonomous.put("coverage_complete",true);
         assertThatThrownBy(()->validator.inbound(heartbeat)).hasMessageContaining("contract");
         autonomous.put("state","STOPPED").put("finished",true).put("reason","COVERAGE_COMPLETE").put("exploration_mode","frontier");

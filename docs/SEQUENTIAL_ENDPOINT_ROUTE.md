@@ -82,6 +82,16 @@ BE's active rule count separately from Pi's profile acknowledgement; clearing
 a checkbox on an older page without saving did not deactivate the stored zone.
 Changing a rule does not authorize dispatch until the new profile is acknowledged.
 
+The 2026-11-01 Pi update retains 3 cm body padding. SPEED caps anticipate
+entry along the current command direction and release once the padded body
+has exited and is moving away; normal acceleration, obstacles, another zone
+or the goal approach can still reduce speed. KEEP_OUT remains a planning mask
+plus a swept-footprint validation; a route is used only if a traversable path
+is found. Zone rules belong to the selected saved map/hash, not arbitrary new
+SLAM coordinates. The runtime and documented MQTT common schemas accept
+manual-control yaw reports up to the installed Hiwonder launch ceiling of
+2 rad/s, matching Pi; accepting this telemetry does not raise a speed limit.
+
 `GET /navigation-route-workflow.json` provides the four-stop graph for Swagger.
 For another number of stops, run `python scripts/create_endpoint_route.py --stops 6 --out endpoint-route`.
 The helper only writes JSON; it does not move the robot.
