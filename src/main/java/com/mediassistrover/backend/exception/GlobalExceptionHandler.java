@@ -80,6 +80,13 @@ public class GlobalExceptionHandler {
                 "Invalid request parameter or enum value", request, List.of(violation));
     }
 
+    @ExceptionHandler(org.springframework.web.bind.MissingRequestHeaderException.class)
+    ResponseEntity<ApiErrorResponse> handleMissingHeader(
+            org.springframework.web.bind.MissingRequestHeaderException exception, HttpServletRequest request) {
+        return response(HttpStatus.BAD_REQUEST,"VALIDATION_ERROR","Required header is missing",request,
+                List.of(new ApiErrorResponse.FieldViolation(exception.getHeaderName(),"Required")));
+    }
+
     @ExceptionHandler(ConflictException.class)
     ResponseEntity<ApiErrorResponse> handleConflict(ConflictException exception, HttpServletRequest request) {
         return response(HttpStatus.CONFLICT, "CONFLICT", exception.getMessage(), request, null);

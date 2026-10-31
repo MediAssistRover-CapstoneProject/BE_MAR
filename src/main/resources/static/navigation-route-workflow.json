@@ -1,0 +1,266 @@
+{
+  "workflow": {
+    "workflowCode": "WF_ENDPOINT_ROUTE_4",
+    "versionNo": 1,
+    "workflowName": "Đi lần lượt 4 endpoint trong một phiên",
+    "serviceType": "NAVIGATION",
+    "description": "Sequential MOVE steps; advance only on confirmed SUCCESS, preserve one navigation session, stop on failure.",
+    "inputSchemaJson": {
+      "type": "object",
+      "properties": {
+        "map_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "target_mode": {
+          "type": "string",
+          "const": "ENDPOINT"
+        },
+        "endpoint_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "route_waypoint_ids": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "required": [
+        "map_id",
+        "target_mode",
+        "endpoint_id",
+        "route_waypoint_ids"
+      ],
+      "additionalProperties": true
+    },
+    "inputUiJson": {},
+    "defaultInputsJson": {},
+    "outputMappingJson": {
+      "stops": [
+        {
+          "$ref": "/outputs/MOVE_01"
+        },
+        {
+          "$ref": "/outputs/MOVE_02"
+        },
+        {
+          "$ref": "/outputs/MOVE_03"
+        },
+        {
+          "$ref": "/outputs/MOVE_04"
+        }
+      ]
+    },
+    "requiredCapabilitiesJson": [
+      "MOVE"
+    ],
+    "maxDurationSec": 780,
+    "maxTotalVisits": 4,
+    "graphVersion": 3,
+    "schemaVersion": 3
+  },
+  "graph": {
+    "startStepCode": "MOVE_01",
+    "tasks": [
+      {
+        "taskCode": "NAVIGATE",
+        "taskName": "Đi tới điểm đích",
+        "sequenceNo": 1,
+        "configJson": {}
+      }
+    ],
+    "steps": [
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "MOVE",
+        "stepCode": "MOVE_01",
+        "stepName": "Đi tới endpoint thứ 1",
+        "sequenceNo": 1,
+        "paramsJson": {
+          "mode": "NORMAL",
+          "max_speed_mps": 0.6
+        },
+        "inputMappingJson": {
+          "map_id": {
+            "$ref": "/inputs/map_id"
+          },
+          "endpoint_id": {
+            "$ref": "/inputs/route_waypoint_ids/0"
+          }
+        },
+        "timeoutSec": 180,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "MOVE",
+        "stepCode": "MOVE_02",
+        "stepName": "Đi tới endpoint thứ 2",
+        "sequenceNo": 2,
+        "paramsJson": {
+          "mode": "NORMAL",
+          "max_speed_mps": 0.6
+        },
+        "inputMappingJson": {
+          "map_id": {
+            "$ref": "/inputs/map_id"
+          },
+          "endpoint_id": {
+            "$ref": "/inputs/route_waypoint_ids/1"
+          }
+        },
+        "timeoutSec": 180,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "MOVE",
+        "stepCode": "MOVE_03",
+        "stepName": "Đi tới endpoint thứ 3",
+        "sequenceNo": 3,
+        "paramsJson": {
+          "mode": "NORMAL",
+          "max_speed_mps": 0.6
+        },
+        "inputMappingJson": {
+          "map_id": {
+            "$ref": "/inputs/map_id"
+          },
+          "endpoint_id": {
+            "$ref": "/inputs/route_waypoint_ids/2"
+          }
+        },
+        "timeoutSec": 180,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "MOVE",
+        "stepCode": "MOVE_04",
+        "stepName": "Đi tới endpoint thứ 4",
+        "sequenceNo": 4,
+        "paramsJson": {
+          "mode": "NORMAL",
+          "max_speed_mps": 0.6
+        },
+        "inputMappingJson": {
+          "map_id": {
+            "$ref": "/inputs/map_id"
+          },
+          "endpoint_id": {
+            "$ref": "/inputs/endpoint_id"
+          }
+        },
+        "timeoutSec": 180,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      }
+    ],
+    "transitions": [
+      {
+        "fromStepCode": "MOVE_01",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": true,
+        "toStepCode": "MOVE_02"
+      },
+      {
+        "fromStepCode": "MOVE_01",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "MOVE_01",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "RECOVERY_REQUIRED"
+      },
+      {
+        "fromStepCode": "MOVE_02",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": true,
+        "toStepCode": "MOVE_03"
+      },
+      {
+        "fromStepCode": "MOVE_02",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "MOVE_02",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "RECOVERY_REQUIRED"
+      },
+      {
+        "fromStepCode": "MOVE_03",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": true,
+        "toStepCode": "MOVE_04"
+      },
+      {
+        "fromStepCode": "MOVE_03",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "MOVE_03",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "RECOVERY_REQUIRED"
+      },
+      {
+        "fromStepCode": "MOVE_04",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "SUCCEEDED"
+      },
+      {
+        "fromStepCode": "MOVE_04",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "MOVE_04",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "RECOVERY_REQUIRED"
+      }
+    ]
+  }
+}

@@ -31,6 +31,7 @@ class NavigationSessionIntegrationTest extends MySqlIntegrationTest {
     @Autowired EndpointRepository endpoints;
     @Autowired ServiceRequestService requests;@Autowired ServiceRequestRepository requestRows;
     @Autowired JobExecutionService execution;
+    @Autowired NavigationRouteService routes;
     @Autowired MqttStepDispatchService dispatch;@Autowired RobotCommandOutboxRepository outbox;
     @TempDir Path folder;String oldStorage;MqttTestFixture f;UUID mapId;String hash;
 
@@ -104,6 +105,39 @@ class NavigationSessionIntegrationTest extends MySqlIntegrationTest {
     }
     @Test void heldJobPreventsClosingOrChangingMap(){var opened=open();em.find(Job.class,f.jobId).setStatus(JobStatus.RUNNING);em.flush();
         assertThatThrownBy(()->sessions.close(f.robotId,UUID.fromString(opened.path("sessionId").asText()))).hasMessageContaining("current Job");}
+
+    @Test void dynamicRouteCreatesOnePublishedWorkflowAndJobAndRetryDoesNotDuplicateIt(){
+        var opened=open();connect(opened);UUID session=UUID.fromString(opened.path("sessionId").asText());
+        sessions.initialize(f.robotId,new NavigationSessionService.Initialize(session,"SEED",1.,1.,0.));heartbeat(opened,true,1);
+        var ids=new ArrayList<UUID>();
+        for(int i=0;i<4;i++)ids.add(endpoints.saveAndFlush(Endpoint.builder().map(maps.findById(mapId).orElseThrow())
+            .endpointCode("ROUTE_"+i).endpointName("Stop "+i).endpointType(EndpointType.WAYPOINT)
+            .xM(java.math.BigDecimal.ONE).yM(java.math.BigDecimal.ONE).yawRad(java.math.BigDecimal.ZERO)
+            .active(true).accessible(true).build()).getEndpointId());
+        var actor=com.mediassistrover.backend.security.AccountPrincipal.fromAccount(em.find(Account.class,f.accountId));
+        var input=new NavigationRouteService.Create(f.robotId,mapId,session,ids,.6,true,null);
+        String key="dynamic-route-"+UUID.randomUUID();
+        mqtt.setDispatchEnabled(true);mqtt.setEnabledStepTypes(new HashSet<>(Set.of("MOVE")));mqtt.setAllowSimulation(true);
+        try{
+            var result=routes.create(input,key,actor,null);em.flush();
+            assertThat(result.endpointIds()).isEqualTo(ids);
+            assertThat(result.request().status()).isEqualTo(ServiceRequestStatus.QUEUED);
+            assertThat(em.find(Workflow.class,result.workflowId()).getStatus()).isEqualTo(WorkflowStatus.PUBLISHED);
+            var job=em.createQuery("select j from Job j where j.serviceRequest.serviceRequestId=:id",Job.class)
+                .setParameter("id",result.request().serviceRequestId()).getSingleResult();
+            assertThat(job.getRobot().getRobotId()).isEqualTo(f.robotId);
+            assertThat(job.getInputJson().path("route_waypoint_ids")).hasSize(3);
+            assertThat(job.getInputJson().path("endpoint_id").asText()).isEqualTo(ids.getLast().toString());
+            assertThat(em.createQuery("select s from JobStep s where s.jobTask.job.jobId=:id",JobStep.class)
+                .setParameter("id",job.getJobId()).getResultList()).hasSize(4);
+            var retry=routes.create(input,key,actor,null);em.flush();
+            assertThat(retry.workflowId()).isEqualTo(result.workflowId());
+            assertThat(retry.request().serviceRequestId()).isEqualTo(result.request().serviceRequestId());
+            assertThat(em.createQuery("select count(j) from Job j where j.serviceRequest.serviceRequestId=:id",Long.class)
+                .setParameter("id",result.request().serviceRequestId()).getSingleResult()).isEqualTo(1);
+            assertThatThrownBy(()->routes.create(input,key+"-second",actor,null)).hasMessageContaining("active or unreconciled");
+        }finally{mqtt.setDispatchEnabled(false);mqtt.setAllowSimulation(false);mqtt.setEnabledStepTypes(new HashSet<>(Set.of("WAIT","EXECUTE_SENSING")));}
+    }
 
     @Test void navigationRequestPinsRobotAndSessionAndRejectsLostLocalization(){
         var opened=open();connect(opened);UUID session=UUID.fromString(opened.path("sessionId").asText());

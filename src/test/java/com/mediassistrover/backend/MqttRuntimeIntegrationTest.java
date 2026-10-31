@@ -230,51 +230,59 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
         assertThat(steps.findById(fixture.endStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.PENDING);
     }
 
-    @Test void twoMoveVisitsDispatchStrictlySequentiallyAndJobFinishesOnlyAfterBothResults() {
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(ints={2,4})
+    void multipleMoveVisitsDispatchSequentiallyAndFinishOnlyAfterTheLastStop(int count) {
         fixture(StepType.MOVE,null);
-        record Second(UUID stepId,UUID endpointId,String operationKey) { }
-        Second second=tx.execute(status->{
+        record Hop(UUID stepId,UUID endpointId,String operationKey) { }
+        List<Hop> later=tx.execute(status->{
             JobStep first=steps.findById(fixture.piStepId).orElseThrow(),end=steps.findById(fixture.endStepId).orElseThrow();
-            Endpoint endpoint=Endpoint.builder().map(first.getJobTask().getJob().getMap()).endpointCode("SECOND-"+UUID.randomUUID())
-                    .endpointName("Second target").endpointType(EndpointType.WAYPOINT).xM(java.math.BigDecimal.TEN)
-                    .yM(java.math.BigDecimal.TWO).yawRad(java.math.BigDecimal.ZERO).active(true).accessible(true).build();
-            entityManager.persist(endpoint);
-            ObjectNode params=json.createObjectNode().put("map_id",fixture.mapId.toString()).put("endpoint_id",endpoint.getEndpointId().toString())
-                    .put("mode","NORMAL").put("max_speed_mps",0.05);
-            end.getStep().setSequenceNo(3);
-            entityManager.flush();
-            Step definition=MqttTestFixture.definition(first.getStep().getWorkflow(),first.getStep().getTask(),StepType.MOVE,"MOVE_SECOND",2,params,json);
-            entityManager.persist(definition);
+            end.getStep().setSequenceNo(count+1);entityManager.flush();
             entityManager.createQuery("delete from StepTransition t where t.fromStep.stepId=:from and t.outcome=:outcome")
                     .setParameter("from",first.getStep().getStepId()).setParameter("outcome",TransitionOutcome.SUCCESS).executeUpdate();
-            entityManager.persist(StepTransition.builder().workflow(first.getStep().getWorkflow()).fromStep(first.getStep()).toStep(definition)
+            Step previous=first.getStep();List<Hop> visits=new ArrayList<>();
+            long execution=steps.findByJobId(fixture.jobId).stream().mapToLong(JobStep::getExecutionSequenceNo).max().orElseThrow();
+            for(int i=2;i<=count;i++) {
+                Endpoint endpoint=Endpoint.builder().map(first.getJobTask().getJob().getMap()).endpointCode("ROUTE-"+UUID.randomUUID())
+                        .endpointName("Stop "+i).endpointType(EndpointType.WAYPOINT).xM(java.math.BigDecimal.valueOf(i))
+                        .yM(java.math.BigDecimal.TWO).yawRad(java.math.BigDecimal.ZERO).active(true).accessible(true).build();
+                entityManager.persist(endpoint);
+                ObjectNode params=json.createObjectNode().put("map_id",fixture.mapId.toString()).put("endpoint_id",endpoint.getEndpointId().toString())
+                        .put("mode","NORMAL").put("max_speed_mps",0.05);
+                String code="MOVE_ROUTE_"+i;
+                Step definition=MqttTestFixture.definition(first.getStep().getWorkflow(),first.getStep().getTask(),StepType.MOVE,code,i,params,json);
+                entityManager.persist(definition);
+                entityManager.persist(StepTransition.builder().workflow(first.getStep().getWorkflow()).fromStep(previous).toStep(definition)
+                        .outcome(TransitionOutcome.SUCCESS).priority(1).defaultTransition(true).build());
+                for(TransitionOutcome outcome:List.of(TransitionOutcome.FAILURE,TransitionOutcome.TIMEOUT))entityManager.persist(StepTransition.builder()
+                        .workflow(first.getStep().getWorkflow()).fromStep(definition).outcome(outcome).priority(1).defaultTransition(true).terminalStatus(TerminalStatus.FAILED).build());
+                String key=fixture.jobId+":"+code+":1";
+                JobStep visit=JobStep.builder().jobTask(first.getJobTask()).step(definition).visitNo(1).executionSequenceNo(++execution)
+                        .stepCodeSnapshot(code).stepTypeSnapshot("MOVE").resolvedInputsJson(json.createObjectNode())
+                        .status(JobStepStatus.PENDING).attemptNo(1).timeoutSecSnapshot(60).operationKey(key).build();
+                entityManager.persist(visit);entityManager.flush();visits.add(new Hop(visit.getJobStepId(),endpoint.getEndpointId(),key));previous=definition;
+            }
+            entityManager.persist(StepTransition.builder().workflow(first.getStep().getWorkflow()).fromStep(previous).toStep(end.getStep())
                     .outcome(TransitionOutcome.SUCCESS).priority(1).defaultTransition(true).build());
-            entityManager.persist(StepTransition.builder().workflow(first.getStep().getWorkflow()).fromStep(definition).toStep(end.getStep())
-                    .outcome(TransitionOutcome.SUCCESS).priority(1).defaultTransition(true).build());
-            for(TransitionOutcome outcome:List.of(TransitionOutcome.FAILURE,TransitionOutcome.TIMEOUT))entityManager.persist(StepTransition.builder()
-                    .workflow(first.getStep().getWorkflow()).fromStep(definition).outcome(outcome).priority(1).defaultTransition(true).terminalStatus(TerminalStatus.FAILED).build());
-            String operationKey=fixture.jobId+":MOVE_SECOND:1";
-            long executionSequence=steps.findByJobId(fixture.jobId).stream().mapToLong(JobStep::getExecutionSequenceNo).max().orElseThrow()+1;
-            JobStep visit=JobStep.builder().jobTask(first.getJobTask()).step(definition).visitNo(1).executionSequenceNo(executionSequence)
-                    .stepCodeSnapshot("MOVE_SECOND").stepTypeSnapshot("MOVE").resolvedInputsJson(json.createObjectNode())
-                    .status(JobStepStatus.PENDING).attemptNo(1).timeoutSecSnapshot(60).operationKey(operationKey).build();
-            entityManager.persist(visit);entityManager.flush();return new Second(visit.getJobStepId(),endpoint.getEndpointId(),operationKey);
+            entityManager.flush();return visits;
         });
-
         dispatch();receive(ack(true));receive(start());receive(result(true));
-        assertThat(steps.findById(second.stepId()).orElseThrow().getStatus()).isEqualTo(JobStepStatus.PENDING);
         assertThat(currentJob().getStatus()).isEqualTo(JobStatus.RUNNING);
         assertThat(commands.findAll()).hasSize(1);
-
-        orchestrator.advance(fixture.jobId);orchestrator.advance(fixture.jobId);
-        assertThat(commands.findByJobStepId(second.stepId())).isPresent();
-        fixture.piStepId=second.stepId();fixture.endpointId=second.endpointId();fixture.operationKey=second.operationKey();
-        RobotCommandOutbox secondCommand=commands.findByJobStepId(second.stepId()).orElseThrow();fixture.commandId=secondCommand.getCommandId();
-        publisher.command(secondCommand.getCommandId());receive(ack(true));receive(start());receive(result(true));
-        assertThat(currentJob().getStatus()).isEqualTo(JobStatus.RUNNING);
+        for(int i=0;i<later.size();i++) {
+            Hop hop=later.get(i);
+            assertThat(steps.findById(hop.stepId()).orElseThrow().getStatus()).isEqualTo(JobStepStatus.PENDING);
+            assertThat(commands.findByJobStepId(hop.stepId())).isEmpty();
+            orchestrator.advance(fixture.jobId);orchestrator.advance(fixture.jobId);
+            RobotCommandOutbox command=commands.findByJobStepId(hop.stepId()).orElseThrow();
+            assertThat(command.getPayloadJson().path("step").path("params").path("endpoint_id").asText()).isEqualTo(hop.endpointId().toString());
+            fixture.piStepId=hop.stepId();fixture.endpointId=hop.endpointId();fixture.operationKey=hop.operationKey();fixture.commandId=command.getCommandId();
+            publisher.command(command.getCommandId());receive(ack(true));receive(start());receive(result(true));
+            assertThat(currentJob().getStatus()).isEqualTo(JobStatus.RUNNING);
+            assertThat(commands.findAll()).hasSize(i+2);
+        }
         orchestrator.advance(fixture.jobId);orchestrator.advance(fixture.jobId);orchestrator.advance(fixture.jobId);
         assertThat(currentJob().getStatus()).isEqualTo(JobStatus.SUCCEEDED);
-        assertThat(commands.findAll()).hasSize(2);
+        assertThat(commands.findAll()).hasSize(count);
     }
 
     @Test void moveLockHealthAndClearanceAcceptTheirOwnResolvedOutputs() {
