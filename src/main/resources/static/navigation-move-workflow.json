@@ -1,10 +1,10 @@
 {
   "workflow": {
     "workflowCode": "WF_MAP_ENDPOINT_MOVE",
-    "versionNo": 2,
+    "versionNo": 3,
     "workflowName": "Đi tới endpoint trên map đã lưu",
     "serviceType": "NAVIGATION",
-    "description": "Một step MOVE qua BE/MQTT tới endpoint thật, tốc độ tối đa 0,8 m/s theo giới hạn Pi và LiDAR. Không chạy trực tiếp cmd_vel từ web.",
+    "description": "MOVE tới vị trí endpoint, trần 0,6 m/s theo giới hạn Pi/zone/LiDAR. Phiên Pi mặc định POSITION_ONLY: tới vị trí thì dừng, không ép góc endpoint.",
     "inputSchemaJson": {
       "type": "object",
       "properties": {
@@ -58,11 +58,11 @@
         "taskCode": "NAVIGATE",
         "stepType": "MOVE",
         "stepCode": "MOVE_TO_ENDPOINT",
-        "stepName": "Đi và quay theo hướng endpoint",
+        "stepName": "Đi tới vị trí endpoint",
         "sequenceNo": 1,
         "paramsJson": {
           "mode": "NORMAL",
-          "max_speed_mps": 0.8
+          "max_speed_mps": 0.6
         },
         "inputMappingJson": {
           "map_id": {

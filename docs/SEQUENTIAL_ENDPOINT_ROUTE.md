@@ -49,11 +49,22 @@ reopening the map, reseeding localization or changing the session revision.
 Completing a route does not close its navigation session. If the session has
 expired, was explicitly closed, or Pi restarted, open a new session instead.
 
-Each MOVE endpoint is a confirmed arrival, including its requested heading,
-before the next step starts. This can include a brief stop at the endpoint;
+Each MOVE endpoint is a confirmed arrival before the next step starts.
+The 2026-10-31 position-only Pi patch defaults to a 6 cm Nav2 position
+tolerance, verifies the stopped live position within 8 cm and does not enforce
+endpoint yaw or issue a final Spin. Actual robot yaw remains in telemetry and
+`verified_pose`; optional `yaw_error_rad` is omitted when heading is not verified.
+An explicit `--arrival-mode POSITION_THEN_SPIN` retains strict heading mode.
+This can include a brief stop at the endpoint;
 it is not a pass-through waypoint or a guarantee of uninterrupted wheel motion.
 Obstacle checks, localization/TF validity, restricted zones and explicit
 cancellation remain in force throughout movement.
+
+On the mapping test page, the saved-zone checkbox now persists activation
+immediately. Draft polygon/speed/name edits still require Save. The page shows
+BE's active rule count separately from Pi's profile acknowledgement; clearing
+a checkbox on an older page without saving did not deactivate the stored zone.
+Changing a rule does not authorize dispatch until the new profile is acknowledged.
 
 `GET /navigation-route-workflow.json` provides the four-stop graph for Swagger.
 For another number of stops, run `python scripts/create_endpoint_route.py --stops 6 --out endpoint-route`.
