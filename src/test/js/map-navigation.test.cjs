@@ -58,7 +58,7 @@ test('dedicated workflow contract rejects changed speed or extra physical steps'
   const definition=JSON.parse(fs.readFileSync(path.join(__dirname,'../../main/resources/static/navigation-move-workflow.json'),'utf8'));
   const expected=nav.templateContract(definition);
   assert.equal(expected.steps.length,1);assert.equal(expected.steps[0].stepType,'MOVE');
-  assert.equal(expected.steps[0].paramsJson.max_speed_mps,.8);
+  assert.equal(expected.steps[0].paramsJson.max_speed_mps,.6);
   const altered=structuredClone(definition);altered.graph.steps[0].paramsJson.max_speed_mps=.3;
   assert.notDeepEqual(nav.templateContract(altered),expected);
   const extra=structuredClone(definition);extra.graph.steps.push({...extra.graph.steps[0],stepCode:'EXTRA'});

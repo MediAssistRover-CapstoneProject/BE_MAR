@@ -23,7 +23,7 @@ function detail(){return {workflow:{...definition.workflow,workflowId,startStepI
  const browser=await chromium.launch({headless:true,channel:'chrome'});
  try{
   const page=await browser.newPage({viewport:{width:1100,height:1000},deviceScaleFactor:Number(process.env.MAR_TEST_DPR||1)}),errors=[],calls=[];
-  let session=null,endpoints=[],request=null,job=null,zones=[];
+  let session=null,endpoints=[],request=null,job=null,zones=[],routeRetry=true;
   page.on('pageerror',e=>errors.push(e.message));
   function snapshot(){const now=new Date().toISOString();return {observedAt:now,mqttConnected:true,heartbeatFresh:true,dispatchReady:true,activeJobId:null,
     robot:{robotId,status:'IDLE',currentMapId:mapId,mapAssetHash:hash},navigationSession:session||{state:'NONE'},
@@ -37,7 +37,7 @@ function detail(){return {workflow:{...definition.workflow,workflowId,startStepI
    if(p==='/navigation-move-workflow.json')return json(definition);
    if(p==='/favicon.ico')return route.fulfill({status:204});
    assert.equal(r.headers().authorization,'Bearer test-admin');
-   const body=r.postDataJSON();calls.push({p,method,body});
+   const body=r.postDataJSON();calls.push({p,method,body,key:r.headers()['idempotency-key']});
    if(p.endsWith('/image.png'))return route.fulfill({contentType:'image/png',headers:{'X-Map-Asset-Hash':hash},body:png()});
    if(p.endsWith('/image-metadata'))return json(meta);
    if(p==='/api/v1/maps/'+mapId)return json({mapId,assetHash:hash,mapName:'Synthetic map',status:'ACTIVE'});
@@ -50,14 +50,19 @@ function detail(){return {workflow:{...definition.workflow,workflowId,startStepI
    if(p.endsWith('/navigation-session/close')){session.state='CLOSED';return json(session);}
    if(p.endsWith('/validate-navigation-point'))return json({knownFree:true});
    if(p==='/api/v1/endpoints'){if(method==='GET')return paged(endpoints);endpoints=[{...body,endpointId}];return json(endpoints[0]);}
-   if(p==='/api/v1/endpoints/'+endpointId){if(method==='PUT')endpoints[0]={...body,endpointId};return json(endpoints[0]);}
+   if(p.startsWith('/api/v1/endpoints/')){const e=endpoints.find(e=>p.endsWith('/'+e.endpointId));if(method==='PUT')Object.assign(e,body);return json(e);}
    if(p==='/api/v1/admin/workflows')return paged([detail().workflow]);
    if(p==='/api/v1/admin/workflows/'+workflowId)return json(detail());
    if(p==='/api/v1/navigation-requests'){request={serviceRequestId:requestId,status:'DRAFT'};return json({request});}
+   if(p==='/api/v1/navigation-routes'){
+    if(routeRetry){routeRetry=false;return route.fulfill({status:503,body:'Synthetic retry'});}
+    request={serviceRequestId:requestId,status:'QUEUED'};return json({workflowId,request,endpointIds:body.endpointIds});
+   }
    if(p==='/api/v1/service-requests/'+requestId)return json(request);
    if(p.endsWith('/submit')){request.status='QUEUED';return json(request);}
    if(p==='/api/v1/jobs')return paged(job?[job]:[]);
-   if(p.endsWith('/cancel')){request.status='CANCELLED';return json(request);}
+   if(job&&p==='/api/v1/jobs/'+job.jobId)return json({job,steps:job.steps});
+   if(p.endsWith('/cancel')){request.status='CANCELLED';if(job)job.status='CANCELLED';return json(request);}
    throw Error('Unexpected '+method+' '+p);
   });
   await page.goto('http://127.0.0.1:18884/');
@@ -137,9 +142,32 @@ function detail(){return {workflow:{...definition.workflow,workflowId,startStepI
   assert.equal(move.mapId,mapId);assert.equal(move.destinationEndpointId,endpointId);assert.equal(move.workflowId,workflowId);
   assert(!calls.some(c=>c.method==='PUT'&&c.p==='/api/v1/robots/'+robotId));
   await page.click('#navCancel');await page.waitForFunction(()=>!document.querySelector('#navCloseSession').disabled);
+  const second='88888888-8888-4888-8888-888888888888';
+  endpoints.push({...endpoints[0],endpointId:second,endpointCode:'B',endpointName:'Second',xM:1.8});
+  await page.click('#navLoad');await page.waitForFunction(()=>!document.querySelector('#navLoad').disabled);
+  await page.selectOption('#navEndpoints',endpointId);await page.click('#navRouteAdd');
+  await page.selectOption('#navEndpoints',second);await page.click('#navRouteAdd');
+  assert.equal(await page.locator('#navRouteList li').count(),2);
+  await page.getByRole('button',{name:'↑ điểm 2',exact:true}).click();
+  assert.equal(await page.evaluate(()=>testNav.state.route[0]),second);
+  await page.fill('#navRouteSpeed','0.5');await page.click('#navRefresh');
+  await page.waitForFunction(()=>!document.querySelector('#navRouteRun').disabled);
+  await page.click('#navRouteRun');await page.waitForFunction(()=>document.querySelector('#navRouteRun').textContent.includes('Tiếp tục'));
+  assert(await page.isDisabled('#navRouteAdd'));assert(await page.isDisabled('#navMove'));
+  await page.click('#navRouteRun');await page.waitForFunction(()=>document.querySelector('#navAction').textContent.includes('Đã gửi một tuyến'));
+  const routeCalls=calls.filter(c=>c.p==='/api/v1/navigation-routes');
+  assert.equal(routeCalls.length,2);assert.equal(routeCalls[0].key,routeCalls[1].key);assert.deepEqual(routeCalls[0].body,routeCalls[1].body);
+  assert.deepEqual(routeCalls[1].body.endpointIds,[second,endpointId]);assert.equal(routeCalls[1].body.maxSpeedMps,.5);
+  assert.equal(routeCalls[1].body.navigationSessionId,sessionId);assert.equal(routeCalls[1].body.submit,true);
+  job={jobId:'99999999-9999-4999-8999-999999999999',serviceRequestId:requestId,robotId,status:'RUNNING',
+   steps:[{stepCodeSnapshot:'MOVE_02',status:'RUNNING'},{stepCodeSnapshot:'MOVE_01',status:'SUCCEEDED'}]};
+  await page.click('#navRefresh');
+  await page.waitForFunction(()=>document.querySelector('#navRouteProgress').textContent.includes('2. POINT_TEST: RUNNING'));
+  assert((await page.textContent('#navRouteProgress')).startsWith('1. B: SUCCEEDED'));
+  await page.click('#navCancel');await page.waitForFunction(()=>!document.querySelector('#navCloseSession').disabled);
   await page.click('#navCloseSession');await page.waitForFunction(()=>document.querySelector('#navSessionStatus').textContent.includes('CLOSED'));
   assert((await page.textContent('#navPose')).includes('Chưa có vị trí'));assert(await page.isDisabled('#navMove'));
   assert.deepEqual(errors,[]);
-  console.log('PASS session UI: map load, seed drag, localization gate, endpoint, pinned workflow MOVE, cancel, close; no permanent robot assignment');
+  console.log('PASS session UI: seed, endpoint, zones, MOVE, ordered route, frozen retry, progress, cancel and close; no robot contacted');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

@@ -11,6 +11,22 @@ operation and does not dispatch later stops. Every MOVE has its own jobStepId,
 operationKey and path receipt. Endpoint groups are alternative destinations,
 not a sequence of stops.
 
+## Test from mapping.html
+
+Load the map, start one saved-map session and wait for READY and Pi profile
+ACK. In “Tuyến nhiều endpoint”, select a saved endpoint and click “Thêm
+endpoint đang chọn”; repeat for the next stops. Use the arrows to reorder or
+remove entries. Repeated visits (A → B → A) are allowed, up to 20 stops.
+Choose a ceiling up to 0.60 m/s and click “Chạy toàn bộ tuyến”. No separate
+workflow preparation is needed: the existing route API creates one matching
+workflow/request/Job. The single-stop workflow controls remain available.
+
+The page displays per-step progress and the current leg's Pi-confirmed Nav2
+path. It does not join endpoint markers with invented straight lines. A lost
+HTTP response is retried with the same frozen body and Idempotency-Key. An
+active route locks editing/another submission; cancellation uses the existing
+service-request cancel API and prevents dispatch of subsequent stops.
+
 ## Create and submit a route in one call
 
 ADMIN: POST `/api/v1/navigation-routes`, with a new `Idempotency-Key` header:
