@@ -42,6 +42,13 @@ is rejected (409 for an occupied Job, or 422 if the robot is not IDLE). Combine 
 request after the previous Job is terminal and its physical stop is confirmed.
 The session cannot be replaced or closed while an active Job owns it.
 
+For example, first send `endpointIds: [A]`. After that Job succeeds, send
+`endpointIds: [B]`, or `[B,C,D]`, with the same robot/map/navigationSessionId
+and a NEW Idempotency-Key. This creates a new Job without restarting Pi,
+reopening the map, reseeding localization or changing the session revision.
+Completing a route does not close its navigation session. If the session has
+expired, was explicitly closed, or Pi restarted, open a new session instead.
+
 Each MOVE endpoint is a confirmed arrival, including its requested heading,
 before the next step starts. This can include a brief stop at the endpoint;
 it is not a pass-through waypoint or a guarantee of uninterrupted wheel motion.

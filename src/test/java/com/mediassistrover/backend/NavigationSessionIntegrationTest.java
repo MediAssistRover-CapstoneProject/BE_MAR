@@ -135,6 +135,18 @@ class NavigationSessionIntegrationTest extends MySqlIntegrationTest {
             assertThat(retry.request().serviceRequestId()).isEqualTo(result.request().serviceRequestId());
             assertThat(em.createQuery("select count(j) from Job j where j.serviceRequest.serviceRequestId=:id",Long.class)
                 .setParameter("id",result.request().serviceRequestId()).getSingleResult()).isEqualTo(1);
+            // Simulate the previous route's completed runtime. Physical-stop ACK
+            // transitions themselves are covered by MqttRuntimeIntegrationTest.
+            job.setStatus(JobStatus.SUCCEEDED);
+            requestRows.findById(result.request().serviceRequestId()).orElseThrow().setStatus(ServiceRequestStatus.COMPLETED);
+            robots.findById(f.robotId).orElseThrow().setStatus(RobotStatus.IDLE);em.flush();
+            var next=routes.create(new NavigationRouteService.Create(f.robotId,mapId,session,List.of(ids.getFirst()),.6,true,null),
+                key+"-next",actor,null);em.flush();
+            assertThat(next.request().serviceRequestId()).isNotEqualTo(result.request().serviceRequestId());
+            assertThat(next.request().status()).isEqualTo(ServiceRequestStatus.QUEUED);
+            assertThat(sessionRows.findById(f.robotId).orElseThrow().getSessionId()).isEqualTo(session);
+            assertThat(sessionRows.findById(f.robotId).orElseThrow().getInitializationRevision()).isEqualTo(1);
+            assertThat(sessions.status(f.robotId).path("state").asText()).isEqualTo("READY");
             assertThatThrownBy(()->routes.create(input,key+"-second",actor,null)).hasMessageContaining("active or unreconciled");
         }finally{mqtt.setDispatchEnabled(false);mqtt.setAllowSimulation(false);mqtt.setEnabledStepTypes(new HashSet<>(Set.of("WAIT","EXECUTE_SENSING")));}
     }
