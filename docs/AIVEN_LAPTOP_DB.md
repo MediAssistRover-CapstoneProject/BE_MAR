@@ -37,6 +37,18 @@ schema AND data INCLUDING `flyway_schema_history`, binary UUIDs and device hashe
 Treat it as private; never commit it to Git. A snapshot made without FreezeSource
 is for inspection only and the importer will refuse it for cutover.
 
+To keep only the latest recovered map and its endpoints/zones, add
+`-KeepMapId c342d669-cfbe-447a-a36d-f28b542f61e7` to Export-MarCloudDb.ps1.
+This restores into an isolated temporary local DB, removes history/old maps and
+old workflow versions there, validates every foreign key (including composites),
+then writes the clean SQL. It retains the admin account, robot/device identity,
+hospital/floor for this map, system settings, Flyway history and the latest
+published mapping/MOVE/speech workflows. Jobs/requests/commands/sessions/logs and
+old maps are absent from the resulting export. The original local DB is never
+pruned. Only this imported map's YAML/PGM files remain in the backup. Use a new
+output folder for each export. Open a fresh navigation session for the retained
+map before launching saved-map navigation on Pi; old session IDs are not reused.
+
 There is no CREATE DATABASE/USE/backend_robot_v1 or DROP TABLE in the generated
 dump. Select the empty target `defaultdb`, not a new local database name. Do not
 first boot BE/Flyway on that empty target then restore on top of its tables.

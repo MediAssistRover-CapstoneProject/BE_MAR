@@ -3,7 +3,7 @@
 Passwords are prompted, never passed as process arguments. No pip packages required.
 SQL/credentials belong outside Git. The laptop keeps its map volume and HTTPS URL.
 """
-import argparse,datetime,getpass,hashlib,json,os,pathlib,re,secrets,shutil,subprocess,sys,tempfile,time,urllib.request
+import argparse,datetime,getpass,hashlib,json,os,pathlib,re,secrets,shutil,subprocess,sys,tempfile,time,urllib.request,uuid
 
 HOST='mysql-2c54a41d-fpt-9265.i.aivencloud.com'
 MYSQL='mar-emqx-demo-mysql-1'
@@ -93,9 +93,102 @@ def export_db(a):
             sql_sha256=hashlib.sha256(sql.read_bytes()).hexdigest(),source_mysql_version=source('SELECT VERSION()'),
             asset_hashes={str(p.relative_to(assets)):hashlib.sha256(p.read_bytes()).hexdigest() for p in assets.rglob('*') if p.is_file()})
         (out/'manifest.json').write_text(json.dumps(meta,indent=2),encoding='utf-8')
+        if a.keep_map:prune_snapshot(out,a.keep_map)
         print('SQL_READY',sql);print('SOURCE_STOPPED',not running);print('MAP_ASSET_BACKUP',assets)
         if running:print('SNAPSHOT_ONLY: regenerate with --freeze-source at final cutover; source was not stopped.')
     finally:tmp.unlink(missing_ok=True)
+
+def prune_snapshot(out,map_id):
+    """Prune an isolated restored database; never DELETE from the source DB."""
+    map_id=str(uuid.UUID(map_id));name='mar_export_prune_'+secrets.token_hex(8)
+    if not re.fullmatch('mar_export_prune_[0-9a-f]{16}',name):raise RuntimeError('Invalid temporary database')
+    sql=out/'01_mar_to_aiven.sql';meta=json.loads((out/'manifest.json').read_text())
+    def query(text):
+        # Composite FK checks can exceed Windows' command-line limit; stream
+        # SQL through stdin rather than passing a large -e argument.
+        r=command(['docker','exec','-i',MYSQL,'sh','-c','exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -B "$@"','mysql',name],input=(text+';\n').encode(),stdout=subprocess.PIPE)
+        return r.stdout.decode('utf-8').strip()
+    source('CREATE DATABASE `'+name+'` CHARACTER SET utf8mb4')
+    try:
+        with sql.open('rb') as f:command(['docker','exec','-i',MYSQL,'sh','-c','exec mysql -uroot -p"$MYSQL_ROOT_PASSWORD" "$@"','mysql',name],stdin=f,stdout=subprocess.PIPE)
+        keep="UUID_TO_BIN('"+map_id+"')"
+        row=query('SELECT map_file_uri FROM Map WHERE map_id='+keep)
+        if row!='/api/v1/pi/maps/'+map_id+'/bundle':raise RuntimeError('Keep-map must be an imported map with independent YAML/PGM files')
+        before=inventory(query)
+        core=('WF_MAP_ENDPOINT_MOVE','WF_MAPPING','WF_ROBOT_SPEECH_DEMO')
+        workflows=[]
+        for code in core:
+            value=query("SELECT HEX(workflow_id) FROM Workflow WHERE workflow_code='"+code+"' AND status='PUBLISHED' ORDER BY version_no DESC LIMIT 1")
+            if not re.fullmatch('[0-9A-Fa-f]{32}',value):raise RuntimeError('Missing published workflow '+code)
+            workflows.append("UNHEX('"+value+"')")
+        allowed={'Account','RevokedToken','StaffProfile','HospitalInformation','Floor','Map','Robot','Room',
+            'Endpoint','Zone','EndpointGroup','EndpointGroupMember','SystemSetting','MqttRolloutControl',
+            'Workflow','Task','Step','StepTransition','flyway_schema_history'}
+        names=query('SHOW TABLES').splitlines()
+        if any(not re.fullmatch('[A-Za-z0-9_]+',n) for n in names):raise RuntimeError('Unexpected table name')
+        statements=['SET FOREIGN_KEY_CHECKS=0','START TRANSACTION']
+        statements += ['DELETE FROM `'+n+'`' for n in names if n not in allowed]
+        statements += [
+            'DELETE FROM EndpointGroupMember WHERE map_id<>'+keep,
+            'DELETE FROM EndpointGroup WHERE map_id<>'+keep,
+            'DELETE FROM Endpoint WHERE map_id<>'+keep,
+            'DELETE FROM Zone WHERE map_id<>'+keep,
+            'UPDATE Room SET default_endpoint_group_id=NULL WHERE default_endpoint_group_id NOT IN (SELECT endpoint_group_id FROM EndpointGroup)',
+            'DELETE FROM Room WHERE room_id NOT IN (SELECT room_id FROM Endpoint WHERE room_id IS NOT NULL)',
+            'UPDATE Robot SET current_map_id=NULL,map_asset_hash=NULL WHERE current_map_id IS NOT NULL AND current_map_id<>'+keep,
+            'DELETE FROM Map WHERE map_id<>'+keep,
+            'DELETE FROM Floor WHERE floor_id NOT IN (SELECT floor_id FROM Map)',
+            'DELETE FROM HospitalInformation WHERE hospital_information_id NOT IN (SELECT hospital_information_id FROM Floor)',
+            'DELETE FROM StepTransition WHERE workflow_id NOT IN ('+','.join(workflows)+')',
+            'DELETE FROM Step WHERE workflow_id NOT IN ('+','.join(workflows)+')',
+            'DELETE FROM Task WHERE workflow_id NOT IN ('+','.join(workflows)+')',
+            'DELETE FROM Workflow WHERE workflow_id NOT IN ('+','.join(workflows)+')',
+            'COMMIT','SET FOREIGN_KEY_CHECKS=1']
+        query(';\n'.join(statements)+';')
+        # Re-enabling foreign keys does not validate old rows; check each FK,
+        # including composite keys, explicitly before producing the SQL.
+        rows=query("SELECT TABLE_NAME,CONSTRAINT_NAME,COLUMN_NAME,REFERENCED_TABLE_NAME,REFERENCED_COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA=DATABASE() AND REFERENCED_TABLE_NAME IS NOT NULL ORDER BY TABLE_NAME,CONSTRAINT_NAME,ORDINAL_POSITION")
+        groups={}
+        for row in rows.splitlines():
+            child,key,col,parent,ref=row.split('\t');groups.setdefault((child,key,parent),[]).append((col,ref))
+        checks=[]
+        for (child,key,parent),cols in groups.items():
+            cond=' AND '.join('c.`'+c+'` IS NOT NULL' for c,_ in cols)
+            join=' AND '.join('c.`'+c+'`=p.`'+r+'`' for c,r in cols)
+            checks.append("SELECT '"+child+'.'+key+"',COUNT(*) FROM `"+child+'` c WHERE '+cond+' AND NOT EXISTS (SELECT 1 FROM `'+parent+'` p WHERE '+join+')')
+        bad=[line for line in query(' UNION ALL '.join(checks)).splitlines() if line.split('\t')[-1]!='0']
+        if bad:raise RuntimeError('Pruned snapshot has orphan references: '+str(bad[:5]))
+        after=inventory(query)
+        if after['counts']['Map']!=1 or after['counts']['Job']!=0:raise RuntimeError('Pruned snapshot invariant failed')
+        assets=out/'map-artifacts';root=assets.resolve();prefix='imports/'+map_id+'/'
+        keep_files={n:h for n,h in meta['asset_hashes'].items() if n.replace('\\','/').startswith(prefix)}
+        if len(keep_files)<2:raise RuntimeError('Retained map files are absent from the backup')
+        for p in assets.rglob('*'):
+            if p.is_file() and str(p.relative_to(assets)) not in keep_files:
+                if p.is_symlink() or not p.resolve().is_relative_to(root):raise RuntimeError('Unexpected asset backup path')
+                p.unlink()
+        for p in sorted(assets.rglob('*'),key=lambda p:len(p.parts),reverse=True):
+            if p.is_dir() and not any(p.iterdir()):
+                if p.is_symlink() or not p.resolve().is_relative_to(root):raise RuntimeError('Unexpected asset backup directory')
+                p.rmdir()
+        tmp=sql.with_suffix('.clean.partial')
+        try:
+            with tmp.open('wb') as f:
+                f.write(('-- MAR CLEAN snapshot: only map '+map_id+'; import into EMPTY defaultdb.\n').encode())
+                command(['docker','exec',MYSQL,'sh','-c','exec mysqldump -uroot -p"$MYSQL_ROOT_PASSWORD" "$@"','mysqldump',
+                    '--single-transaction','--quick','--hex-blob','--default-character-set=utf8mb4','--set-gtid-purged=OFF',
+                    '--column-statistics=0','--no-tablespaces','--skip-add-locks','--skip-lock-tables',
+                    '--skip-add-drop-table','--skip-triggers','--skip-comments',name],stdout=f)
+                f.write(SANITIZE.encode())
+            if re.search(r'^\s*(DROP\s|CREATE DATABASE\s|USE\s)',tmp.read_text(encoding='utf-8'),re.M|re.I):raise RuntimeError('Unexpected clean SQL')
+            os.replace(tmp,sql)
+        finally:tmp.unlink(missing_ok=True)
+        meta.update(after);meta.update(keep_map_id=map_id,pruned=True,original_counts=before['counts'],
+            asset_hashes=keep_files,sql_sha256=hashlib.sha256(sql.read_bytes()).hexdigest())
+        (out/'manifest.json').write_text(json.dumps(meta,indent=2),encoding='utf-8')
+        (out/'CLEAN_SNAPSHOT.txt').write_text('Only map '+map_id+' retained.\n'+json.dumps(after['counts'],indent=2)+'\nSource local DB was not pruned. Start a fresh navigation session for this map.\n',encoding='utf-8')
+        print('CLEAN_SNAPSHOT',json.dumps(after['counts']))
+    finally:source('DROP DATABASE `'+name+'`')
 
 def option(value):
     if any(x in value for x in '\r\n\x00'):raise ValueError('Invalid newline/control in connection setting')
@@ -209,6 +302,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--project',type=pathlib.Path,default=pathlib.Path(__file__).resolve().parents[1])
     s=p.add_subparsers(dest='action',required=True)
     e=s.add_parser('export');e.add_argument('--output',type=pathlib.Path,required=True);e.add_argument('--freeze-source',action='store_true')
+    e.add_argument('--keep-map',help='Keep only this imported map, its endpoints/zones and latest core workflows; prune history in an isolated clone')
     i=s.add_parser('import');i.add_argument('--sql',type=pathlib.Path,required=True);i.add_argument('--ca',type=pathlib.Path,required=True)
     i.add_argument('--host',default=HOST);i.add_argument('--port',type=int,default=12636);i.add_argument('--user',default='avnadmin')
     i.add_argument('--verify-existing',action='store_true',help='After manual SQL import: verify exact data and create config; does not import again')
