@@ -32,7 +32,7 @@ public class MqttMaintenanceScheduler {
         for (var id:inbox.acknowledgements(PageRequest.of(0,64))) try {publisher.acknowledgement(id,false);} catch (RuntimeException ex) {log.warn("MQTT ACK {} will retry",id);}
         for (var id:commands.pending(PageRequest.of(0,32))) try {publisher.command(id);} catch (RuntimeException ex) {log.warn("MQTT outbox {} will retry",id);}
     }
-    @Scheduled(fixedDelay=3000)
+    @Scheduled(fixedDelay=3000,scheduler="mqttHeartbeatScheduler")
     public void heartbeats() {
         if (!properties.isEnabled()) return;
         transport.retryInitialConnection();

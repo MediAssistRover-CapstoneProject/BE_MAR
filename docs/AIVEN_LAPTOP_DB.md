@@ -108,6 +108,27 @@ session ready, open a NEW saved-map navigation session and initialize position.
 Test a short MOVE and zone entry/exit before longer workflows. No robot ID,
 device secret, MQTT host or Pi HTTPS URL change is required for this architecture.
 
+## Robot control and cloud latency
+
+The Pi never queries MySQL. A MOVE dispatch starts a local Nav2 action; the Pi
+checks localization, scan, zones and its velocity gate in the local 20 Hz loop.
+Changing the DB does not require changing StepType inputs or sending wheel
+commands from the BE. Other hardware steps retain their operation identity and
+acknowledgement/recovery contracts.
+
+Cloud round trips can delay admission, dispatch, durable acknowledgements, UI
+snapshots and transitions between steps. Link heartbeat scheduling has a dedicated
+executor so durable DB replay or other scheduled work cannot queue ahead of it.
+The heartbeat still validates the persisted session; this does not make DB outages
+invisible or bypass the Pi's communication-loss stop.
+
+The live-map PNG includes `X-Map-Metadata` (base64 UTF-8 JSON without raster data),
+containing geometry and pose from the very same frame revision. Clients must pair
+that metadata with that PNG instead of combining independently fetched revisions.
+The HTML labels a delayed position grey for up to 10 seconds; this is display-only
+and does not authorize MOVE from stale localization. A saved/closed mapping job
+does not show a live SLAM robot marker; open a navigation session on its saved map.
+
 ## Operations and rollback
 
 Keep using BOTH Compose files and BOTH env files after cutover; plain
