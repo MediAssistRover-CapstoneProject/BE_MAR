@@ -123,6 +123,20 @@
       transitions: template.graph.transitions.map(t => ({...t, fromStepId: t.fromStepCode, toStepId: t.toStepCode ?? null}))});
   }
 
+  async function consumeRobotEvents(response,onSnapshot){
+    if(!response.body)throw Error('Trình duyệt không hỗ trợ stream trạng thái.');
+    const reader=response.body.getReader(),decoder=new TextDecoder();let pending='';
+    try{while(true){const {value,done}=await reader.read();if(done)break;
+      pending+=decoder.decode(value,{stream:true});
+      if(pending.length>1048576)throw Error('Stream trạng thái vượt giới hạn.');
+      let match;while((match=/\r?\n\r?\n/.exec(pending))){
+        const block=pending.slice(0,match.index);pending=pending.slice(match.index+match[0].length);
+        const lines=block.split(/\r?\n/),event=lines.find(x=>x.startsWith('event:'))?.slice(6).trim();
+        const data=lines.filter(x=>x.startsWith('data:')).map(x=>x.slice(5).replace(/^ /,'')).join('\n');
+        if(event==='robot-state'&&data)onSnapshot(JSON.parse(data));
+      }
+    }}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+  }
   function mount(options) {
     const host = options.element;
     host.innerHTML = `
@@ -493,22 +507,32 @@
       renderRoute();controls(); draw(); poll(generation);
     }
     async function snapshot() {
-      const value = await api('/api/v1/robots/' + robotId() + '/snapshot');
+      const generation=state.generation,requestedRobot=robotId(),started=performance.now();
+      const value = await api('/api/v1/robots/' + requestedRobot + '/snapshot');
+      if(generation!==state.generation||requestedRobot!==robotId())return value;
       if (value.robot?.robotId !== robotId()) throw Error('Snapshot không đúng robot.');
-      state.snapshot = value; state.receivedAt = performance.now();
-      if(value.navigationSession?.sessionId&&performance.now()-state.zoneSyncAt>5000){
-        state.zoneSyncAt=performance.now();
-        try{const sync=await api('/api/v1/robots/'+robotId()+'/navigation-zones');state.zoneAck=sync.mapId===mapId()&&sync.profileAcknowledged;
-          $('navZoneSync').textContent=state.zoneAck?(typeof sync.speedZoneCount==='number'?
-            'Pi đã xác nhận '+sync.restrictedZoneCount+' vùng cấm và '+sync.speedZoneCount+' vùng giới hạn tốc độ.':
-            'Pi đã xác nhận profile chứa '+sync.zoneCount+' zone.'):'BE đang bật '+sync.restrictedZoneCount+' vùng cấm và '+sync.speedZoneCount+' vùng giảm tốc; Pi chưa ACK profile này. Chờ robot rảnh và kết nối.';}
-        catch(e){state.zoneAck=null;$('navZoneSync').textContent='Chưa kiểm tra được đồng bộ zone: '+e.message;}
-      }
+      return acceptSnapshot(value,started,generation,requestedRobot);
+    }
+    function acceptSnapshot(value,started,generation,requestedRobot){
+      if(generation!==state.generation||requestedRobot!==robotId()||value.robot?.robotId!==requestedRobot)return;
+      if(state.snapshot&&Date.parse(value.observedAt)<Date.parse(state.snapshot.observedAt))return state.snapshot;
+      state.snapshot = value; state.receivedAt = started;
       const session=value.navigationSession;
       $('navSessionStatus').textContent=session?.sessionId?`Phiên ${session.sessionId} · ${session.state} · ${session.localization?.reason||'chờ Pi nạp map và xác minh vị trí'} · hết hạn ${session.expiresAt}`:'Chưa mở phiên map tạm.';
       $('navPiCommand').textContent=session?.sessionId&&session.mapId===state.meta?.map_id&&['WAITING_FOR_PI','LOCALIZING','READY'].includes(session.state)?'Trong container, sau khi dừng robot.zsh run:\ncd /home/ubuntu/mediassist-mqtt-2026-10-08\nzsh tools/navigation_session.zsh --session-id '+session.sessionId:'Mở phiên để lấy lệnh khởi động Pi.';
       $('navRobotStatus').textContent = `Robot theo dõi: ${value.robot.robotId} · ${value.robot.status} · MQTT ${value.mqttConnected ? 'đã nối' : 'chưa nối'} · dispatch ${value.dispatchReady ? 'sẵn sàng' : 'chưa sẵn sàng'}${value.sessionFailureReason ? ' · ' + value.sessionFailureReason : ''}`;
-      controls();draw(); return value;
+      controls();draw(); syncZoneStatus(value,generation,requestedRobot).catch(()=>{}); return value;
+    }
+    async function syncZoneStatus(value,generation,requestedRobot) {
+      if(value.navigationSession?.sessionId&&performance.now()-state.zoneSyncAt>5000){
+        state.zoneSyncAt=performance.now();
+        try{const sync=await api('/api/v1/robots/'+requestedRobot+'/navigation-zones');if(generation!==state.generation||requestedRobot!==robotId())return;state.zoneAck=sync.mapId===mapId()&&sync.profileAcknowledged;
+          $('navZoneSync').textContent=state.zoneAck?(typeof sync.speedZoneCount==='number'?
+            'Pi đã xác nhận '+sync.restrictedZoneCount+' vùng cấm và '+sync.speedZoneCount+' vùng giới hạn tốc độ.':
+            'Pi đã xác nhận profile chứa '+sync.zoneCount+' zone.'):'BE đang bật '+sync.restrictedZoneCount+' vùng cấm và '+sync.speedZoneCount+' vùng giảm tốc; Pi chưa ACK profile này. Chờ robot rảnh và kết nối.';}
+        catch(e){if(generation!==state.generation)return;state.zoneAck=null;$('navZoneSync').textContent='Chưa kiểm tra được đồng bộ zone: '+e.message;}
+      }
+      controls();
     }
     async function trackRequest() {
       const p = state.pending; if (!p?.requestId) return;
@@ -533,12 +557,38 @@
       if (p.done) say('Yêu cầu ' + p.requestId + ' · Job ' + (detail?.job.status ?? request.status) + (detail?.job.errorCode ? ' · ' + detail.job.errorCode : ''));
       controls();
     }
+    let streamController=null,streamGeneration=-1,streamLastAt=-Infinity,streamRetryAt=0;
+    function stopRobotStream(){streamController?.abort();streamController=null;streamGeneration=-1;streamLastAt=-Infinity;}
+    function ensureRobotStream(generation){
+      if(streamController&&streamGeneration!==generation)stopRobotStream();
+      if(streamController||performance.now()<streamRetryAt)return;
+      const token=options.getToken().trim().replace(/^Bearer\s+/i,''),requestedRobot=robotId();if(!token)return;
+      const controller=new AbortController();streamController=controller;streamGeneration=generation;
+      (async()=>{try{
+        const response=await fetch('/api/v1/robots/'+requestedRobot+'/stream',{headers:{Authorization:'Bearer '+token},cache:'no-store',signal:controller.signal});
+        if(!response.ok)throw Error('Stream HTTP '+response.status);
+        await consumeRobotEvents(response,value=>{
+          if(controller.signal.aborted||generation!==state.generation||requestedRobot!==robotId())return;
+          acceptSnapshot(value,performance.now(),generation,requestedRobot);streamLastAt=performance.now();
+        });
+      }catch(error){/* REST fallback below remains active; stream failure is not robot disconnection. */}
+      finally{if(streamController===controller){streamController=null;streamRetryAt=performance.now()+5000;}}})();
+    }
+    let progressInFlight=false;
     async function poll(generation) {
       if (state.closed || generation !== state.generation || !state.meta) return;
-      try { await trackRequest(); await snapshot(); }
-      catch (error) { state.snapshot = null; $('navRobotStatus').textContent = 'Chưa cập nhật được: ' + error.message; controls();draw();
+      const started=performance.now();ensureRobotStream(generation);
+      // Job detail is audit/progress, never a prerequisite for rendering the next pose.
+      if(!progressInFlight&&state.pending&&!state.pending.done){
+        progressInFlight=true;
+        trackRequest().catch(error=>{if(generation===state.generation)$('navReceipt').textContent='Chưa cập nhật kết quả job: '+error.message;})
+          .finally(()=>{progressInFlight=false;});
+      }
+      try { if(performance.now()-streamLastAt>6000)await snapshot(); }
+      catch (error) { if(generation!==state.generation)return;
+        $('navRobotStatus').textContent = 'UI chưa nhận trạng thái mới; chưa kết luận mất MQTT: ' + error.message; controls();draw();
         if (error.status === 401 || error.status === 403) return; }
-      if (!state.closed && generation === state.generation) state.timer = setTimeout(() => poll(generation), 1000);
+      if (!state.closed && generation === state.generation) state.timer = setTimeout(() => poll(generation), Math.max(100,1000-(performance.now()-started)));
     }
     async function template() { if (!state.template) state.template = await api('/navigation-move-workflow.json'); return state.template; }
     async function requireWorkflow(id) {
@@ -761,16 +811,16 @@
     const release = () => { state.dragging = null; };
     canvas.addEventListener('pointerup', release); canvas.addEventListener('pointercancel', release);
     $('navMapId').addEventListener('input', () => {
-      state.generation++; clearTimeout(state.timer); state.meta = state.image = state.snapshot = null; canvas.hidden = true;
+      stopRobotStream();state.generation++; clearTimeout(state.timer); state.meta = state.image = state.snapshot = null; canvas.hidden = true;
       state.endpoints = []; showEndpoints(); clearPoint(); $('navMapInfo').textContent = 'Map ID đã đổi; tải map trước khi thao tác.';
       state.zones=[];clearZone();$('navZoneMode').checked=false;$('navZoneSync').textContent='Tải map mới để kiểm tra zone.';
       state.seed=null;for(const id of ['navSeedX','navSeedY'])$(id).value='';
       $('navPose').textContent = 'Chưa tải map mới.'; controls();
     });
     const expiryTimer = setInterval(()=>{controls();draw();}, 250);
-    window.addEventListener('pagehide', () => { state.closed = true; state.generation++; clearTimeout(state.timer); clearInterval(expiryTimer); if (state.imageUrl) URL.revokeObjectURL(state.imageUrl); });
+    window.addEventListener('pagehide', () => { stopRobotStream();state.closed = true; state.generation++; clearTimeout(state.timer); clearInterval(expiryTimer); if (state.imageUrl) URL.revokeObjectURL(state.imageUrl); });
     controls();
     return {loadMap, state};
   }
-  return {geometry, pixelToMap, mapToPixel, inside, renderSize, viewTransform, freshPose, poseView, plannedPath, workflowContract, templateContract, mount};
+  return {geometry, pixelToMap, mapToPixel, inside, renderSize, viewTransform, freshPose, poseView, plannedPath, workflowContract, templateContract, consumeRobotEvents, mount};
 });
