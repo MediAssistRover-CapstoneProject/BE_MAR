@@ -222,6 +222,22 @@ class MappingLiveTest {
         assertThat(previews.metadata(UUID.randomUUID())).isNull();
         session.setPotentiallyOpen(false);assertThat(previews.metadata(sid)).isNull();
     }
+    @Test void pngCarriesItsOwnPoseEvenWhenTheLatestFrameChangesBetweenHttpRequests() throws Exception {
+        var first=map(new byte[]{0,100,-1,50}).put("resolution",.025);
+        first.set("pose",wire.object().put("fresh",true).put("age_sec",0));
+        previews.accept(robot,first);
+        var image=previews.mapImage(sid);
+        var next=first.deepCopy().put("revision",2).put("captured_at",now.plusMillis(1).toString());
+        next.set("pose",wire.object().put("fresh",false));
+        previews.accept(robot,next);
+        assertThat(previews.metadata(sid).path("revision").asLong()).isEqualTo(2);
+        assertThat(image.revision()).isEqualTo(1);
+        assertThat(image.metadata().path("revision").asLong()).isEqualTo(image.revision());
+        assertThat(image.metadata().path("pose").path("fresh").asBoolean()).isTrue();
+        assertThat(image.metadata().has("data")).isFalse();
+        ((ObjectNode)image.metadata()).put("revision",999);
+        assertThat(previews.metadata(sid).path("revision").asLong()).isEqualTo(2);
+    }
     @Test void actualPythonPreviewMatchesJavaSchemaAndRendersPng() throws Exception {
         String fixture=System.getenv("MAR_PI_PREVIEW_FIXTURE");
         org.junit.jupiter.api.Assumptions.assumeTrue(fixture!=null,"Set MAR_PI_PREVIEW_FIXTURE to Python MappingManager output");

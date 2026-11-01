@@ -206,7 +206,7 @@
 const $=id=>document.getElementById(id);let job='',session='',mapping=false,timer=null,busy=false,polling=false,cameraStreaming=false,recovery=false,manualSource=null;const images={};
 function notice(message){$('notice').textContent=message}
 let autoMapping=null;
-let watchEpoch=0,mapFrameRevision=null,mapLoaded=false,currentMapState=null;
+let watchEpoch=0,mapFrameRevision=null,mapFrameMetadata=null,mapLoaded=false,currentMapState=null;
 let savedMapGeneration=0,savedMapLoading=false;
 function savedMapButton(){$('viewSavedMap').disabled=!job||savedMapLoading}
 function resetSavedMap(){
@@ -259,28 +259,42 @@ function mapPoint(p,value){
   return {x:(c*dx+s*dy)/p.resolution,y:p.height-(-s*dx+c*dy)/p.resolution,angle:-(value.yaw_rad-origin[2])*180/Math.PI};
 }
 function freshMapPose(sample,observed){const age=(Date.now()-Date.parse(observed))/1000;return sample?.fresh===true&&Number.isFinite(sample.age_sec)&&sample.age_sec>=0&&Number.isFinite(age)&&age>= -1&&Math.max(age,0)+sample.age_sec<=2.5}
+function pairedMapPreview(state){
+  if(!state?.mapping_session_id)return null;
+  if(mapFrameMetadata?.mapping_session_id===state?.mapping_session_id&&mapFrameMetadata.revision===mapFrameRevision)return mapFrameMetadata;
+  return state?.preview?.mapping_session_id===state?.mapping_session_id&&state?.preview?.revision===mapFrameRevision?state.preview:null;
+}
+function imageMapMetadata(response){
+  try{const raw=response.headers.get('X-Map-Metadata');if(!raw)return null;
+    const data=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(raw),c=>c.charCodeAt(0))));
+    return data.revision===Number(response.headers.get('X-Frame-Revision'))?data:null;
+  }catch{return null}
+}
 function scopedPose(state){
   // Pair the marker with the map snapshot's TF, never a newer heartbeat pose.
-  return {sample:state.preview?.pose,observed:state.preview?.captured_at};
+  const preview=pairedMapPreview(state);return {sample:preview?.pose,observed:preview?.captured_at};
 }
 function renderMapView(state){
   currentMapState=state;
-  const p=state?.preview;
+  const p=pairedMapPreview(state);
   if(!p){hideRobot('Chưa có map mới cho phiên quét.');return}
   const dims=[p.width,p.height,p.resolution];
   if(!dims.every(Number.isFinite)||dims.some(x=>x<=0)){hideRobot('Metadata bản đồ chưa hợp lệ.');return}
   $('mapGeometry').textContent=(p.width*p.resolution).toFixed(2)+' × '+(p.height*p.resolution).toFixed(2)+' m • '+p.width+' × '+p.height+' ô • '+(p.resolution*100).toFixed(1)+' cm/ô';
   if(state.state!=='MAPPING'||!state.potentially_open){hideRobot('Phiên đã dừng hoặc đang lưu; không hiển thị vị trí trực tiếp.');return}
   const {sample,observed}=scopedPose(state),age=(Date.now()-Date.parse(observed))/1000;
-  if(!freshMapPose(sample,observed)){hideRobot();return}
+  const totalAge=Math.max(0,age)+(sample?.age_sec??Infinity);
+  if(sample?.fresh!==true||!Number.isFinite(sample.age_sec)||sample.age_sec<0||!Number.isFinite(age)||age< -1||!Number.isFinite(totalAge)||totalAge<0||totalAge>10){hideRobot();return}
+  const live=freshMapPose(sample,observed);
   const point=mapPoint(p,sample.value);
   if(!point){hideRobot('Tọa độ robot chưa hợp lệ.');return}
-  $('robotPose').textContent='Robot: x='+sample.value.x_m.toFixed(2)+' m, y='+sample.value.y_m.toFixed(2)+' m, hướng '+(sample.value.yaw_rad*180/Math.PI).toFixed(0)+'°';
+  $('robotPose').textContent='Robot: x='+sample.value.x_m.toFixed(2)+' m, y='+sample.value.y_m.toFixed(2)+' m, hướng '+(sample.value.yaw_rad*180/Math.PI).toFixed(0)+'°'+(live?'':' • Vị trí cuối '+Math.ceil(totalAge)+' giây trước, đang chờ cập nhật');
   if(p.mapping_session_id!==state.mapping_session_id||!mapLoaded||$('mapImage').hidden||mapFrameRevision!==p.revision){$('mapOverlay').hidden=true;return}
   if(point.x<0||point.y<0||point.x>p.width||point.y>p.height){hideRobot('Robot nằm ngoài ảnh map hiện tại; chờ map mở rộng.');return}
   const r=Math.max(2,Math.min(8,.125/p.resolution));
   $('mapSvg').setAttribute('viewBox','0 0 '+p.width+' '+p.height);
   $('robotMarker').setAttribute('transform','translate('+point.x+' '+point.y+') rotate('+point.angle+')');
+  $('robotDot').setAttribute('fill',live?'#0879ee':'#777');$('robotArrow').setAttribute('fill',live?'#ff7900':'#777');
   $('robotDot').setAttribute('r',r);$('robotArrow').setAttribute('d','M '+(r*1.8)+' 0 L '+(r*.3)+' '+(-r*.55)+' L '+(r*.3)+' '+(r*.55)+' Z');
   $('mapOverlay').hidden=false;
 }
@@ -319,7 +333,7 @@ const jog=new TimedJog(control,(message,receipt)=>{$('jogStatus').textContent=me
 
 async function api(path,body,raw=false,options={}){const token=$('token').value.trim().replace(/^Bearer\s+/i,'');if(!token)throw Error('Cần access token ADMIN.');const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,...(body===undefined?{}:{'Content-Type':'application/json'}),...(options.headers??{})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(options.timeoutMs??5000),keepalive:options.keepalive??false});if(!r.ok){const t=await r.text();const error=Error(r.status+' '+t.slice(0,300));error.status=r.status;throw error}return raw?r:r.status===204?null:r.json()}
 function buttons(){savedMapButton();document.querySelectorAll('[data-x]').forEach(b=>b.disabled=!mapping||busy||jog.active||!!autoMapping?.owned||manualSource==='gamepad');$('save').disabled=!mapping||busy||jog.active;$('stop').disabled=!session;$('create').disabled=busy||mapping||recovery||jog.active;$('recover').disabled=busy||!recovery;$('speak').disabled=busy||mapping||jog.active;autoMapping?.buttons()}
-function clearImage(id,label,text){if(id==='cameraImage'&&cameraStreaming)return;$(id).hidden=true;$(label).textContent=text;if(id==='mapImage'){mapFrameRevision=null;mapLoaded=false;currentMapState=null;hideRobot('Chưa có vị trí robot trong phiên quét.')}if(images[id]){URL.revokeObjectURL(images[id]);delete images[id]}$(id).removeAttribute('src')}
+function clearImage(id,label,text){if(id==='cameraImage'&&cameraStreaming)return;$(id).hidden=true;$(label).textContent=text;if(id==='mapImage'){mapFrameRevision=null;mapFrameMetadata=null;mapLoaded=false;currentMapState=null;hideRobot('Chưa có vị trí robot trong phiên quét.')}if(images[id]){URL.revokeObjectURL(images[id]);delete images[id]}$(id).removeAttribute('src')}
 async function picture(route,id,label,epoch=watchEpoch,observedJob=job){
   if(id==='cameraImage'&&cameraStreaming)return;
   const r=await api('/api/v1/jobs/'+encodeURIComponent(observedJob)+'/'+route,undefined,true);
@@ -329,7 +343,7 @@ async function picture(route,id,label,epoch=watchEpoch,observedJob=job){
   if(id==='mapImage'&&mapFrameRevision===revision&&mapLoaded)return;
   const blob=await r.blob();if(epoch!==watchEpoch||id==='cameraImage'&&cameraStreaming)return;
   const url=URL.createObjectURL(blob);if(images[id])URL.revokeObjectURL(images[id]);images[id]=url;
-  if(id==='mapImage'){mapFrameRevision=revision;mapLoaded=false;$('mapOverlay').hidden=true;$(id).onload=()=>{if(epoch===watchEpoch&&mapFrameRevision===revision){mapLoaded=true;renderMapView(currentMapState)}}}
+  if(id==='mapImage'){mapFrameRevision=revision;mapFrameMetadata=imageMapMetadata(r);mapLoaded=false;$('mapOverlay').hidden=true;$(id).onload=()=>{if(epoch===watchEpoch&&mapFrameRevision===revision){mapLoaded=true;renderMapView(currentMapState)}}}
   $(id).src=url;$(id).hidden=false;$(label).textContent='Bản '+revision+' • '+r.headers.get('X-Captured-At');
 }
 function stopCameraStream(){cameraStreaming=false;$('cameraStreamImage').hidden=true;$('cameraStreamImage').removeAttribute('src');$('cameraTime').textContent='Đã chuyển về ảnh MQTT.'}
@@ -340,7 +354,7 @@ $('cameraStreamImage').onload=()=>{if(cameraStreaming)$('cameraTime').textConten
 $('cameraStreamImage').onerror=()=>{if(cameraStreaming){stopCameraStream();$('cameraTime').textContent='Không kết nối được video. Kiểm tra URL/Pi; đang dùng lại ảnh MQTT.'}};
 window.addEventListener('pagehide',stopCameraStream);
 function renderMotion(state){const manual=state.autonomy?.manual_control;manualSource=manual?.source??null;$('manualControlStatus').textContent=manual?('Nguồn: '+manual.source+' • '+manual.layout+' • '+manual.forward_mps+' m/s • '+manual.angular_rps+' rad/s'+(manual.continuous?' • giữ cần chạy liên tục':'')+(manual.session_required?' • cần phiên quét':' • joystick chạy cả khi chưa tạo job')):'Chưa nhận cấu hình điều khiển từ Pi.';const age=state.motionObservedAt?(Date.now()-Date.parse(state.motionObservedAt))/1000:Infinity;const sample=state.motionTelemetry?.gate;let gate;try{gate=JSON.parse(sample?.value??'null')}catch{}if(!gate||age>10){$('motionStatus').textContent='Chưa có phản hồi chuyển động mới từ Pi.';return}const labels={CLEAR:'Đường điều khiển đang cho phép chuyển động',NO_LEASE:'Đang dừng/chờ lệnh',STALE_COMMAND:'Chưa nhận được lệnh mới',STALE_OR_INVALID_US100:'Dừng: dữ liệu siêu âm chưa hợp lệ hoặc đã cũ',SIDE_OBSTACLE:'Dừng: có vật cản bên cạnh',REAR_OBSTACLE:'Dừng: có vật cản phía sau',REAR_LIDAR_NOT_READY:'Dừng: LiDAR phía sau chưa đủ dữ liệu',REAR_LIDAR_TF_NOT_READY:'Dừng: chưa xác định được hướng LiDAR phía sau',STALE_REAR_LIDAR:'Dừng: dữ liệu LiDAR phía sau đã cũ',REVERSE_NOT_ENABLED:'Chưa bật cấu hình lùi M1',NOT_COMMISSIONED:'Cấu hình chuyển động chưa được bật'};$('motionStatus').textContent=(labels[gate.reason]??('Robot dừng/giới hạn: '+gate.reason))+' • cập nhật '+Math.max(0,Math.round(age))+' giây trước'}
-async function poll(){if(!job||polling)return;polling=true;const epoch=watchEpoch,observedJob=job;try{const state=await api('/api/v1/jobs/'+encodeURIComponent(observedJob)+'/mapping-session?includePreview=false');if(epoch!==watchEpoch)return;session=state.mapping_session_id;renderMotion(state);recovery=state.job_status==='RECOVERY_REQUIRED';mapping=state.state==='MAPPING'&&state.potentially_open&&state.job_status==='RUNNING';autoMapping?.render(state);if(!mapping&&jog.active)await jog.stop('Nhiệm vụ không còn cho phép di chuyển.').catch(()=>{});notice(state.job_status==='RECOVERY_REQUIRED'?'Nhiệm vụ cần khôi phục. Đã khóa nút di chuyển; không tạo thêm nhiệm vụ.':mapping?'Đang quét bản đồ.':'Trạng thái nhiệm vụ: '+state.job_status+' / '+state.state);const p=state.preview;const summary={...state,preview:p?{revision:p.revision,width:p.width,height:p.height,resolution:p.resolution,captured_at:p.captured_at,pose:p.pose}:null};$('state').textContent=JSON.stringify(summary,null,2);buttons();await Promise.all([picture('mapping-preview.png','mapImage','mapTime',epoch,observedJob),picture('camera-preview.jpg','cameraImage','cameraTime',epoch,observedJob)]);if(epoch!==watchEpoch)return;renderMapView(state);if(state.job_status==='FAILED'){const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));const failed=detail.steps?.find(s=>s.status==='FAILED');if(failed)notice('Nhiệm vụ thất bại tại '+failed.stepCodeSnapshot+': '+(failed.errorCode||'Xem chi tiết nhiệm vụ')+(failed.errorCode==='MAP_UPLOAD_UNAUTHORIZED'?' — upload bị từ chối xác thực; map vẫn giữ trên Pi.':''))}const receiptId=autoMapping?.receiptCommandId();const receipt=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control'+(receiptId?'?commandId='+encodeURIComponent(receiptId):''));if(receipt){autoMapping?.observeReceipt(receipt);$('receipt').textContent=JSON.stringify(receipt,null,2);if(jog.active&&receipt.commandId===jog.commandId&&['PI_REJECTED','NO_PI_ACK','PUBLISH_FAILED'].includes(receipt.status))await jog.stop('Pi chưa thực hiện lệnh: '+(receipt.errorCode||receipt.status)).catch(()=>{})}}catch(e){if(epoch!==watchEpoch)return;mapping=false;hideRobot();if(autoMapping?.active)await autoMapping.stop().catch(()=>{});if(jog.active)await jog.stop('Mất kết nối theo dõi nhiệm vụ.').catch(()=>{});buttons();if(e.status===404){try{const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));$('state').textContent=JSON.stringify(detail,null,2);if(['QUEUED','ACCEPTED','RUNNING'].includes(detail.job.status)){notice('Đang chờ Pi mở phiên quét.');return}}catch(lookup){notice(lookup.message)}}notice(e.message);clearImage('mapImage','mapTime','Mất kết nối hoặc chưa có phiên quét.');clearImage('cameraImage','cameraTime','Không có ảnh mới.')}finally{polling=false}}
+async function poll(){if(!job||polling)return;polling=true;const epoch=watchEpoch,observedJob=job;try{const state=await api('/api/v1/jobs/'+encodeURIComponent(observedJob)+'/mapping-session?includePreview=false');if(epoch!==watchEpoch)return;session=state.mapping_session_id;renderMotion(state);recovery=state.job_status==='RECOVERY_REQUIRED';mapping=state.state==='MAPPING'&&state.potentially_open&&state.job_status==='RUNNING';autoMapping?.render(state);if(!mapping&&jog.active)await jog.stop('Nhiệm vụ không còn cho phép di chuyển.').catch(()=>{});notice(state.job_status==='RECOVERY_REQUIRED'?'Nhiệm vụ cần khôi phục. Đã khóa nút di chuyển; không tạo thêm nhiệm vụ.':mapping?'Đang quét bản đồ.':'Trạng thái nhiệm vụ: '+state.job_status+' / '+state.state);const p=state.preview;const summary={...state,preview:p?{revision:p.revision,width:p.width,height:p.height,resolution:p.resolution,captured_at:p.captured_at,pose:p.pose}:null};$('state').textContent=JSON.stringify(summary,null,2);buttons();renderMapView(state);await Promise.all([picture('mapping-preview.png','mapImage','mapTime',epoch,observedJob),picture('camera-preview.jpg','cameraImage','cameraTime',epoch,observedJob)]);if(epoch!==watchEpoch)return;renderMapView(state);if(state.job_status==='FAILED'){const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));const failed=detail.steps?.find(s=>s.status==='FAILED');if(failed)notice('Nhiệm vụ thất bại tại '+failed.stepCodeSnapshot+': '+(failed.errorCode||'Xem chi tiết nhiệm vụ')+(failed.errorCode==='MAP_UPLOAD_UNAUTHORIZED'?' — upload bị từ chối xác thực; map vẫn giữ trên Pi.':''))}const receiptId=autoMapping?.receiptCommandId();const receipt=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control'+(receiptId?'?commandId='+encodeURIComponent(receiptId):''));if(receipt){autoMapping?.observeReceipt(receipt);$('receipt').textContent=JSON.stringify(receipt,null,2);if(jog.active&&receipt.commandId===jog.commandId&&['PI_REJECTED','NO_PI_ACK','PUBLISH_FAILED'].includes(receipt.status))await jog.stop('Pi chưa thực hiện lệnh: '+(receipt.errorCode||receipt.status)).catch(()=>{})}}catch(e){if(epoch!==watchEpoch)return;mapping=false;hideRobot();if(autoMapping?.active)await autoMapping.stop().catch(()=>{});if(jog.active)await jog.stop('Mất kết nối theo dõi nhiệm vụ.').catch(()=>{});buttons();if(e.status===404){try{const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));$('state').textContent=JSON.stringify(detail,null,2);if(['QUEUED','ACCEPTED','RUNNING'].includes(detail.job.status)){notice('Đang chờ Pi mở phiên quét.');return}}catch(lookup){notice(lookup.message)}}notice(e.message);clearImage('mapImage','mapTime','Mất kết nối hoặc chưa có phiên quét.');clearImage('cameraImage','cameraTime','Không có ảnh mới.')}finally{polling=false}}
 async function watch(){if(autoMapping?.active)await autoMapping.stop().catch(()=>{});if(jog.active)await jog.stop().catch(()=>{});if(timer)clearInterval(timer);job=$('job').value.trim();if(!job){notice('Cần jobId.');return}watchEpoch++;resetSavedMap();session='';mapping=false;recovery=false;clearImage('mapImage','mapTime','Đang chờ map của phiên mới.');$('mapGeometry').textContent='Đang chờ kích thước map mới.';clearImage('cameraImage','cameraTime','Đang chờ ảnh của phiên mới.');buttons();poll();timer=setInterval(poll,1000)}
 async function control(x,z){if(!session)throw Error('Chưa có phiên quét.');return api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control',{mappingSessionId:session,linearX:x,angularZ:z,durationMs:900,controlSessionId,controlSequence:++controlSequence,requestedAt:new Date().toISOString()},false,{timeoutMs:1200,keepalive:x===0&&z===0})}
 function jogVelocity(directionX,directionZ,speed,turn){if(!Number.isFinite(speed)||speed<0||speed>.30||!Number.isFinite(turn)||turn<0||turn>1.0)throw Error('Tốc độ không hợp lệ.');return [Math.sign(directionX)*speed,Math.sign(directionZ)*turn]}

@@ -72,7 +72,11 @@ public class MappingSessionController {
     }
     private ResponseEntity<byte[]> picture(MappingPreviewService.Picture frame,MediaType type) {
         if(frame==null)return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
-        return ResponseEntity.ok().contentType(type).cacheControl(CacheControl.noStore())
-                .header("X-Frame-Revision",Long.toString(frame.revision())).header("X-Captured-At",frame.captured().toString()).body(frame.bytes());
+        var response=ResponseEntity.ok().contentType(type).cacheControl(CacheControl.noStore())
+                .header("X-Frame-Revision",Long.toString(frame.revision())).header("X-Captured-At",frame.captured().toString());
+        // Take the PNG and its pose/geometry from ONE immutable frame, not two cache reads.
+        if(frame.metadata()!=null)response.header("X-Map-Metadata",java.util.Base64.getEncoder().encodeToString(
+                frame.metadata().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        return response.body(frame.bytes());
     }
 }

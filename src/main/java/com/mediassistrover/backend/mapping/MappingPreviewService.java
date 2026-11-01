@@ -24,7 +24,9 @@ public class MappingPreviewService {
     private final Map<UUID,Frame> latest=new ConcurrentHashMap<>();
     private final Map<UUID,Picture> cameras=new ConcurrentHashMap<>();
     private record Frame(UUID sessionId,Instant captured,long revision,JsonNode data,byte[] png) { }
-    public record Picture(UUID sessionId,Instant captured,long revision,byte[] bytes) { }
+    public record Picture(UUID sessionId,Instant captured,long revision,byte[] bytes,JsonNode metadata) {
+        public Picture(UUID sessionId,Instant captured,long revision,byte[] bytes) {this(sessionId,captured,revision,bytes,null);}
+    }
     public record Changed(UUID jobId,JsonNode preview) { }
     public void accept(UUID robotId,JsonNode payload) {
         UUID sessionId=UUID.fromString(payload.path("mapping_session_id").asText());var session=sessions.findById(sessionId).orElse(null);
@@ -86,13 +88,16 @@ public class MappingPreviewService {
     public JsonNode latest(UUID sessionId) {Frame frame=frame(sessionId);return frame==null?null:frame.data().deepCopy();}
     /** Geometry and pose from the same revision as the PNG, without transferring the occupancy grid. */
     public JsonNode metadata(UUID sessionId) {
-        Frame frame=frame(sessionId);if(frame==null)return null;
+        return metadata(frame(sessionId));
+    }
+    private JsonNode metadata(Frame frame) {
+        if(frame==null)return null;
         ObjectNode data=(ObjectNode)frame.data().deepCopy();data.remove("data");
         double resolution=data.path("resolution").asDouble();
         data.put("width_m",data.path("width").asInt()*resolution).put("height_m",data.path("height").asInt()*resolution);
         return data;
     }
-    public Picture mapImage(UUID sessionId) {Frame frame=frame(sessionId);return frame==null?null:new Picture(sessionId,frame.captured(),frame.revision(),frame.png());}
+    public Picture mapImage(UUID sessionId) {Frame frame=frame(sessionId);return frame==null?null:new Picture(sessionId,frame.captured(),frame.revision(),frame.png(),metadata(frame));}
     public Picture cameraImage(UUID sessionId) {
         var session=sessions.findById(sessionId).orElse(null);if(session==null || !session.isPotentiallyOpen())return null;
         Picture frame=cameras.get(session.getRobotId());
