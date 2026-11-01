@@ -119,7 +119,9 @@ acknowledgement/recovery contracts.
 Cloud round trips can delay admission, dispatch, durable acknowledgements, UI
 snapshots and transitions between steps. Link heartbeat scheduling has a dedicated
 executor so durable DB replay or other scheduled work cannot queue ahead of it.
-The heartbeat still validates the persisted session; this does not make DB outages
+A heartbeat transaction rolled back by a transient lock conflict is retried at most
+twice in a new transaction, with the same event identity. Physical commands are
+not replayed by this retry. The heartbeat still validates the persisted session; this does not make DB outages
 invisible or bypass the Pi's communication-loss stop.
 
 The live-map PNG includes `X-Map-Metadata` (base64 UTF-8 JSON without raster data),
@@ -142,8 +144,9 @@ data back with a deliberate migration first; simply switching would lose state.
 The map binary files stay in the laptop Docker volume. A cloud DB backup alone
 cannot recover them; retain the map-artifacts backup and later map-file backups.
 This procedure is a one-time migration, not bidirectional synchronization.
-It has not been tested against your Aiven service until you supply its CA/password
-and execute the import. No cloud availability or physical motion guarantee is made.
+The importer verifies Aiven data/identities, and BE startup validates its schema and
+TLS connection. These checks do not validate physical MOVE performance; test local
+localization, obstacle handling and zone entry/exit on the robot after cutover.
 
 References: Aiven dump/restore:
 https://aiven.io/docs/products/mysql/howto/migrate-database-mysqldump ; Connector/J

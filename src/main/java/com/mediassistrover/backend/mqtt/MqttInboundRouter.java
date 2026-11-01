@@ -54,7 +54,7 @@ public class MqttInboundRouter {
             sessions.preview(lane.robotId(),UUID.fromString(raw.path("transportSessionId").asText()),raw.path("payload"));return;
         }
         MqttWire.Envelope e=wire.envelope(raw);
-        if ("heartbeat".equals(lane.lane())) {if (!"HEARTBEAT".equals(type)) throw new BusinessRuleException("Heartbeat topic requires HEARTBEAT");sessions.heartbeat(e);return;}
+        if ("heartbeat".equals(lane.lane())) {if (!"HEARTBEAT".equals(type)) throw new BusinessRuleException("Heartbeat topic requires HEARTBEAT");heartbeat(e);return;}
         if (Set.of("HEARTBEAT","MAP_PREVIEW").contains(type)) throw new BusinessRuleException("Transient message on durable events topic");
         if ("PROTOCOL_ERROR".equals(type)) {log.warn("Pi protocol error for robot {}: {}",e.robotId(),e.payload().path("errorCode").asText());return;}
         var receipt=store.receive(raw,e);
@@ -66,5 +66,17 @@ public class MqttInboundRouter {
         try {processor.process(receipt.messageId());}
         catch (BusinessRuleException ex) {processor.reject(receipt.messageId(),ex.getMessage());}
         publisher.acknowledgement(receipt.messageId(),true); // Receive/process transactions have both committed.
+    }
+    private void heartbeat(MqttWire.Envelope envelope) {
+        for(int attempt=0;;attempt++) {
+            try {sessions.heartbeat(envelope);return;}
+            catch(org.springframework.dao.ConcurrencyFailureException ex) {
+                if(attempt>=2)throw ex;
+                // The proxied heartbeat transaction has already rolled back. Retry in a
+                // new transaction, preserving the same message/session/sequence identity.
+                // This never retries a physical command or a business-rule rejection.
+                log.warn("MQTT heartbeat lock conflict for {}; retry {}/2",envelope.robotId(),attempt+1);
+            }
+        }
     }
 }
