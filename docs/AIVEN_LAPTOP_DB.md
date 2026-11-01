@@ -77,6 +77,12 @@ same arguments PLUS `-VerifyExisting`: this verifies the exact imported snapshot
 and creates the JDBC config without importing again. Do not run both imports.
 `deploy/verify-aiven.sql` is read-only.
 
+On Docker Desktop/Windows, MySQL can warn that a bind-mounted client.cnf is
+world-writable and ignore it, then try a local Unix socket. The importer copies
+the options into a private Linux temporary file with mode 0600 inside each
+short-lived client container and explicitly selects TCP. The password never
+appears in process arguments; only the public CA remains read from the mount.
+
 ## 3. Start the same laptop BE on Aiven, initially without robot dispatch
 
 ```powershell

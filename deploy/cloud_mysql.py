@@ -8,6 +8,15 @@ import argparse,datetime,getpass,hashlib,json,os,pathlib,re,secrets,shutil,subpr
 HOST='mysql-2c54a41d-fpt-9265.i.aivencloud.com'
 MYSQL='mar-emqx-demo-mysql-1'
 BACKEND='mar-emqx-demo-backend-1'
+# Docker Desktop can present Windows bind files as 0777. MySQL ignores such
+# option files regardless of the Windows ACL/chmod. Read a private Linux copy.
+CLIENT_BOOTSTRAP='''set -eu
+umask 077
+mar_client_config=$(mktemp /tmp/mar-mysql.XXXXXX)
+cat /migration/client.cnf > "$mar_client_config"
+chmod 600 "$mar_client_config"
+exec mysql --defaults-extra-file="$mar_client_config" --protocol=TCP --binary-mode=1 -N -B "$@"
+'''
 STABLE=('Account','Robot','Map','Endpoint','Zone','Workflow','Job','flyway_schema_history')
 TERMINAL="'COMPLETED','REJECTED','ABANDONED','RESOLVED_BY_STAFF','STOP_CONFIRMED','EXPIRED','CANCELLED'"
 SANITIZE="""
@@ -202,7 +211,7 @@ class Cloud:
         config='[client]\nhost='+option(host)+'\nport='+str(port)+'\nuser='+option(user)+'\npassword='+option(password)+'\ndatabase=defaultdb\nconnect-timeout=10\nssl-mode=VERIFY_IDENTITY\nssl-ca=/migration/ca.pem\ndefault-character-set=utf8mb4\n'
         p=folder/'client.cnf';p.write_text(config,encoding='utf-8');p.chmod(0o600)
         self.base=['docker','run','--rm','-i','--mount','type=bind,src='+str(folder)+',dst=/migration,readonly',
-                   'mysql:8.4','mysql','--defaults-extra-file=/migration/client.cnf','--binary-mode=1','-N','-B']
+                   '--entrypoint','/bin/sh','mysql:8.4','-c',CLIENT_BOOTSTRAP,'mar-mysql']
     def query(self,sql):return command(self.base+['-e',sql],stdout=subprocess.PIPE).stdout.decode('utf-8').strip()
     def load(self,path):
         with path.open('rb') as f:command(self.base,stdin=f,stdout=subprocess.PIPE)

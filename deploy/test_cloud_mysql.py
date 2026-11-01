@@ -4,6 +4,12 @@ from unittest.mock import Mock,patch
 import cloud_mysql as m
 
 class Guards(unittest.TestCase):
+    def test_mysql_uses_a_private_linux_copy_and_explicit_tcp(self):
+        self.assertIn('mktemp /tmp/mar-mysql.',m.CLIENT_BOOTSTRAP)
+        self.assertIn('chmod 600 "$mar_client_config"',m.CLIENT_BOOTSTRAP)
+        self.assertIn('--defaults-extra-file="$mar_client_config"',m.CLIENT_BOOTSTRAP)
+        self.assertIn('--protocol=TCP',m.CLIENT_BOOTSTRAP)
+        self.assertNotIn('--defaults-extra-file=/migration/client.cnf',m.CLIENT_BOOTSTRAP)
     def fixture(self,root):
         sql=root/'01_mar_to_aiven.sql';sql.write_text('SELECT 1;\n')
         ca=root/'ca.pem';ca.write_text('dummy')
