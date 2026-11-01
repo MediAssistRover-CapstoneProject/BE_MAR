@@ -4,6 +4,7 @@ target/
 *.iml
 *.log
 .env
+.env.aiven
 secrets/
 data/map-artifacts/
 data/speech/

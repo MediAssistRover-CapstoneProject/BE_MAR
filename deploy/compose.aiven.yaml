@@ -1,0 +1,14 @@
+services:
+  backend:
+    environment:
+      SPRING_PROFILES_ACTIVE: prod,aiven
+      AIVEN_DB_URL: ${AIVEN_DB_URL:?Run cloud_mysql.py import first}
+      AIVEN_DB_USERNAME: ${AIVEN_DB_USERNAME:?Aiven user required}
+      AIVEN_DB_PASSWORD: ${AIVEN_DB_PASSWORD:?Aiven password required}
+      AIVEN_DB_TRUSTSTORE_PASSWORD: ${AIVEN_DB_TRUSTSTORE_PASSWORD:?Aiven truststore required}
+      # First start is inspection only. Enable after data/device checks.
+      OPERATIONS_SCHEDULER_ENABLED: ${CLOUD_OPERATIONS_SCHEDULER_ENABLED:-false}
+      MQTT_ENABLED: ${CLOUD_MQTT_ENABLED:-false}
+      MQTT_DISPATCH_ENABLED: ${CLOUD_MQTT_DISPATCH_ENABLED:-false}
+    volumes:
+      - ./secrets/aiven:/run/secrets/aiven:ro
