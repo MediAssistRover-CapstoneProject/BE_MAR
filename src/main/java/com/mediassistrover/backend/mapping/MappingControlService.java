@@ -104,7 +104,8 @@ public class MappingControlService {
         // Keep manual-control timestamps compatible with Python 3.10 robots.
         // Durable commands pass through DB precision; this QoS 0 lane does not.
         Instant now=Instant.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
-        if(input.requestedAt()!=null && (input.requestedAt().isBefore(now.minusMillis(1500)) || input.requestedAt().isAfter(now.plusSeconds(5))))
+        // A delayed zero-velocity STOP cannot start motion; keep session/sequence validation.
+        if(!stop && input.requestedAt()!=null && (input.requestedAt().isBefore(now.minusMillis(1500)) || input.requestedAt().isAfter(now.plusSeconds(5))))
             throw new BusinessRuleException("Stale UI control request; check laptop/server time");
         if((input.controlSessionId()==null)!=(input.controlSequence()==null))
             throw new BusinessRuleException("controlSessionId and controlSequence must be supplied together");

@@ -108,6 +108,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(ObjectOptimisticLockingFailureException.class)
     ResponseEntity<ApiErrorResponse> handleOptimisticLock(
             ObjectOptimisticLockingFailureException exception, HttpServletRequest request) {
+        log.warn("Concurrent update: entity={}, id={}, correlationId={}",
+                exception.getPersistentClassName(), exception.getIdentifier(), correlationId(request));
         return response(HttpStatus.CONFLICT, "CONCURRENT_UPDATE",
                 "Dữ liệu đã được cập nhật bởi yêu cầu khác; vui lòng tải lại", request, null);
     }

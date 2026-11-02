@@ -22,8 +22,8 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Recovery for cleanup STOP that never reached Pi; all published operations keep their actual
- * results.
+ * Recovery for an unstarted cleanup STOP or a SAVE/STOP rejected before acceptance.
+ * Previous executed operations retain their actual results and stop evidence.
  */
 @Service
 @RequiredArgsConstructor
@@ -65,6 +65,7 @@ public class MappingRecoveryService {
             .put("jobId", jobId.toString())
             .put("status", job.getStatus().name())
             .put("canReconcile", state.blockers().isEmpty())
+            .put("selectedRejectedMappingAction", rejectedMappingAction(job.getSelectedJobStep()))
             .put(
                 "selectedUnsentStop",
                 unsentCleanup(job.getSelectedJobStep())
@@ -281,6 +282,9 @@ public class MappingRecoveryService {
         known = steps.findById(UUID.fromString(entry.path("jobStepId").asText())).orElse(null);
       } catch (IllegalArgumentException ignored) {
       }
+      // Match HELLO admission: terminal history from an older BE database is
+      // retained on Pi for deduplication. It cannot authorize any current work.
+      if (known == null && TERMINAL.contains(entry.path("status").asText())) continue;
       if (known == null
           || !known.getOperationKey().equals(entry.path("operationKey").asText())
           || !known.getJobTask().getJob().getJobId().toString().equals(entry.path("jobId").asText())
@@ -352,6 +356,7 @@ public class MappingRecoveryService {
   }
 
   private boolean unsentCleanup(JobStep step) {
+    if (rejectedMappingAction(step)) return true;
     return step != null
         && (step.isMappingCleanup()
             || step.getStatus() == JobStepStatus.FAILED && "RETURN_GAMEPAD_TO_NEUTRAL".equals(step.getErrorCode()))
@@ -360,6 +365,14 @@ public class MappingRecoveryService {
         && step.getStartedAt() == null
         && MappingLifecycleService.mapping(step)
         && "STOP".equals(step.getResolvedInputsJson().path("action").asText());
+  }
+
+  private boolean rejectedMappingAction(JobStep step) {
+    return step != null && step.getStatus() == JobStepStatus.FAILED
+        && step.getStartedAt() == null
+        && "RETURN_GAMEPAD_TO_NEUTRAL".equals(step.getErrorCode())
+        && MappingLifecycleService.mapping(step)
+        && Set.of("SAVE", "STOP").contains(step.getResolvedInputsJson().path("action").asText());
   }
 
   private boolean neverSent(RobotCommandOutbox command) {

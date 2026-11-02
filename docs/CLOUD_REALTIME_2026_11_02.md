@@ -50,3 +50,44 @@ khởi tạo vị trí. Không tái dùng ID phiên đã đóng. Dùng Use-MarCl
 DB cloud ghi nghiệp vụ. Asset map vẫn trong volume laptop. RAG/voice không được
 đưa inference vào MQTT callback, scheduler hay vòng Nav2. Đánh giá AI chi tiết ở
 AI_VOICE/docs/LOCAL_VOICE_READINESS_2026_11_02.md.
+
+## Lưu map khi HTTP chậm
+
+Nút lưu không chờ transient STOP ACK rồi mới gửi event. Nó ngừng renewal cục bộ,
+phát STOP best-effort và gửi MAPPING_SAVE_REQUESTED với eventId/body giữ nguyên khi
+người dùng bấm lại sau timeout. SAVE_MAPPING trên Pi tự dừng, xác nhận odometry
+đứng yên rồi mới ghi/upload map; event receipt không phải xác nhận bánh đã dừng.
+HTTP lưu chờ tối đa 30 giây; HTTP zero STOP 15 giây. Request bắt đầu chuyển động
+vẫn giữ thời hạn ngắn và kiểm tra tuổi lệnh. Zero STOP không bị loại vì timestamp
+UI cũ, nhưng vẫn phải đúng session, heartbeat và sequence.
+
+Khi polling HTTP tạm lỗi, nút lưu dựa vào trạng thái phiên cuối đã biết thay vì
+mất quyền gửi save ngay. BE vẫn kiểm tra workflow/session và idempotency mỗi lần.
+Không tự gửi lại event khi reload; chỉ gửi khi người dùng bấm lưu.
+
+## Stream preview khi quét map
+
+GET /api/v1/jobs/{jobId}/mapping-stream (ADMIN, Authorization Bearer) trả SSE
+mapping-frame với preview metadata và png_base64 từ cùng Picture bất biến.
+Quyền/job/session được kiểm tra khi mở stream và kiểm tra lại định kỳ 15 giây;
+stream hết hạn tối đa 60 giây và không kéo dài quá JWT. Dùng memory frame đã được
+BE kiểm tra từ Pi, không query Aiven mỗi frame. Queue/executor hiển thị bounded và
+không chặn MQTT. Client bỏ frame cũ/sai phiên; preload ảnh và kiểm tra dimensions
+trước khi đổi ảnh và pose đồng thời. Stream lỗi dùng REST fallback, không tự
+kết luận robot mất MQTT. Ảnh cuối vẫn hiển thị, pose cũ xám/hết hạn như trước.
+Camera thumbnail chỉ probe thưa khi không dùng video trực tiếp; không query receipt
+khi không có command UI/autonomy cần theo dõi. Saved-map navigation stream riêng.
+Không thay tọa độ bản đồ, file map hoặc điều kiện dừng vật lý trên Pi.
+
+
+Mapping SAVE rejected by a held joystick
+
+A negative RETURN_GAMEPAD_TO_NEUTRAL ACK for an unstarted SAVE can now use GET/POST /api/v1/jobs/{jobId}/mapping-recovery, just like a rejected STOP. Recovery still requires the exact closed Pi mapping session in HELLO and heartbeat, fresh stationary odometry, no active operation, and committed stop receipts plus terminal journals for every previously executed operation. It does not invent an accepted SAVE, a Pi stop result, or a saved cloud map. Terminal unknown history is treated consistently with HELLO admission; known foreign or unresolved history remains blocked.
+
+Pi step_worker.py now allows an exact job/session SAVE to take over from a held joystick, alongside STOP. Existing command validation, acceptance/started acknowledgements and physical stationary confirmation before writing map files remain in place. Foreign sessions and other actions retain the neutral-stick gate.
+
+Validation: three targeted MySQL MappingRuntimeIntegrationTest cases, three save UI tests, and Pi manual-drive/handoff tests passed.
+
+Mapping creation concurrency
+
+Mapping and speech creation now obtain the Robot write lock on the first entity read, instead of loading its version without a lock and then upgrading it. This removes the heartbeat version-change window before pinned-robot selection. Existing IDLE/open-job/session guards remain. Optimistic conflict logs now include entity, identifier and correlation ID for diagnosing any separate conflict; no physical command is retried automatically.

@@ -41,6 +41,7 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
     @Autowired MappingRecoveryService recovery;@Autowired RobotMqttSessionRepository links;
     @Autowired org.springframework.test.web.servlet.MockMvc mvc;@Autowired DeviceJwtTokenService tokens;
     @Autowired PlatformTransactionManager tm;@Autowired jakarta.persistence.EntityManager em;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate binaryJdbc;@Autowired MappingArchiveReader archiveReader;
     @MockitoBean PahoMqttTransport transport;
     @TempDir Path directory;
     TransactionTemplate tx;MqttTestFixture fixture;UUID originalStart;ObjectNode manifest;byte[] archive;
@@ -101,6 +102,19 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
         complete("STOP");advance();assertThat(status()).isEqualTo(JobStatus.SUCCEEDED);assertThat(session().isPotentiallyOpen()).isFalse();
         var cmds=commands.findByJobIdOrderByCreatedAt(fixture.jobId);assertThat(cmds).hasSize(3);assertThat(cmds).extracting(RobotCommandOutbox::getOperationKey).doesNotHaveDuplicates();
         for(var c:cmds){assertThat(c.getPayloadJson().has("jobSteps")).isFalse();assertThat(c.getPayloadJson().path("step").path("params").path("mapping_session_id").asText()).isEqualTo(session().getSessionId().toString());}}
+    @Test void cloudSaveUsesTheExistingUploadCommitStopFlowWithoutLocalFiles() {
+        var previous=mapping.getStorageBackend();mapping.setStorageBackend(MappingProperties.StorageBackend.DATABASE);
+        try {
+            fullMappingProducesOneDraftMapAndThreeDistinctPiOperations();
+            var receipt=artifactRows.findById(session().getArtifactId()).orElseThrow();
+            var coldStorage=new MappingArtifactStorage(mapping,archiveReader,new MapBinaryStorage(binaryJdbc));
+            assertThat(coldStorage.read(receipt.getArtifactId(),receipt.getArchiveHash())).isEqualTo(archive);
+            assertThat(directory.resolve(receipt.getArtifactId().toString()).toFile()).doesNotExist();
+        } finally {
+            if(fixture!=null)binaryJdbc.update("DELETE FROM MapBinaryAsset WHERE asset_key LIKE ?","archives/"+session().getArtifactId()+"/%");
+            mapping.setStorageBackend(previous);
+        }
+    }
     @Test void autonomyApiThenExistingSaveUploadCommitStopAndPngIsOneMappingJob() throws Exception {
         waiting();long before=commands.findByJobIdOrderByCreatedAt(fixture.jobId).size();
         var raw=fixture.heartbeat(json);var p=(ObjectNode)raw.path("payload");p.putNull("currentMapId").putNull("mapAssetHash");
@@ -193,7 +207,10 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
         assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(session().isPotentiallyOpen()).isTrue();
     }
     void recoverableUnsentStop() {
-        failedSaveAwaitingCleanup();var report=closedMappingReport();
+        failedSaveAwaitingCleanup();closedStationaryRecovery();
+    }
+    void closedStationaryRecovery() {
+        var report=closedMappingReport();
         tx.executeWithoutResult(s->{
             jobs.findById(fixture.jobId).orElseThrow().setStatus(JobStatus.RECOVERY_REQUIRED);
             robots.findById(fixture.robotId).orElseThrow().setStatus(RobotStatus.ERROR);
@@ -201,7 +218,7 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
             link.setHelloReceivedAt(Instant.now().minusSeconds(1));link.setLastHeartbeatAt(Instant.now());
             ObjectNode hello=((ObjectNode)link.getHelloJson()).deepCopy();hello.set("mappingSession",report.deepCopy());
             var journal=hello.putArray("states");
-            for(var c:commands.findByJobIdOrderByCreatedAt(fixture.jobId))if(c.getSendAttempts()>0) {
+            for(var c:commands.findByJobIdOrderByCreatedAt(fixture.jobId))if(Boolean.TRUE.equals(c.getPhysicalStopConfirmed())) {
                 var step=steps.findById(c.getJobStepId()).orElseThrow();
                 journal.addObject().put("jobId",fixture.jobId.toString()).put("jobStepId",c.getJobStepId().toString())
                         .put("operationKey",c.getOperationKey()).put("status",step.getStatus().name());
@@ -236,6 +253,28 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
         var result=recover(UUID.randomUUID().toString(),request);
         assertThat(result.path("status").asText()).isEqualTo("CANCELLED");
         assertThat(result.path("stopWasExecuted").asBoolean()).isFalse();
+        assertThat(session().isPotentiallyOpen()).isFalse();
+    }
+    @Test void rejectedSaveCanCloseOnlyAfterScopedClosedStationaryPiWithoutFakeSaveJournal() {
+        waiting();saveRequested();issue();
+        receive(fixture.event(json,"COMMAND_ACK",json.createObjectNode()
+            .put("commandId",fixture.commandId.toString()).put("commandType","EXECUTE_STEP")
+            .put("accepted",false).put("errorCode","RETURN_GAMEPAD_TO_NEUTRAL")));
+        assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);
+        assertThat(recovery.evidence(fixture.jobId,actor()).path("canReconcile").asBoolean()).isFalse();
+        closedStationaryRecovery();
+        // Terminal deduplication history from a previous DB must match HELLO admission.
+        tx.executeWithoutResult(s->{var link=links.findById(fixture.robotId).orElseThrow();
+            ((ObjectNode)link.getHelloJson()).withArray("states").addObject()
+                .put("jobId",UUID.randomUUID().toString()).put("jobStepId",UUID.randomUUID().toString())
+                .put("operationKey","historical:completed:1").put("status","SUCCEEDED");});
+        var evidence=recovery.evidence(fixture.jobId,actor());
+        assertThat(evidence.path("selectedRejectedMappingAction").asBoolean()).isTrue();
+        assertThat(evidence.path("canReconcile").asBoolean()).isTrue();
+        var result=recover(UUID.randomUUID().toString(),recoveryRequest());
+        assertThat(result.path("status").asText()).isEqualTo("CANCELLED");
+        assertThat(commands.findById(fixture.commandId).orElseThrow().getPhysicalStopConfirmed()).isNull();
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStartedAt()).isNull();
         assertThat(session().isPotentiallyOpen()).isFalse();
     }
     @Test void rejectedCleanupRecoveryRejectsContradictoryAckOrActualStart() {

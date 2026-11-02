@@ -25,7 +25,7 @@ class MappingArchiveReaderTest {
     @Test void rejectsTruncatedAndExcessPgmRaster(){byte[] pgm=Arrays.copyOf(MappingTestArchive.PGM,MappingTestArchive.PGM.length-1);manifest=MappingTestArchive.manifest(json,id,MappingTestArchive.YAML,pgm);assertThatThrownBy(()->verify(MappingTestArchive.archive(MappingTestArchive.YAML,pgm,MappingTestArchive.bytes(json,manifest),"map.yaml",'0',false))).hasMessageContaining("raster size");}
     @Test void rejectsExcessManifestFields(){manifest.put("shell","run");assertThatThrownBy(()->verify(MappingTestArchive.archive(json,manifest))).hasMessageContaining("shell is forbidden");}
     @Test void durableBlobRetryChecksContentAndMissingFile(@TempDir Path directory) throws Exception {
-        config.setStorageDir(directory.toString());var storage=new MappingArtifactStorage(config,reader);var verified=verify(MappingTestArchive.archive(json,manifest));
+        config.setStorageDir(directory.toString());var storage=new MappingArtifactStorage(config,reader,null);var verified=verify(MappingTestArchive.archive(json,manifest));
         storage.store(id,verified);storage.store(id,verified);assertThat(storage.read(id,verified.archiveHash())).isEqualTo(verified.archive());
         Path blob=directory.resolve(id.toString()).resolve(verified.archiveHash()+".tar.gz");Files.write(blob,new byte[]{1});assertThatThrownBy(()->storage.read(id,verified.archiveHash())).hasMessageContaining("integrity");Files.delete(blob);assertThatThrownBy(()->storage.read(id,verified.archiveHash())).hasMessageContaining("missing");
     }

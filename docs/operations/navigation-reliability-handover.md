@@ -1,5 +1,11 @@
 # Navigation reliability handover
 
+## 2026-11-02 endpoint arrival contract update
+
+The MOVE result's optional `position_error_m` now accepts 0..0.10 m in both the runtime schema and its documented copy. A measured 0.0902989867 m post-turn error formerly rejected a multi-stop route even though Nav2 had reached the point and its one final Spin succeeded (yaw error 0.06224147 rad). Pi keeps the real pose/error, accepts at most 0.10 m after heading completion and does not send another corrective turn. Nav2's target XY tolerance remains 0.06 m; this result tolerance does not change collision or zone clearance.
+
+Deploy this BE contract with the Pi post-turn arrival update. Older Pi results remain valid; new 8..10 cm results must not reach the former 8 cm BE validator. No SQL migration or API shape change is required. Forty focused result-contract cases passed, including the observed error, the 0.10 m boundary and rejection above it.
+
 ## What this BE change delivers
 
 - Admin endpoint catalog filtering by `mapId`, `roomId`, `endpointType`, `active`, `accessible`, and `q`, while retaining paged full DTOs with UUID/map/pose/status.

@@ -8,11 +8,16 @@ import java.nio.channels.FileChannel;
 import java.nio.ByteBuffer;
 import java.util.*;
 
-/** Immutable content-addressed blobs. A rolled-back DB transaction may leave a safe orphan, never a receipt. */
+/** Immutable archives. DATABASE bytes join the receipt transaction; legacy FILESYSTEM remains available. */
 @Component @RequiredArgsConstructor
 public class MappingArtifactStorage {
     private final MappingProperties properties;
     private final MappingArchiveReader reader;
+    private final MapBinaryStorage binary;
+    private String archiveKey(UUID artifact,String hash) {
+        if(!hash.matches("[a-f0-9]{64}"))throw new BusinessRuleException("Invalid stored hash");
+        return "archives/"+artifact+"/"+hash;
+    }
     private Path path(UUID artifact,String archiveHash) throws IOException {
         if(!archiveHash.matches("[a-f0-9]{64}"))throw new BusinessRuleException("Invalid stored hash");
         Path root=Path.of(properties.getStorageDir()).toAbsolutePath().normalize();Files.createDirectories(root);
@@ -22,6 +27,7 @@ public class MappingArtifactStorage {
         return dir.resolve(archiveHash+".tar.gz");
     }
     public void store(UUID artifact,MappingArchiveReader.Verified verified) {
+        if(properties.databaseStorage()){binary.store(archiveKey(artifact,verified.archiveHash()),verified.archive());return;}
         Path temporary=null;
         try {
             Path target=path(artifact,verified.archiveHash());
@@ -35,6 +41,21 @@ public class MappingArtifactStorage {
         finally {if(temporary!=null)try{Files.deleteIfExists(temporary);}catch(IOException ignored){}}
     }
     public byte[] read(UUID artifact,String hash) {
+        if(properties.databaseStorage()) {
+            byte[] raw=binary.read(archiveKey(artifact,hash),properties.getMaxArchiveBytes());
+            if(!MappingArchiveReader.hash(raw).equals(hash))throw new BusinessRuleException("Stored archive integrity failed");
+            return raw;
+        }
+        return readLocal(artifact,hash);
+    }
+    public void importLocal(UUID artifact,String assetHash,String archiveHash) {
+        if(!properties.databaseStorage())throw new BusinessRuleException("DATABASE map storage is required");
+        String key=archiveKey(artifact,archiveHash);
+        byte[] raw=binary.contains(key)?binary.read(key,properties.getMaxArchiveBytes()):readLocal(artifact,archiveHash);
+        var verified=reader.verify(new ByteArrayInputStream(raw),artifact,assetHash,archiveHash);
+        store(artifact,verified);
+    }
+    private byte[] readLocal(UUID artifact,String hash) {
         try {
             Path path=path(artifact,hash);if(!Files.isRegularFile(path,LinkOption.NOFOLLOW_LINKS))throw new BusinessRuleException("Artifact file missing");
             byte[] archive;try(var input=Files.newInputStream(path)){archive=reader.readBounded(input,properties.getMaxArchiveBytes());}

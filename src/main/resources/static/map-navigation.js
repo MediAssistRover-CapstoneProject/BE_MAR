@@ -123,17 +123,17 @@
       transitions: template.graph.transitions.map(t => ({...t, fromStepId: t.fromStepCode, toStepId: t.toStepCode ?? null}))});
   }
 
-  async function consumeRobotEvents(response,onSnapshot){
+  async function consumeRobotEvents(response,onSnapshot,eventName='robot-state',maxLength=1048576){
     if(!response.body)throw Error('Trình duyệt không hỗ trợ stream trạng thái.');
     const reader=response.body.getReader(),decoder=new TextDecoder();let pending='';
     try{while(true){const {value,done}=await reader.read();if(done)break;
       pending+=decoder.decode(value,{stream:true});
-      if(pending.length>1048576)throw Error('Stream trạng thái vượt giới hạn.');
+      if(pending.length>maxLength)throw Error('Stream trạng thái vượt giới hạn.');
       let match;while((match=/\r?\n\r?\n/.exec(pending))){
         const block=pending.slice(0,match.index);pending=pending.slice(match.index+match[0].length);
         const lines=block.split(/\r?\n/),event=lines.find(x=>x.startsWith('event:'))?.slice(6).trim();
         const data=lines.filter(x=>x.startsWith('data:')).map(x=>x.slice(5).replace(/^ /,'')).join('\n');
-        if(event==='robot-state'&&data)onSnapshot(JSON.parse(data));
+        if(event===eventName&&data)onSnapshot(JSON.parse(data));
       }
     }}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
   }

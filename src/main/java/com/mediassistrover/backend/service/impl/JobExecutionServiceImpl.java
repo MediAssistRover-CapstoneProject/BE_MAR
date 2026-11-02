@@ -47,7 +47,7 @@ public class JobExecutionServiceImpl implements JobExecutionService {
             throw new BusinessRuleException("Speech jobs accept only INTERACT/SPEAK steps");
         if(text==null || text.isBlank() || text.length()>500 || !Set.of("vi","en").contains(Objects.toString(languageCode,"")))
             throw new BusinessRuleException("Speech requires 1-500 characters and languageCode vi or en");
-        Robot robot=selectPinnedRobot(robotRepository.findById(robotId).orElseThrow(()->new ResourceNotFoundException("Robot not found")));
+        Robot robot=selectPinnedRobotId(robotId);
         if(!mappingSessions.findByRobotIdAndPotentiallyOpenTrue(robotId).isEmpty())throw new BusinessRuleException("Robot holds an open mapping session");
         var input=merge(workflow.getDefaultInputsJson(),objectMapper.createObjectNode().put("speech_text",text).put("language_code",languageCode));
         return create(workflow,null,null,robot,null,1,input,null,null);
@@ -60,7 +60,7 @@ public class JobExecutionServiceImpl implements JobExecutionService {
                 || !workflow.isAcceptsNewJobs() || workflow.getDefinitionHash()==null)throw new BusinessRuleException("Mapping requires a published schema 3 MAPPING workflow");
         if(mapName==null || mapName.isBlank() || mapName.length()>160 || floorId==null)throw new BusinessRuleException("Mapping requires floor_id and map_name (1-160 characters)");
         if(!floors.findById(floorId).map(Floor::isActive).orElse(false))throw new BusinessRuleException("Mapping requires an active floor");
-        Robot robot=selectPinnedRobot(robotRepository.findById(robotId).orElseThrow(()->new ResourceNotFoundException("Robot not found")));
+        Robot robot=selectPinnedRobotId(robotId);
         if(!mappingSessions.findByRobotIdAndPotentiallyOpenTrue(robotId).isEmpty())throw new BusinessRuleException("Robot holds an open mapping session");
         return create(workflow,null,null,robot,null,1,objectMapper.createObjectNode().put("floor_id",floorId.toString()).put("map_name",mapName),null,null);
     }
@@ -93,7 +93,12 @@ public class JobExecutionServiceImpl implements JobExecutionService {
     }
     private Robot selectPinnedRobot(Robot requested){
         if(requested==null)throw new BusinessRuleException("Operational request requires a robot");
-        Robot locked=robotRepository.findByIdForUpdate(requested.getRobotId()).orElseThrow(()->new ResourceNotFoundException("Robot not found: "+requested.getRobotId()));
+        return selectPinnedRobotId(requested.getRobotId());
+    }
+    private Robot selectPinnedRobotId(UUID robotId){
+        // First load must hold the write lock: a heartbeat can increment @Version
+        // between an unlocked findById and upgrading that same managed entity.
+        Robot locked=robotRepository.findByIdForUpdate(robotId).orElseThrow(()->new ResourceNotFoundException("Robot not found: "+robotId));
         if(locked.getStatus()!=RobotStatus.IDLE)throw new BusinessRuleException("Operational request requires the selected robot to be IDLE");
         ensureNoActive(locked);return locked;
     }

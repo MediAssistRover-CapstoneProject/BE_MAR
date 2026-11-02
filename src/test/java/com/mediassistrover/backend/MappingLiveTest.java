@@ -142,6 +142,14 @@ class MappingLiveTest {
         controls.send(jobId,new MappingControlService.Request(sid,0.,0.,900));
         assertThat(published.path("linearX").asDouble()).isZero();
     }
+    @Test void cloudDelayCannotRejectAnOtherwiseValidZeroVelocityStop() {
+        var request=new MappingControlService.Request(sid,0.,0.,400,UUID.randomUUID(),1L,now.minusSeconds(10));
+        assertThatCode(()->controls.send(jobId,request)).doesNotThrowAnyException();
+        contracts.live(published);
+        assertThat(published.path("linearX").asDouble()).isZero();
+        when(registry.fresh(link)).thenReturn(false);
+        assertThatThrownBy(()->controls.send(jobId,request)).hasMessageContaining("not ready");
+    }
     @Test void stopSequencePreventsAnOlderHttpMoveArrivingAfterStop() {
         UUID ui=UUID.randomUUID();
         controls.send(jobId,new MappingControlService.Request(sid,0.,0.,600,ui,2L,now));
@@ -237,6 +245,16 @@ class MappingLiveTest {
         assertThat(image.metadata().has("data")).isFalse();
         ((ObjectNode)image.metadata()).put("revision",999);
         assertThat(previews.metadata(sid).path("revision").asLong()).isEqualTo(2);
+    }
+    @Test void authorizedDisplayStreamUsesOnlyScopedFreshMemoryWithoutPerFrameDbReads() throws Exception {
+        var payload=map(new byte[]{0,100,-1,50}).put("resolution",.025);
+        previews.accept(robot,payload);clearInvocations(sessions);
+        var picture=previews.streamImage(robot,sid);
+        assertThat(picture.revision()).isEqualTo(1);
+        assertThat(picture.metadata().path("revision").asLong()).isEqualTo(picture.revision());
+        assertThat(previews.streamImage(robot,UUID.randomUUID())).isNull();
+        assertThat(previews.streamImage(UUID.randomUUID(),sid)).isNull();
+        verifyNoInteractions(sessions);
     }
     @Test void actualPythonPreviewMatchesJavaSchemaAndRendersPng() throws Exception {
         String fixture=System.getenv("MAR_PI_PREVIEW_FIXTURE");

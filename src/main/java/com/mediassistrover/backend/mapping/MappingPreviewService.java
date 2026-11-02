@@ -98,6 +98,12 @@ public class MappingPreviewService {
         return data;
     }
     public Picture mapImage(UUID sessionId) {Frame frame=frame(sessionId);return frame==null?null:new Picture(sessionId,frame.captured(),frame.revision(),frame.png(),metadata(frame));}
+    /** Display-only stream; caller must authorize the robot/session scope before subscribing. */
+    public Picture streamImage(UUID robotId,UUID sessionId) {
+        Frame frame=latest.get(robotId);
+        return frame!=null&&frame.sessionId().equals(sessionId)&&fresh(frame.captured())
+                ?new Picture(sessionId,frame.captured(),frame.revision(),frame.png(),metadata(frame)):null;
+    }
     public Picture cameraImage(UUID sessionId) {
         var session=sessions.findById(sessionId).orElse(null);if(session==null || !session.isPotentiallyOpen())return null;
         Picture frame=cameras.get(session.getRobotId());
