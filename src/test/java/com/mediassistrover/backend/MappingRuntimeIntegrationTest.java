@@ -41,6 +41,7 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
     @Autowired MappingRecoveryService recovery;@Autowired RobotMqttSessionRepository links;
     @Autowired org.springframework.test.web.servlet.MockMvc mvc;@Autowired DeviceJwtTokenService tokens;
     @Autowired PlatformTransactionManager tm;@Autowired jakarta.persistence.EntityManager em;
+    @Autowired org.springframework.jdbc.core.JdbcTemplate binaryJdbc;@Autowired MappingArchiveReader archiveReader;
     @MockitoBean PahoMqttTransport transport;
     @TempDir Path directory;
     TransactionTemplate tx;MqttTestFixture fixture;UUID originalStart;ObjectNode manifest;byte[] archive;
@@ -101,6 +102,19 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
         complete("STOP");advance();assertThat(status()).isEqualTo(JobStatus.SUCCEEDED);assertThat(session().isPotentiallyOpen()).isFalse();
         var cmds=commands.findByJobIdOrderByCreatedAt(fixture.jobId);assertThat(cmds).hasSize(3);assertThat(cmds).extracting(RobotCommandOutbox::getOperationKey).doesNotHaveDuplicates();
         for(var c:cmds){assertThat(c.getPayloadJson().has("jobSteps")).isFalse();assertThat(c.getPayloadJson().path("step").path("params").path("mapping_session_id").asText()).isEqualTo(session().getSessionId().toString());}}
+    @Test void cloudSaveUsesTheExistingUploadCommitStopFlowWithoutLocalFiles() {
+        var previous=mapping.getStorageBackend();mapping.setStorageBackend(MappingProperties.StorageBackend.DATABASE);
+        try {
+            fullMappingProducesOneDraftMapAndThreeDistinctPiOperations();
+            var receipt=artifactRows.findById(session().getArtifactId()).orElseThrow();
+            var coldStorage=new MappingArtifactStorage(mapping,archiveReader,new MapBinaryStorage(binaryJdbc));
+            assertThat(coldStorage.read(receipt.getArtifactId(),receipt.getArchiveHash())).isEqualTo(archive);
+            assertThat(directory.resolve(receipt.getArtifactId().toString()).toFile()).doesNotExist();
+        } finally {
+            if(fixture!=null)binaryJdbc.update("DELETE FROM MapBinaryAsset WHERE asset_key LIKE ?","archives/"+session().getArtifactId()+"/%");
+            mapping.setStorageBackend(previous);
+        }
+    }
     @Test void autonomyApiThenExistingSaveUploadCommitStopAndPngIsOneMappingJob() throws Exception {
         waiting();long before=commands.findByJobIdOrderByCreatedAt(fixture.jobId).size();
         var raw=fixture.heartbeat(json);var p=(ObjectNode)raw.path("payload");p.putNull("currentMapId").putNull("mapAssetHash");

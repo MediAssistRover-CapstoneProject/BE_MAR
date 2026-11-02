@@ -29,6 +29,7 @@ public class MapBundleService {
     private final MapArtifactRepository receipts;
     private final MappingArtifactStorage storage;
     private final MappingProperties properties;
+    private final MapBinaryStorage binary;
     private final ObjectMapper json;
     private final RobotNavigationSessionRepository navigationSessions;
     private final EndpointRepository endpoints;
@@ -51,7 +52,10 @@ public class MapBundleService {
             .resolutionMPerPixel(meta.path("resolution_m_per_pixel").decimalValue()).originXM(meta.path("origin_x_m").decimalValue())
             .originYM(meta.path("origin_y_m").decimalValue()).originYawRad(meta.path("origin_yaw_rad").decimalValue())
             .frameId("map").mapFileUri("pending").assetHash(hash).build());
-        try {
+        if(properties.databaseStorage()) {
+            binary.store(MapBinaryStorage.mapKey(map.getMapId(),"map.yaml"),yaml);
+            binary.store(MapBinaryStorage.mapKey(map.getMapId(),"map.pgm"),pgm);
+        } else try {
             Path root=imported(map.getMapId());Files.write(root.resolve("map.yaml"),yaml,StandardOpenOption.CREATE_NEW);
             Files.write(root.resolve("map.pgm"),pgm,StandardOpenOption.CREATE_NEW);
         } catch(IOException e){throw new BusinessRuleException("Cannot persist imported map");}
@@ -71,10 +75,14 @@ public class MapBundleService {
             Map<String,byte[]> files;
             String uri=map.getMapFileUri();
             if(uri.equals("/api/v1/pi/maps/"+id+"/bundle")) {
-                Path root=imported(id);files=Map.of("map.yaml",read(root.resolve("map.yaml"),65536),"map.pgm",read(root.resolve("map.pgm"),4_100_000));
+                if(properties.databaseStorage())files=cloudFiles(id);
+                else {Path root=imported(id);files=Map.of("map.yaml",read(root.resolve("map.yaml"),65536),"map.pgm",read(root.resolve("map.pgm"),4_100_000));}
             } else if(uri.matches("/map-assets/[A-Za-z0-9_-]+/v[0-9]+/map.yaml")) {
-                var yaml=new ClassPathResource("static"+uri);var pgm=new ClassPathResource("static"+uri.replace("map.yaml","map.pgm"));
-                try(var a=yaml.getInputStream();var b=pgm.getInputStream()) {files=Map.of("map.yaml",reader.readBounded(a,65536),"map.pgm",reader.readBounded(b,4_100_000));}
+                if(properties.databaseStorage())files=cloudFiles(id);
+                else {
+                    var yaml=new ClassPathResource("static"+uri);var pgm=new ClassPathResource("static"+uri.replace("map.yaml","map.pgm"));
+                    try(var a=yaml.getInputStream();var b=pgm.getInputStream()) {files=Map.of("map.yaml",reader.readBounded(a,65536),"map.pgm",reader.readBounded(b,4_100_000));}
+                }
             } else if(uri.startsWith("/api/v1/pi/mapping-artifacts/")) {
                 UUID artifact=UUID.fromString(uri.substring(uri.lastIndexOf('/')+1));
                 var receipt=receipts.findById(artifact).orElseThrow(()->new ResourceNotFoundException("Map artifact not found"));
@@ -105,6 +113,42 @@ public class MapBundleService {
     }
     private boolean catalogNumber(com.fasterxml.jackson.databind.JsonNode meta,String field,BigDecimal stored,int scale) {
         return meta.path(field).decimalValue().setScale(scale,RoundingMode.HALF_UP).compareTo(stored)==0;
+    }
+    private Map<String,byte[]> cloudFiles(UUID id) {
+        return Map.of("map.yaml",binary.read(MapBinaryStorage.mapKey(id,"map.yaml"),65536),
+                      "map.pgm",binary.read(MapBinaryStorage.mapKey(id,"map.pgm"),4_100_000));
+    }
+    public record CloudStored(UUID mapId,String backend,String assetHash,boolean verified) { }
+    /** Explicit, idempotent backfill for one selected map; never changes its UUID/geometry/endpoints. */
+    @Transactional
+    public CloudStored importLocalStorage(UUID id) {
+        if(!properties.databaseStorage())throw new BusinessRuleException("DATABASE map storage is required");
+        var map=maps.findById(id).orElseThrow(()->new ResourceNotFoundException("Map not found"));
+        String uri=map.getMapFileUri();
+        if(uri.startsWith("/api/v1/pi/mapping-artifacts/")) {
+            UUID artifact=UUID.fromString(uri.substring(uri.lastIndexOf('/')+1));
+            var receipt=receipts.findById(artifact).orElseThrow(()->new ResourceNotFoundException("Map artifact not found"));
+            if(!id.equals(receipt.getMapId())||!map.getAssetHash().equals(receipt.getAssetHash()))
+                throw new BusinessRuleException("Map artifact is not linked to this map/hash");
+            storage.importLocal(artifact,receipt.getAssetHash(),receipt.getArchiveHash());
+        } else if(!binary.contains(MapBinaryStorage.mapKey(id,"map.yaml"))||!binary.contains(MapBinaryStorage.mapKey(id,"map.pgm"))) {
+            try {
+                byte[] yaml,pgm;
+                if(uri.equals("/api/v1/pi/maps/"+id+"/bundle")) {
+                    Path root=imported(id);yaml=read(root.resolve("map.yaml"),65536);pgm=read(root.resolve("map.pgm"),4_100_000);
+                } else if(uri.matches("/map-assets/[A-Za-z0-9_-]+/v[0-9]+/map.yaml")) {
+                    try(var a=new ClassPathResource("static"+uri).getInputStream();var b=new ClassPathResource("static"+uri.replace("map.yaml","map.pgm")).getInputStream()) {
+                        yaml=reader.readBounded(a,65536);pgm=reader.readBounded(b,4_100_000);
+                    }
+                } else throw new BusinessRuleException("Map URI is not a supported local source");
+                if(!fingerprint(yaml,pgm).equals(map.getAssetHash()))throw new BusinessRuleException("Map asset hash differs from catalog");
+                reader.inspectMap(yaml,pgm);
+                binary.store(MapBinaryStorage.mapKey(id,"map.yaml"),yaml);binary.store(MapBinaryStorage.mapKey(id,"map.pgm"),pgm);
+            } catch(IOException ex){throw new BusinessRuleException("Map files are not available for cloud import");}
+        }
+        // Includes geometry/hash checks. Any mismatch rolls back all new DB bytes.
+        bundle(id,null);
+        return new CloudStored(id,"DATABASE",map.getAssetHash(),true);
     }
     private Map<String,byte[]> verifiedFiles(UUID id){
         Map<String,byte[]> files=new HashMap<>();

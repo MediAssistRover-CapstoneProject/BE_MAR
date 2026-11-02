@@ -17,6 +17,9 @@ import java.util.UUID;
 @RestController @RequiredArgsConstructor @Validated @Tag(name="Facility Catalog")
 public class MapBundleController {
     private final MapBundleService maps;
+    @PostMapping("/api/v1/maps/{mapId}/storage/import-local") @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary="Copy one existing map's verified local bytes into DATABASE storage, preserving its ID, endpoints and zones; safe to retry")
+    public MapBundleService.CloudStored importLocalStorage(@PathVariable UUID mapId){return maps.importLocalStorage(mapId);}
     @PostMapping("/api/v1/maps/{mapId}/navigation-copy") @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary="Create a new DRAFT map with corrected trinary reload thresholds; copies endpoints and preserves the original map/hash")
     public MapBundleService.Imported navigationCopy(@PathVariable UUID mapId){return maps.navigationCopy(mapId);}
