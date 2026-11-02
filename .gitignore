@@ -5,6 +5,7 @@ target/
 *.log
 .env
 .env.aiven
+.env.aws
 secrets/
 data/map-artifacts/
 data/speech/

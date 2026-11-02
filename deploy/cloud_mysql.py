@@ -304,6 +304,7 @@ def use_db(a):
         time.sleep(1)
     else:raise RuntimeError('BE not ready; inspect logs. Do not switch robot or enable dispatch.')
     command(args+['exec','-T','reverse-proxy','nginx','-s','reload'],stdout=None)
+    (project/'secrets/database-provider.txt').write_text('aiven\n',encoding='ascii')
     print('BE_ON_AIVEN; Pi HTTPS URL, robot ID/secret and local map volume unchanged.')
     print('DISPATCH_ENABLED' if a.enable_dispatch else 'INSPECTION_MODE: MQTT and schedulers remain off; inspect maps, endpoints and zones first.')
 

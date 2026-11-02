@@ -1,0 +1,43 @@
+services:
+  aws-db-tunnel:
+    build:
+      context: ./deploy/aws-tunnel
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=0700,size=1m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      AWS_SSH_HOST: ${AWS_SSH_HOST:?EC2 SSH host required}
+      AWS_SSH_PORT: ${AWS_SSH_PORT:-22}
+      AWS_SSH_USERNAME: ${AWS_SSH_USERNAME:-ubuntu}
+    volumes:
+      - ./secrets/aws/ec2-key.pem:/run/ssh/ec2-key.pem:ro
+      - ./secrets/aws/known_hosts:/run/ssh/known_hosts:ro
+    # No host port: only the BE's Docker network can reach the tunnel listener.
+    healthcheck:
+      test: ["CMD", "nc", "-z", "-w", "2", "127.0.0.1", "3306"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  backend:
+    depends_on:
+      aws-db-tunnel:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod,aws
+      AWS_DB_URL: ${AWS_DB_URL:?AWS JDBC URL required}
+      AWS_DB_USERNAME: ${AWS_DB_USERNAME:?AWS DB user required}
+      AWS_DB_PASSWORD: ${AWS_DB_PASSWORD:?AWS DB password required}
+      AWS_DB_TRUSTSTORE_PASSWORD: ${AWS_DB_TRUSTSTORE_PASSWORD:?AWS truststore required}
+      OPERATIONS_SCHEDULER_ENABLED: ${AWS_OPERATIONS_SCHEDULER_ENABLED:-false}
+      MQTT_ENABLED: ${AWS_MQTT_ENABLED:-false}
+      MQTT_DISPATCH_ENABLED: ${AWS_MQTT_DISPATCH_ENABLED:-false}
+    volumes:
+      - ./secrets/aws/truststore.p12:/run/secrets/aws/truststore.p12:ro
