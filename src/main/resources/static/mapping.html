@@ -432,11 +432,11 @@ $('create').onclick=async()=>{if(busy)return;busy=true;buttons();try{const resul
 $('recover').onclick=async()=>{busy=true;buttons();try{
   if(jog.active)await jog.stop();
   const pending=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-recovery');
-  if(pending.selectedUnsentStop){
-    if(!pending.canReconcile)throw Error('Chưa thể đóng STOP chưa gửi: '+pending.blockers.join(', ')+'. Giữ robot đứng yên; Pi cần HELLO/heartbeat mới và phiên map đã đóng.');
+  if(pending.selectedUnsentStop||pending.selectedRejectedMappingAction){
+    if(!pending.canReconcile)throw Error('Chưa thể đóng thao tác map chưa thực thi: '+pending.blockers.join(', ')+'. Giữ robot đứng yên; Pi cần HELLO/heartbeat mới và phiên map đã đóng.');
     const result=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-recovery',{
       jobStepId:pending.jobStepId,transportSessionId:pending.transportSessionId,confirmedStopped:true,
-      outcome:'CONFIRM_CANCELLED',note:'Đóng cleanup STOP chưa từng gửi sau khi BE kiểm tra biên nhận dừng, journal terminal và heartbeat Pi đứng yên với đúng phiên map đã đóng'
+      outcome:'CONFIRM_CANCELLED',note:'Đóng thao tác map chưa thực thi sau khi BE kiểm tra bằng chứng từ chối hoặc chưa gửi, các biên nhận trước đó và heartbeat Pi đứng yên với đúng phiên map đã đóng'
     },false,{headers:{'Idempotency-Key':crypto.randomUUID()}});
     recovery=false;mapping=false;$('receipt').textContent=JSON.stringify(result,null,2);notice('Đã đóng job: '+result.status+'. Đợi Pi gửi HELLO mới và robot IDLE trước khi tạo job.');
     return;

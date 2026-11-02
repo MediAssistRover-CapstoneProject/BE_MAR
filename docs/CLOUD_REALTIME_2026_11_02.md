@@ -78,3 +78,12 @@ kết luận robot mất MQTT. Ảnh cuối vẫn hiển thị, pose cũ xám/h�
 Camera thumbnail chỉ probe thưa khi không dùng video trực tiếp; không query receipt
 khi không có command UI/autonomy cần theo dõi. Saved-map navigation stream riêng.
 Không thay tọa độ bản đồ, file map hoặc điều kiện dừng vật lý trên Pi.
+
+
+Mapping SAVE rejected by a held joystick
+
+A negative RETURN_GAMEPAD_TO_NEUTRAL ACK for an unstarted SAVE can now use GET/POST /api/v1/jobs/{jobId}/mapping-recovery, just like a rejected STOP. Recovery still requires the exact closed Pi mapping session in HELLO and heartbeat, fresh stationary odometry, no active operation, and committed stop receipts plus terminal journals for every previously executed operation. It does not invent an accepted SAVE, a Pi stop result, or a saved cloud map. Terminal unknown history is treated consistently with HELLO admission; known foreign or unresolved history remains blocked.
+
+Pi step_worker.py now allows an exact job/session SAVE to take over from a held joystick, alongside STOP. Existing command validation, acceptance/started acknowledgements and physical stationary confirmation before writing map files remain in place. Foreign sessions and other actions retain the neutral-stick gate.
+
+Validation: three targeted MySQL MappingRuntimeIntegrationTest cases, three save UI tests, and Pi manual-drive/handoff tests passed.

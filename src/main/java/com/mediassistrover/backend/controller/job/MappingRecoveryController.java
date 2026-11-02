@@ -26,7 +26,7 @@ public class MappingRecoveryController {
   @GetMapping
   @Operation(
       summary =
-          "Inspect recovery eligibility for a selected mapping cleanup STOP that was never sent")
+          "Inspect recovery for an unstarted cleanup STOP or SAVE/STOP rejected before acceptance")
   public JsonNode evidence(
       @PathVariable UUID jobId, @AuthenticationPrincipal AccountPrincipal actor) {
     return service.evidence(jobId, actor);
@@ -35,8 +35,8 @@ public class MappingRecoveryController {
   @PostMapping
   @Operation(
       summary =
-          "Close an unsent mapping cleanup STOP after verified Pi stop receipts and a fresh"
-              + " closed-session heartbeat; never executes or replays STOP")
+          "Close unstarted mapping cleanup or rejected SAVE/STOP after verified previous Pi stop receipts"
+              + " and a fresh closed-session stationary heartbeat; never replays an operation")
   public JsonNode reconcile(
       @PathVariable UUID jobId,
       @RequestHeader("Idempotency-Key") String key,

@@ -193,7 +193,10 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
         assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);assertThat(session().isPotentiallyOpen()).isTrue();
     }
     void recoverableUnsentStop() {
-        failedSaveAwaitingCleanup();var report=closedMappingReport();
+        failedSaveAwaitingCleanup();closedStationaryRecovery();
+    }
+    void closedStationaryRecovery() {
+        var report=closedMappingReport();
         tx.executeWithoutResult(s->{
             jobs.findById(fixture.jobId).orElseThrow().setStatus(JobStatus.RECOVERY_REQUIRED);
             robots.findById(fixture.robotId).orElseThrow().setStatus(RobotStatus.ERROR);
@@ -201,7 +204,7 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
             link.setHelloReceivedAt(Instant.now().minusSeconds(1));link.setLastHeartbeatAt(Instant.now());
             ObjectNode hello=((ObjectNode)link.getHelloJson()).deepCopy();hello.set("mappingSession",report.deepCopy());
             var journal=hello.putArray("states");
-            for(var c:commands.findByJobIdOrderByCreatedAt(fixture.jobId))if(c.getSendAttempts()>0) {
+            for(var c:commands.findByJobIdOrderByCreatedAt(fixture.jobId))if(Boolean.TRUE.equals(c.getPhysicalStopConfirmed())) {
                 var step=steps.findById(c.getJobStepId()).orElseThrow();
                 journal.addObject().put("jobId",fixture.jobId.toString()).put("jobStepId",c.getJobStepId().toString())
                         .put("operationKey",c.getOperationKey()).put("status",step.getStatus().name());
@@ -236,6 +239,28 @@ class MappingRuntimeIntegrationTest extends MySqlIntegrationTest {
         var result=recover(UUID.randomUUID().toString(),request);
         assertThat(result.path("status").asText()).isEqualTo("CANCELLED");
         assertThat(result.path("stopWasExecuted").asBoolean()).isFalse();
+        assertThat(session().isPotentiallyOpen()).isFalse();
+    }
+    @Test void rejectedSaveCanCloseOnlyAfterScopedClosedStationaryPiWithoutFakeSaveJournal() {
+        waiting();saveRequested();issue();
+        receive(fixture.event(json,"COMMAND_ACK",json.createObjectNode()
+            .put("commandId",fixture.commandId.toString()).put("commandType","EXECUTE_STEP")
+            .put("accepted",false).put("errorCode","RETURN_GAMEPAD_TO_NEUTRAL")));
+        assertThat(status()).isEqualTo(JobStatus.RECOVERY_REQUIRED);
+        assertThat(recovery.evidence(fixture.jobId,actor()).path("canReconcile").asBoolean()).isFalse();
+        closedStationaryRecovery();
+        // Terminal deduplication history from a previous DB must match HELLO admission.
+        tx.executeWithoutResult(s->{var link=links.findById(fixture.robotId).orElseThrow();
+            ((ObjectNode)link.getHelloJson()).withArray("states").addObject()
+                .put("jobId",UUID.randomUUID().toString()).put("jobStepId",UUID.randomUUID().toString())
+                .put("operationKey","historical:completed:1").put("status","SUCCEEDED");});
+        var evidence=recovery.evidence(fixture.jobId,actor());
+        assertThat(evidence.path("selectedRejectedMappingAction").asBoolean()).isTrue();
+        assertThat(evidence.path("canReconcile").asBoolean()).isTrue();
+        var result=recover(UUID.randomUUID().toString(),recoveryRequest());
+        assertThat(result.path("status").asText()).isEqualTo("CANCELLED");
+        assertThat(commands.findById(fixture.commandId).orElseThrow().getPhysicalStopConfirmed()).isNull();
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStartedAt()).isNull();
         assertThat(session().isPotentiallyOpen()).isFalse();
     }
     @Test void rejectedCleanupRecoveryRejectsContradictoryAckOrActualStart() {
