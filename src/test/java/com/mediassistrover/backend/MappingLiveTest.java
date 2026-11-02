@@ -246,6 +246,16 @@ class MappingLiveTest {
         ((ObjectNode)image.metadata()).put("revision",999);
         assertThat(previews.metadata(sid).path("revision").asLong()).isEqualTo(2);
     }
+    @Test void authorizedDisplayStreamUsesOnlyScopedFreshMemoryWithoutPerFrameDbReads() throws Exception {
+        var payload=map(new byte[]{0,100,-1,50}).put("resolution",.025);
+        previews.accept(robot,payload);clearInvocations(sessions);
+        var picture=previews.streamImage(robot,sid);
+        assertThat(picture.revision()).isEqualTo(1);
+        assertThat(picture.metadata().path("revision").asLong()).isEqualTo(picture.revision());
+        assertThat(previews.streamImage(robot,UUID.randomUUID())).isNull();
+        assertThat(previews.streamImage(UUID.randomUUID(),sid)).isNull();
+        verifyNoInteractions(sessions);
+    }
     @Test void actualPythonPreviewMatchesJavaSchemaAndRendersPng() throws Exception {
         String fixture=System.getenv("MAR_PI_PREVIEW_FIXTURE");
         org.junit.jupiter.api.Assumptions.assumeTrue(fixture!=null,"Set MAR_PI_PREVIEW_FIXTURE to Python MappingManager output");

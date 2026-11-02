@@ -64,3 +64,17 @@ UI cũ, nhưng vẫn phải đúng session, heartbeat và sequence.
 Khi polling HTTP tạm lỗi, nút lưu dựa vào trạng thái phiên cuối đã biết thay vì
 mất quyền gửi save ngay. BE vẫn kiểm tra workflow/session và idempotency mỗi lần.
 Không tự gửi lại event khi reload; chỉ gửi khi người dùng bấm lưu.
+
+## Stream preview khi quét map
+
+GET /api/v1/jobs/{jobId}/mapping-stream (ADMIN, Authorization Bearer) trả SSE
+mapping-frame với preview metadata và png_base64 từ cùng Picture bất biến.
+Quyền/job/session được kiểm tra khi mở stream và kiểm tra lại định kỳ 15 giây;
+stream hết hạn tối đa 60 giây và không kéo dài quá JWT. Dùng memory frame đã được
+BE kiểm tra từ Pi, không query Aiven mỗi frame. Queue/executor hiển thị bounded và
+không chặn MQTT. Client bỏ frame cũ/sai phiên; preload ảnh và kiểm tra dimensions
+trước khi đổi ảnh và pose đồng thời. Stream lỗi dùng REST fallback, không tự
+kết luận robot mất MQTT. Ảnh cuối vẫn hiển thị, pose cũ xám/hết hạn như trước.
+Camera thumbnail chỉ probe thưa khi không dùng video trực tiếp; không query receipt
+khi không có command UI/autonomy cần theo dõi. Saved-map navigation stream riêng.
+Không thay tọa độ bản đồ, file map hoặc điều kiện dừng vật lý trên Pi.
