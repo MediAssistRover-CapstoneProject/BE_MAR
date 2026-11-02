@@ -60,6 +60,17 @@ class Schema3StepResultContractValidatorTest {
         assertThat(types).containsExactlyInAnyOrder(StepType.values());
     }
 
+    @Test void acceptsRealPostTurnArrivalErrorThroughTenCentimetresWithoutClamping() throws Exception {
+        Case c=validContracts().filter(x->x.type()==StepType.MOVE).findFirst().orElseThrow();
+        ObjectNode result=c.result().deepCopy();
+        result.put("position_error_m",.09029898666364117).put("yaw_error_rad",.06224147134292902);
+        assertThatCode(()->validator.validate(3,3,StepType.MOVE,c.input(),result)).doesNotThrowAnyException();
+        result.put("position_error_m",.10);
+        assertThatCode(()->validator.validate(3,3,StepType.MOVE,c.input(),result)).doesNotThrowAnyException();
+        result.put("position_error_m",.1001);
+        assertThatThrownBy(()->validator.validate(3,3,StepType.MOVE,c.input(),result)).isInstanceOf(RuntimeException.class);
+    }
+
     @Test void rejectsMissingRequiredFieldsAndUnknownRootsAcrossAllVariants() throws Exception {
         for (Case c : validContracts().toList()) {
             ObjectNode result = c.result().deepCopy(); result.put("unknown", true);
