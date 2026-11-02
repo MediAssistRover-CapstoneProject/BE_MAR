@@ -25,6 +25,7 @@ public class MqttRuntimeEvents {
     private final org.springframework.context.ApplicationEventPublisher updates;
     private final MqttOperationControlService control;
     private final MqttWire wire;
+    private final jakarta.persistence.EntityManager entityManager;
     private final com.mediassistrover.backend.service.NavigationTargetService navigationTargets;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     private final com.mediassistrover.backend.ai.AiSensingService ai;
@@ -38,7 +39,9 @@ public class MqttRuntimeEvents {
         boolean cancelAck="COMMAND_ACK".equals(e.messageType()) && "CANCEL_STEP".equals(correlated.getCommandType());
         boolean nullCancel=cancelAck && e.jobId()==null && e.jobStepId()==null;
         JobStep step=steps.lockById(correlated.getJobStepId()).orElseThrow(()->new BusinessRuleException("Unknown MQTT JobStep"));
-        if (executionPolicy.isServer(step, step.getResolvedInputsJson()))
+        // Job ownership/schema were verified above. Reuse that Job instead of
+        // initializing step.jobTask.job merely to rediscover executor ownership.
+        if (executionPolicy.executor(job.getSchemaVersion(),StepType.valueOf(step.getStepTypeSnapshot()),step.getResolvedInputsJson())==StepExecutorKind.SERVER)
             throw new BusinessRuleException("Backend-owned step cannot accept MQTT runtime events");
         if (!correlated.getJobId().equals(job.getJobId()) || !correlated.getRobotId().equals(e.robotId())
                 || !correlated.getCommandId().equals(e.correlationId()) || correlated.getSendAttempts()==0
@@ -59,6 +62,7 @@ public class MqttRuntimeEvents {
             throw new BusinessRuleException(e.messageType()+" StepType does not match the dispatched JobStep");
         switch (e.messageType()) {
             case "COMMAND_ACK" -> {
+                boolean combined=startRequested(job,step,correlated,p,cancelAck);
                 if(cancelAck) {cancelAck(job,step,command,correlated,p,e,lateTerminal);break;}
                 if (!command.getCommandId().equals(UUID.fromString(p.path("commandId").asText())) || !"EXECUTE_STEP".equals(p.path("commandType").asText())) throw new BusinessRuleException("COMMAND_ACK mismatch");
                 if (!p.path("accepted").asBoolean()) {
@@ -69,6 +73,12 @@ public class MqttRuntimeEvents {
                 } else {
                     if (Set.of("REJECTED","EXPIRED","RECOVERY_REQUIRED").contains(command.getState())) throw new BusinessRuleException("ACK after rejected/expired command");
                     if (!Set.of("STARTED","COMPLETED").contains(command.getState())) command.setState("ACKNOWLEDGED");command.setAcknowledgedAt(now);
+                    if(combined){
+                        // This single receipt is durable acceptance + permission
+                        // to start. Pi still waits for its post-commit EVENT_ACK
+                        // before any physical effect; no second round trip.
+                        step.setStatus(JobStepStatus.RUNNING);step.setStartedAt(now);step.setAttemptNo(1);command.setState("STARTED");
+                    }
                     if (p.path("replayed").asBoolean()) {
                         JsonNode snapshot=p.path("result");String status=snapshot.path("status").asText(p.path("status").asText());
                         if ("SUCCEEDED".equals(status) && snapshot.path("result").isObject()) result(job,step,command,snapshot,e.time());
@@ -89,12 +99,37 @@ public class MqttRuntimeEvents {
             case "OPERATOR_RECONCILED" -> {command.setResultEnvelopeJson(wireNode(e));command.setState("RECOVERY_REQUIRED");safety.recovery(job,"Pi operator reconciliation requires BE staff review");}
             default -> throw new BusinessRuleException("Unsupported durable runtime event");
         }
-        events.save(JobEvent.builder().jobEventId(e.messageId()).job(job).robot(job.getRobot()).jobTask(step.getJobTask()).jobStep(step)
+        entityManager.persist(JobEvent.builder().jobEventId(e.messageId()).job(job).robot(job.getRobot()).jobTask(step.getJobTask()).jobStep(step)
                 .producerType(JobEventProducerType.ROBOT).producerSessionId(e.producerSessionId()).sequenceNo(e.sequenceNo()).eventType(e.messageType())
                 .correlationKey(e.correlationId().toString()).attemptNo(1).previousStatus(previous).newStatus(step.getStatus().name()).statusScope("JOB_STEP")
                 .eventDataJson(p.deepCopy()).occurredAt(e.time()).receivedAt(now).persistedAt(now).build());
         updates.publishEvent(new com.mediassistrover.backend.service.RuntimeChanged(job.getJobId()));
     }
+    /** Validate all combined-start metadata before either acceptance or start mutates state. */
+    private boolean startRequested(Job job,JobStep step,RobotCommandOutbox command,JsonNode payload,boolean cancelAck) {
+        boolean frozen="ACCEPT_AND_START".equals(command.getPayloadJson().path("startMode").asText());
+        boolean start=payload.has("start")||"START_REQUESTED".equals(payload.path("status").asText());
+        boolean accepted=payload.path("accepted").asBoolean(),replayed=payload.path("replayed").asBoolean();
+        if(start && (cancelAck||!frozen||!accepted||replayed))
+            throw new BusinessRuleException("Combined start metadata was not negotiated for this command");
+        // A rejection or historical journal replay does not request new physical
+        // execution and keeps its existing stop/reconciliation path.
+        if(!frozen||!accepted||replayed)return false;
+        if(!start||!payload.path("start").isObject()||!"START_REQUESTED".equals(payload.path("status").asText())
+                ||!"EXECUTE_STEP".equals(command.getCommandType())||!"MOVE".equals(step.getStepTypeSnapshot())
+                ||!command.getPayloadJson().path("navigationContext").isObject())
+            throw new BusinessRuleException("Combined MOVE start metadata is required");
+        if(job.getStatus()!=JobStatus.RUNNING||step.getStatus()!=JobStepStatus.PENDING
+                ||job.getCancelRequestedAt()!=null||step.getInterruptionReason()!=null
+                ||!Set.of("PENDING","PUBLISHING","PUBLISHED","ACKNOWLEDGED").contains(command.getState()))
+            throw new BusinessRuleException("Combined start requires an uncancelled PENDING selected MOVE");
+        JsonNode requested=payload.path("start");
+        if(requested.path("attemptNo").asInt(-1)!=1||!"MOVE".equals(requested.path("stepType").asText())
+                ||!command.getPayloadJson().path("step").path("params").equals(requested.path("resolvedInputs")))
+            throw new BusinessRuleException("Combined start differs from frozen command params");
+        return true;
+    }
+
     private void result(Job job,JobStep step,RobotCommandOutbox command,JsonNode p,Instant reportedAt) {
         if(step.getInterruptionReason()!=null && Set.of(JobStepStatus.SUCCEEDED,JobStepStatus.FAILED,JobStepStatus.TIMED_OUT,JobStepStatus.CANCELLED).contains(step.getStatus())) {
             if(!"SUCCEEDED".equals(p.path("status").asText()) || step.getStatus()!=JobStepStatus.SUCCEEDED || !p.path("physicalStopConfirmed").asBoolean())

@@ -11,9 +11,10 @@ public interface JobStepRepository extends JpaRepository<JobStep,UUID> {
     Optional<UUID> findJobId(@Param("id") UUID id);
     @Query("select s from JobStep s join fetch s.step where s.jobTask.job.jobId=:jobId order by s.executionSequenceNo")
     List<JobStep> findByJobId(@Param("jobId") UUID jobId);
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select s from JobStep s where s.status='RUNNING' and s.jobTask.job.beOrchestrated=false and s.startedAt is not null and s.startedAt <= :threshold")
-    List<JobStep> lockPotentialTimeouts(@Param("threshold") Instant threshold);
+    // Discover IDs without range/gap locks: the joined locking scan can lock
+    // unrelated schema-3 MOVE steps before applying the legacy-job predicate.
+    @Query("select s.jobStepId from JobStep s where s.status='RUNNING' and s.jobTask.job.beOrchestrated=false and s.startedAt is not null and s.startedAt <= :threshold")
+    List<UUID> findPotentialTimeoutIds(@Param("threshold") Instant threshold);
     Optional<JobStep> findByOperationKey(String operationKey);
     long countByJobTaskJobJobId(UUID jobId);
     long countByJobTaskJobJobIdAndStepStepId(UUID jobId,UUID stepId);

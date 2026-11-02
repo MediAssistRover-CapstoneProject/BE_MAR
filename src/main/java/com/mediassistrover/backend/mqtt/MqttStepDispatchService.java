@@ -31,6 +31,7 @@ public class MqttStepDispatchService {
     private final com.mediassistrover.backend.ai.AiSensingService ai;
     private final MqttRolloutService rollout;
     private final com.mediassistrover.backend.service.NavigationSessionService navigationSessions;
+    private final org.springframework.context.ApplicationEventPublisher updates;
 
     public void requireActionSupported(Step step) {
         if(!executionPolicy.requiresMqtt(step))throw new BusinessRuleException("Step is backend-owned and cannot use MQTT dispatch");
@@ -39,7 +40,7 @@ public class MqttStepDispatchService {
             throw new BusinessRuleException("Step "+step.getStepCode()+" awaits configured MQTT dispatch; keep workflow DRAFT");
         ObjectNode params=((ObjectNode)step.getParamsJson()).deepCopy();params.setAll((ObjectNode)step.getInputMappingJson());
         if (step.getStepType()==StepType.CONTROL_HARDWARE && !Set.of("LOCK_COMPARTMENT","LOCK").contains(params.path("action").asText())
-                && !(properties.isAllowCommissioningUnlock() && Set.of("UNLOCK_COMPARTMENT","UNLOCK").contains(params.path("action").asText()) && !step.getInputMappingJson().has("action")))
+                && !(properties.isAllowCommissioningUnlock() && HardwareCommissioningWorkflow.unlockWithoutGrant(step)))
             throw new BusinessRuleException("Official UNLOCK awaits Pi STAFF_VERIFIED enforcement and a confirmed HELLO/output contract; keep workflow DRAFT");
         if (step.getStepType()==StepType.EXECUTE_SENSING && "MAPPING".equals(params.path("sensing_type").asText()))mapping.requireSupported(step);
         if(step.getStepType()==StepType.EXECUTE_SENSING && com.mediassistrover.backend.ai.AiSensingService.TYPES.contains(params.path("sensing_type").asText()))ai.requireEnabled();
@@ -66,7 +67,9 @@ public class MqttStepDispatchService {
             throw new BusinessRuleException("Open mapping permits only MAPPING/SAVE or STOP Pi actions");
         boolean unlock="CONTROL_HARDWARE".equals(step.getStepTypeSnapshot())
                 && "UNLOCK_COMPARTMENT".equals(step.getResolvedInputsJson().path("action").asText());
-        if(unlock && !properties.isAllowCommissioningUnlock()) operationAuthorization.requireBound(step,step.getResolvedInputsJson().path("authorization"));
+        boolean commissioning=unlock && properties.isAllowCommissioningUnlock()
+                && HardwareCommissioningWorkflow.unlockWithoutGrant(step.getStep());
+        if(unlock && !commissioning) operationAuthorization.requireBound(step,step.getResolvedInputsJson().path("authorization"));
         if(!step.isMappingCleanup())requireActionSupported(step.getStep());
         if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step))mapping.requireBound(step);
         ObjectNode business=((ObjectNode)step.getResolvedInputsJson()).deepCopy();
@@ -76,7 +79,7 @@ public class MqttStepDispatchService {
         robots.findByIdForUpdate(job.getRobot().getRobotId()).orElseThrow();
         RobotMqttSession session=sessions.lock(job.getRobot().getRobotId()).orElse(null);
         if (!registry.fresh(session)) return;
-        if(unlock && properties.isAllowCommissioningUnlock() && !"COMMISSIONING_ONLY".equals(session.getHelloJson().path("unlockPolicy").asText()))
+        if(commissioning && !"COMMISSIONING_ONLY".equals(session.getHelloJson().path("unlockPolicy").asText()))
             throw new BusinessRuleException("Commissioning UNLOCK must be enabled on both BE and Pi");
         if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step) && !session.getHelloJson().path("mappingEnabled").asBoolean())
             throw new BusinessRuleException("Pi does not enable mapping");
@@ -110,10 +113,22 @@ public class MqttStepDispatchService {
                 .put("visitNo",step.getVisitNo()).put("operationKey",step.getOperationKey()).put("timeoutSec",step.getTimeoutSecSnapshot());action.set("params",params);
         if("MOVE".equals(step.getStepTypeSnapshot())){
             var context=navigationSessions.commandContext(session.getRobotId(),profileHash);
-            if(context!=null)command.set("navigationContext",context);
+            if(context!=null){
+                command.set("navigationContext",context);
+                // Opt in per frozen operation only after this Pi process has
+                // advertised support. Old Pi/BE peers keep the two-event flow.
+                for(var capability:session.getHelloJson().path("capabilities"))
+                    if("move-start-commit-v1".equals(capability.asText())){command.put("startMode","ACCEPT_AND_START");break;}
+            }
         }
         contracts.command(command);
         commands.save(RobotCommandOutbox.builder().commandId(commandId).robotId(session.getRobotId()).jobId(job.getJobId()).jobStepId(step.getJobStepId())
-                .operationKey(step.getOperationKey()).navigationProfileHash(profileHash).aiProfileSnapshotJson(aiProfile).payloadJson(command).expiresAt(now.plusSeconds(properties.getCommandTtlSec())).state("PENDING").createdAt(now).build());
+                .operationKey(step.getOperationKey()).navigationProfileHash(profileHash).aiProfileSnapshotJson(aiProfile).payloadJson(command).expiresAt(now.plusSeconds(properties.getCommandTtlSec())).state("PUBLISHING").sendAttempts(1).lastPublishAt(now).createdAt(now).build());
+        // All scope, profile, rollout, robot and TTL checks above are held by
+        // this transaction. This commit is the first publication-attempt boundary;
+        // send its immutable snapshot AFTER commit rather than repeat those same
+        // cloud reads in a second transaction. Replays/retries still use plans.command.
+        updates.publishEvent(new MqttDurablePublisher.CommandQueued(commandId,
+            new MqttPublicationPlans.Publication(commandId,session.getRobotId(),session.getTransportSessionId(),command.deepCopy())));
     }
 }

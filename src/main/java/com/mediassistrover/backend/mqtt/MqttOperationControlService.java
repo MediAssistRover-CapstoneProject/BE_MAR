@@ -78,6 +78,7 @@ public class MqttOperationControlService {
             cancel=commands.save(RobotCommandOutbox.builder().commandId(id).commandType("CANCEL_STEP").jobId(job.getJobId()).jobStepId(step.getJobStepId())
                     .robotId(job.getRobot().getRobotId()).operationKey(step.getOperationKey()).interruptionReason(reason).payloadJson(payload)
                     .createdAt(now).expiresAt(now.plusSeconds(properties.getCommandTtlSec())).state("PENDING").build());
+            updates.publishEvent(new MqttDurablePublisher.CommandQueued(id));
         }
         if(!cancel.getExpiresAt().isAfter(now) && !Boolean.TRUE.equals(cancel.getPhysicalStopConfirmed())) {
             cancel.setState("RECOVERY_REQUIRED");safety.recovery(job,"Cancellation deadline passed without confirmed stop");

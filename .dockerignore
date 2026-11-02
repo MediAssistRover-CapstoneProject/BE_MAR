@@ -8,3 +8,11 @@ target
 docs
 secrets/
 data/
+output/
+*.before-*
+*.bak
+*.orig
+*.rej
+*.tmp
+.env.aiven
+.env.aws

@@ -18,8 +18,28 @@ public class OperationsMaintenanceServiceImpl implements OperationsMaintenanceSe
     @org.springframework.beans.factory.annotation.Autowired
     public OperationsMaintenanceServiceImpl(JobRepository jobs,JobStepRepository steps,JobEventRepository events,RevokedTokenRepository revoked,RefreshTokenRepository refresh,ObjectMapper mapper,com.mediassistrover.backend.service.RuntimeStepCompletionService completion){this.jobRepository=jobs;this.stepRepository=steps;this.eventRepository=events;this.revokedTokenRepository=revoked;this.refreshTokenRepository=refresh;this.objectMapper=mapper;this.completionService=completion;}
     public OperationsMaintenanceServiceImpl(JobRepository jobs,JobStepRepository steps,JobEventRepository events,RevokedTokenRepository revoked,RefreshTokenRepository refresh,ObjectMapper mapper){this(jobs,steps,events,revoked,refresh,mapper,null);}
-    @Override @Transactional public int markOverdueJobs(Instant now){List<Job> jobs=jobRepository.lockOverdue(List.of(JobStatus.QUEUED),now);jobs.forEach(j->recovery(j,"DISPATCH_ACK_TIMEOUT",now));return jobs.size();}
-    @Override @Transactional public int markTimedOutSteps(Instant now){List<JobStep> candidates=stepRepository.lockPotentialTimeouts(now.minusSeconds(1));int changed=0;for(JobStep s:candidates){if(s.getStatus()!=JobStepStatus.RUNNING)continue;
+    @Override @Transactional public int markOverdueJobs(Instant now){
+        int changed=0;
+        for(UUID id:jobRepository.findOverdueLegacyIds(now)){
+            Job job=jobRepository.lockById(id).orElse(null);
+            // The candidate may have been accepted, extended or handed to the
+            // schema-3 orchestrator while we waited for its primary-row lock.
+            if(job==null||job.isBeOrchestrated()||job.getStatus()!=JobStatus.QUEUED
+                    ||job.getDispatchExpiresAt()==null||job.getDispatchExpiresAt().isAfter(now))continue;
+            recovery(job,"DISPATCH_ACK_TIMEOUT",now);changed++;
+        }
+        return changed;
+    }
+    @Override @Transactional public int markTimedOutSteps(Instant now){
+        List<UUID> candidates=stepRepository.findPotentialTimeoutIds(now.minusSeconds(1));int changed=0;
+        for(UUID id:candidates){
+        UUID jobId=stepRepository.findJobId(id).orElse(null);if(jobId==null)continue;
+        Job owner=jobRepository.lockById(jobId).orElse(null);
+        if(owner==null||owner.isBeOrchestrated())continue;
+        // Match runtime completion's Job -> Step order; never lock the whole
+        // RUNNING index while Pi is committing a result on another job.
+        JobStep s=stepRepository.lockById(id).orElse(null);
+        if(s==null||s.getStatus()!=JobStepStatus.RUNNING||s.getStartedAt()==null)continue;
         // Schema 3 timeouts and WAIT(DURATION) belong to the orchestrator/MQTT lifecycle.
         // Never let this legacy scheduler race a robot result, even if a repository query regresses.
         if(s.getJobTask().getJob().isBeOrchestrated())continue;

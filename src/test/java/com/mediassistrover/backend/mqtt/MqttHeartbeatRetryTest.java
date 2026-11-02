@@ -18,7 +18,7 @@ class MqttHeartbeatRetryTest {
     final MqttInboxStore store=mock(MqttInboxStore.class);
     final MqttDurablePublisher publisher=mock(MqttDurablePublisher.class);
     final MqttInboundRouter router=new MqttInboundRouter(properties,wire,mock(MqttContractValidator.class),sessions,
-            store,mock(MqttInboxProcessor.class),publisher,mock(NavigationProfileService.class),mock(MappingControlService.class));
+            store,mock(MqttInboxProcessor.class),publisher,mock(NavigationProfileService.class),mock(MappingControlService.class),mock(NavigationLivePoseService.class));
     void receive() {
         when(properties.manages(robot)).thenReturn(true);
         var message=wire.object().put("robotId",robot.toString()).put("messageType","HEARTBEAT")

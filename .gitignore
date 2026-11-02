@@ -5,6 +5,7 @@ target/
 *.log
 .env
 .env.aiven
+.env.aws
 secrets/
 data/map-artifacts/
 data/speech/
@@ -12,3 +13,9 @@ data/speech/
 Thumbs.db
 __pycache__/
 *.pyc
+output/
+*.before-*
+*.bak
+*.orig
+*.rej
+*.tmp

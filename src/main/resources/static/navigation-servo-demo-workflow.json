@@ -1,0 +1,381 @@
+{
+  "workflow": {
+    "workflowCode": "WF_MOVE_WAIT_SERVO_DEMO",
+    "versionNo": 1,
+    "workflowName": "MOVE, wait, collect goods and close servo (test)",
+    "serviceType": "NAVIGATION",
+    "description": "Commissioning only: MOVE A, wait 5s, MOVE B, open, wait 5s, staff confirms collection, close. No automatic cargo verification.",
+    "inputSchemaJson": {
+      "type": "object",
+      "properties": {
+        "map_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "target_mode": {
+          "type": "string",
+          "const": "ENDPOINT"
+        },
+        "endpoint_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "first_endpoint_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "hardware_test_mode": {
+          "const": "COMMISSIONING_ONLY"
+        }
+      },
+      "required": [
+        "map_id",
+        "target_mode",
+        "endpoint_id",
+        "first_endpoint_id"
+      ],
+      "additionalProperties": true
+    },
+    "inputUiJson": {},
+    "defaultInputsJson": {
+      "hardware_test_mode": "COMMISSIONING_ONLY"
+    },
+    "outputMappingJson": {
+      "arrival": {
+        "$ref": "/outputs/MOVE_B"
+      },
+      "collection": {
+        "$ref": "/outputs/CONFIRM_COLLECTION"
+      },
+      "servo": {
+        "$ref": "/outputs/CLOSE_SERVO"
+      }
+    },
+    "requiredCapabilitiesJson": [
+      "MOVE",
+      "CONTROL_HARDWARE",
+      "WAIT"
+    ],
+    "maxDurationSec": 1800,
+    "maxTotalVisits": 7,
+    "graphVersion": 3,
+    "schemaVersion": 3
+  },
+  "graph": {
+    "startStepCode": "MOVE_A",
+    "tasks": [
+      {
+        "taskCode": "NAVIGATE",
+        "taskName": "Đi tới điểm đích",
+        "sequenceNo": 1,
+        "configJson": {}
+      }
+    ],
+    "steps": [
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "MOVE",
+        "stepCode": "MOVE_A",
+        "stepName": "MOVE_A",
+        "sequenceNo": 1,
+        "paramsJson": {
+          "mode": "NORMAL",
+          "max_speed_mps": 0.4
+        },
+        "inputMappingJson": {
+          "map_id": {
+            "$ref": "/inputs/map_id"
+          },
+          "endpoint_id": {
+            "$ref": "/inputs/first_endpoint_id"
+          }
+        },
+        "timeoutSec": 180,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "WAIT",
+        "stepCode": "WAIT_AT_A",
+        "stepName": "WAIT_AT_A",
+        "sequenceNo": 2,
+        "paramsJson": {
+          "wait_type": "DURATION",
+          "duration_sec": 5
+        },
+        "inputMappingJson": {},
+        "timeoutSec": 30,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "MOVE",
+        "stepCode": "MOVE_B",
+        "stepName": "MOVE_B",
+        "sequenceNo": 3,
+        "paramsJson": {
+          "mode": "NORMAL",
+          "max_speed_mps": 0.4
+        },
+        "inputMappingJson": {
+          "map_id": {
+            "$ref": "/inputs/map_id"
+          },
+          "endpoint_id": {
+            "$ref": "/inputs/endpoint_id"
+          }
+        },
+        "timeoutSec": 180,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "CONTROL_HARDWARE",
+        "stepCode": "OPEN_SERVO",
+        "stepName": "OPEN_SERVO",
+        "sequenceNo": 4,
+        "paramsJson": {
+          "compartment_id": "CART_MAIN",
+          "action": "UNLOCK_COMPARTMENT"
+        },
+        "inputMappingJson": {},
+        "timeoutSec": 30,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "WAIT",
+        "stepCode": "WAIT_OPEN",
+        "stepName": "WAIT_OPEN",
+        "sequenceNo": 5,
+        "paramsJson": {
+          "wait_type": "DURATION",
+          "duration_sec": 5
+        },
+        "inputMappingJson": {},
+        "timeoutSec": 30,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "INTERACT",
+        "stepCode": "CONFIRM_COLLECTION",
+        "stepName": "CONFIRM_COLLECTION",
+        "sequenceNo": 6,
+        "paramsJson": {
+          "prompt_key": "CONFIRM_ITEMS_COLLECTED",
+          "action": "CONFIRM",
+          "data": {
+            "message": "Confirm goods collected and hands clear before closing servo."
+          }
+        },
+        "inputMappingJson": {},
+        "timeoutSec": 600,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "CONTROL_HARDWARE",
+        "stepCode": "CLOSE_SERVO",
+        "stepName": "CLOSE_SERVO",
+        "sequenceNo": 7,
+        "paramsJson": {
+          "compartment_id": "CART_MAIN",
+          "action": "LOCK_COMPARTMENT"
+        },
+        "inputMappingJson": {},
+        "timeoutSec": 30,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      }
+    ],
+    "transitions": [
+      {
+        "fromStepCode": "MOVE_A",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "SUCCESS",
+        "toStepCode": "WAIT_AT_A"
+      },
+      {
+        "fromStepCode": "MOVE_A",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "FAILURE",
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "MOVE_A",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "TIMEOUT",
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "WAIT_AT_A",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "SUCCESS",
+        "toStepCode": "MOVE_B"
+      },
+      {
+        "fromStepCode": "WAIT_AT_A",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "FAILURE",
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "WAIT_AT_A",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "TIMEOUT",
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "MOVE_B",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "SUCCESS",
+        "toStepCode": "OPEN_SERVO"
+      },
+      {
+        "fromStepCode": "MOVE_B",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "FAILURE",
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "MOVE_B",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "TIMEOUT",
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "OPEN_SERVO",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "SUCCESS",
+        "toStepCode": "WAIT_OPEN"
+      },
+      {
+        "fromStepCode": "OPEN_SERVO",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "FAILURE",
+        "terminalStatus": "RECOVERY_REQUIRED"
+      },
+      {
+        "fromStepCode": "OPEN_SERVO",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "TIMEOUT",
+        "terminalStatus": "RECOVERY_REQUIRED"
+      },
+      {
+        "fromStepCode": "WAIT_OPEN",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "SUCCESS",
+        "toStepCode": "CONFIRM_COLLECTION"
+      },
+      {
+        "fromStepCode": "WAIT_OPEN",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "FAILURE",
+        "terminalStatus": "RECOVERY_REQUIRED"
+      },
+      {
+        "fromStepCode": "WAIT_OPEN",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "TIMEOUT",
+        "terminalStatus": "RECOVERY_REQUIRED"
+      },
+      {
+        "fromStepCode": "CONFIRM_COLLECTION",
+        "priority": 1,
+        "defaultTransition": false,
+        "outcome": "SUCCESS",
+        "conditionJson": {
+          "path": "/outputs/CONFIRM_COLLECTION/confirmed",
+          "operator": "EQ",
+          "value": true
+        },
+        "toStepCode": "CLOSE_SERVO"
+      },
+      {
+        "fromStepCode": "CONFIRM_COLLECTION",
+        "priority": 2,
+        "defaultTransition": true,
+        "outcome": "SUCCESS",
+        "terminalStatus": "RECOVERY_REQUIRED"
+      },
+      {
+        "fromStepCode": "CONFIRM_COLLECTION",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "FAILURE",
+        "terminalStatus": "RECOVERY_REQUIRED"
+      },
+      {
+        "fromStepCode": "CONFIRM_COLLECTION",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "TIMEOUT",
+        "terminalStatus": "RECOVERY_REQUIRED"
+      },
+      {
+        "fromStepCode": "CLOSE_SERVO",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "SUCCESS",
+        "terminalStatus": "SUCCEEDED"
+      },
+      {
+        "fromStepCode": "CLOSE_SERVO",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "FAILURE",
+        "terminalStatus": "RECOVERY_REQUIRED"
+      },
+      {
+        "fromStepCode": "CLOSE_SERVO",
+        "priority": 1,
+        "defaultTransition": true,
+        "outcome": "TIMEOUT",
+        "terminalStatus": "RECOVERY_REQUIRED"
+      }
+    ]
+  }
+}

@@ -55,15 +55,27 @@ class NavigationSessionIntegrationTest extends MySqlIntegrationTest {
     ObjectNode open(){return sessions.create(f.robotId,new NavigationSessionService.Create(mapId,900));}
     void connect(ObjectNode created){var hello=f.hello(json);((ObjectNode)hello.path("payload")).set("navigationSession",context(created));contracts.inbound(hello);
         registry.hello(wire.envelope(hello),List.of());em.find(RobotMqttSession.class,f.robotId).setHandshakeAcked(true);em.flush();}
-    void heartbeat(ObjectNode created,boolean ready,long revision){var message=f.heartbeat(json);var p=(ObjectNode)message.path("payload");
+    ObjectNode heartbeat(ObjectNode created,boolean ready,long revision){var message=f.heartbeat(json);var p=(ObjectNode)message.path("payload");
         p.put("currentMapId",mapId.toString()).put("mapAssetHash",hash);p.set("navigationSession",context(created));
         var telemetry=(ObjectNode)p.path("telemetry");var pose=telemetry.putObject("map_pose").put("age_sec",0.).put("fresh",ready);
         if(ready)pose.putObject("value").put("map_id",mapId.toString()).put("x_m",1.).put("y_m",1.).put("yaw_rad",0.)
                 .put("navigation_session_id",created.path("sessionId").asText()).put("initialization_revision",revision);else pose.putNull("value");
         telemetry.putObject("localization").put("ready",ready).put("reason",ready?"LOCALIZED":"VERIFYING").put("session_id",created.path("sessionId").asText())
                 .put("initialization_revision",revision).put("map_id",mapId.toString()).put("map_asset_hash",hash).put("age_sec",.1);
-        contracts.inbound(message);registry.heartbeat(wire.envelope(message));em.flush();
+        contracts.inbound(message);registry.heartbeat(wire.envelope(message));em.flush();return message;
     }
+    @Test void repeatedHeartbeatKeepsExactlyOneVerifiedLocationRecord() {
+        var opened=open();connect(opened);UUID id=UUID.fromString(opened.path("sessionId").asText());
+        sessions.initialize(f.robotId,new NavigationSessionService.Initialize(id,"SEED",1.,1.,0.));
+        var packet=heartbeat(opened,true,1);UUID message=UUID.fromString(packet.path("messageId").asText());
+        registry.heartbeat(wire.envelope(packet));em.flush();
+        var locations=em.createQuery("select h from RobotLocationHistory h where h.robotLocationHistoryId=:id",RobotLocationHistory.class)
+            .setParameter("id",message).getResultList();
+        assertThat(locations).hasSize(1);
+        assertThat(locations.getFirst().getXM()).isEqualByComparingTo("1.0");
+        assertThat(locations.getFirst().isFresh()).isTrue();
+    }
+
     @Test void openingMapDoesNotInventPoseAndDeviceCanOnlyDownloadItsGrantedMap(){
         UUID before=robots.findById(f.robotId).orElseThrow().getCurrentMap().getMapId();var opened=open();
         assertThat(robots.findById(f.robotId).orElseThrow().getCurrentMap().getMapId()).isEqualTo(before);
@@ -105,6 +117,22 @@ class NavigationSessionIntegrationTest extends MySqlIntegrationTest {
     }
     @Test void heldJobPreventsClosingOrChangingMap(){var opened=open();em.find(Job.class,f.jobId).setStatus(JobStatus.RUNNING);em.flush();
         assertThatThrownBy(()->sessions.close(f.robotId,UUID.fromString(opened.path("sessionId").asText()))).hasMessageContaining("current Job");}
+
+    @Test void routePinRefreshesHeartbeatCachedBeforeGraphPreparation() {
+        var opened=open();connect(opened);UUID session=UUID.fromString(opened.path("sessionId").asText());
+        sessions.initialize(f.robotId,new NavigationSessionService.Initialize(session,"SEED",1.,1.,0.));heartbeat(opened,true,1);
+        var link=em.find(RobotMqttSession.class,f.robotId);
+        link.setLastHeartbeatAt(Instant.now().minusSeconds(30));em.flush();
+        // Simulate a new committed heartbeat beyond the persistence-context read.
+        assertThat(link.isDispatchReady()).as("fixture dispatch: %s",link.getFailureReason()).isTrue();
+        assertThat(sessions.localized(f.robotId,link)).as("fixture localization").isTrue();
+        em.detach(link); // Preflight's read-only transaction does not retain this managed heartbeat.
+        assertThat(em.createNativeQuery("UPDATE RobotMqttSession SET last_heartbeat_at=DATE_ADD(last_heartbeat_at,INTERVAL 30 SECOND) WHERE robot_id=UNHEX(REPLACE(:id,'-',''))")
+            .setParameter("id",f.robotId.toString()).executeUpdate()).isEqualTo(1);
+        robots.findByIdForUpdate(f.robotId).orElseThrow();
+        assertThatCode(()->sessions.pinReadyContextForLockedRoute(f.robotId,session,mapId)).doesNotThrowAnyException();
+        assertThat(em.find(RobotMqttSession.class,f.robotId).getLastHeartbeatAt()).isAfter(Instant.now().minusSeconds(5));
+    }
 
     @Test void dynamicRouteCreatesOnePublishedWorkflowAndJobAndRetryDoesNotDuplicateIt(){
         var opened=open();connect(opened);UUID session=UUID.fromString(opened.path("sessionId").asText());
