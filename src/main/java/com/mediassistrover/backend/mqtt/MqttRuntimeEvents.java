@@ -44,7 +44,8 @@ public class MqttRuntimeEvents {
                 || !correlated.getCommandId().equals(e.correlationId()) || correlated.getSendAttempts()==0
                 || !nullCancel && (!job.getJobId().equals(e.jobId()) || !step.getJobStepId().equals(e.jobStepId()) || !e.operationKey().equals(step.getOperationKey())))
             throw new BusinessRuleException("MQTT operation scope mismatch / event does not match a published command");
-        RobotCommandOutbox command=commands.findByJobStepId(step.getJobStepId()).orElseThrow();command=commands.lock(command.getCommandId()).orElseThrow();
+        RobotCommandOutbox command=correlated;
+        if(cancelAck){command=commands.findByJobStepId(step.getJobStepId()).orElseThrow();command=commands.lock(command.getCommandId()).orElseThrow();}
         boolean lateTerminal=Set.of(JobStatus.SUCCEEDED,JobStatus.FAILED,JobStatus.CANCELLED).contains(job.getStatus());
         if(lateTerminal && !cancelAck && !(step.getInterruptionReason()!=null && Set.of("STEP_ERROR","STEP_RESULT").contains(e.messageType())))
             throw new BusinessRuleException("New MQTT event arrived after Job terminal");

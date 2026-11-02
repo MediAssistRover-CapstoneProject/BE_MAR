@@ -98,6 +98,18 @@
         !plan.points.every(p=>Number.isFinite(p.xM)&&Number.isFinite(p.yM)&&inside(meta,p.xM,p.yM)))return null;
     return plan;
   }
+  function liveNavigationPose(sample,meta,snapshot,receivedAgeMs){
+    const session=snapshot?.navigationSession,pose=sample?.pose;
+    const age=Date.parse(sample?.receivedAt)-Date.parse(sample?.capturedAt)+receivedAgeMs;
+    if(!sample||sample.messageType!=='NAVIGATION_POSE'||sample.robotId!==snapshot?.robot?.robotId
+      ||session?.state!=='READY'||sample.navigationSessionId!==session.sessionId
+      ||sample.initializationRevision!==session.initialization?.revision
+      ||sample.mapId!==meta.map_id||sample.mapAssetHash!==meta.asset_hash
+      ||session.mapId!==meta.map_id||session.mapAssetHash!==meta.asset_hash
+      ||!Number.isFinite(age)||age< -1000||age>1500||receivedAgeMs<0
+      ||![pose?.xM,pose?.yM,pose?.yawRad].every(Number.isFinite)||!inside(meta,pose.xM,pose.yM))return null;
+    return {pose:{...pose,robotId:sample.robotId,mapId:sample.mapId,frameId:meta.frame_id,capturedAt:sample.capturedAt},ageMs:Math.max(0,age)};
+  }
   function workflowContract(detail) {
     const w = detail?.workflow;
     if (!w || !Array.isArray(detail.steps) || !Array.isArray(detail.transitions)) return null;
@@ -133,7 +145,7 @@
         const block=pending.slice(0,match.index);pending=pending.slice(match.index+match[0].length);
         const lines=block.split(/\r?\n/),event=lines.find(x=>x.startsWith('event:'))?.slice(6).trim();
         const data=lines.filter(x=>x.startsWith('data:')).map(x=>x.slice(5).replace(/^ /,'')).join('\n');
-        if(event===eventName&&data)onSnapshot(JSON.parse(data));
+        if((Array.isArray(eventName)?eventName.includes(event):event===eventName)&&data)onSnapshot(JSON.parse(data),event);
       }
     }}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
   }
@@ -413,11 +425,16 @@
       if (state.draft) arrow(state.draft.xM, state.draft.yM, state.draft.yawRad, '#dc7400', '', radius);
       if(state.seed)arrow(state.seed.xM,state.seed.yM,state.seed.yawRad,'#bd7515','Ước lượng khởi tạo',radius*1.4);
       const view=poseView(state.snapshot,state.meta,performance.now()-state.receivedAt,performance.now(),state.remembered);
+      // High-rate observations affect drawing only; they cannot enable MOVE or renew a session.
+      const live=liveNavigationPose(state.livePose?.value,state.meta,state.snapshot,performance.now()-(state.livePose?.at||0));
+      if(live){view.pose=live.pose;view.live=true;view.ageMs=live.ageMs;view.memory={scope:view.memory?.scope,
+        mapId:state.meta.map_id,hash:state.meta.asset_hash,frame:state.meta.frame_id,pose:live.pose,at:performance.now()-live.ageMs};}
       state.remembered=view.memory;
       const current = view.pose;
       if (current) {
         arrow(current.xM, current.yM, current.yawRad, view.live?'#0879ee':'#777', '', radius * 1.6);
         $('navPose').textContent = `Robot ${current.robotId}\nX=${current.xM.toFixed(3)} m · Y=${current.yM.toFixed(3)} m · hướng ${(current.yawRad * 180 / Math.PI).toFixed(1)}°`;
+        if(live)$('navPose').textContent+=`\nLuồng vị trí trực tiếp · tuổi mẫu ${Math.round(live.ageMs)} ms (chỉ quan sát).`;
         if(!view.live)$('navPose').textContent+=`\nVị trí cuối ${Math.ceil(view.ageMs/1000)} giây trước; đang chờ định vị mới. Chỉ để xem, MOVE đang khóa.`;
       } else $('navPose').textContent = 'Chưa có vị trí mới, đúng map và hash đã chọn. Cần Pi nạp map, định vị AMCL và gửi pose mới.';
     }
@@ -567,10 +584,16 @@
       (async()=>{try{
         const response=await fetch('/api/v1/robots/'+requestedRobot+'/stream',{headers:{Authorization:'Bearer '+token},cache:'no-store',signal:controller.signal});
         if(!response.ok)throw Error('Stream HTTP '+response.status);
-        await consumeRobotEvents(response,value=>{
+        await consumeRobotEvents(response,(value,event)=>{
           if(controller.signal.aborted||generation!==state.generation||requestedRobot!==robotId())return;
+          if(event==='robot-pose'){
+            if(value.robotId===requestedRobot&&(!state.livePose||value.transportSessionId!==state.livePose.value.transportSessionId||value.sequenceNo>state.livePose.value.sequenceNo)){
+              state.livePose={value,at:performance.now()};draw();
+            }
+            return;
+          }
           acceptSnapshot(value,performance.now(),generation,requestedRobot);streamLastAt=performance.now();
-        });
+        },['robot-state','robot-pose']);
       }catch(error){/* REST fallback below remains active; stream failure is not robot disconnection. */}
       finally{if(streamController===controller){streamController=null;streamRetryAt=performance.now()+5000;}}})();
     }
@@ -588,6 +611,7 @@
       catch (error) { if(generation!==state.generation)return;
         $('navRobotStatus').textContent = 'UI chưa nhận trạng thái mới; chưa kết luận mất MQTT: ' + error.message; controls();draw();
         if (error.status === 401 || error.status === 403) return; }
+      draw();controls();
       if (!state.closed && generation === state.generation) state.timer = setTimeout(() => poll(generation), Math.max(100,1000-(performance.now()-started)));
     }
     async function template() { if (!state.template) state.template = await api('/navigation-move-workflow.json'); return state.template; }
@@ -659,6 +683,8 @@
 
     async function runRoute(){
       if(options.isMappingActive())throw Error('Kết thúc phiên quét trước khi chạy tuyến.');
+      const routeStarted=performance.now();
+      say('Đang kiểm tra các điểm và trạng thái robot…');
       let pending=state.pending;
       if(active()&&pending.kind!=='ROUTE')throw Error('Theo dõi/hủy job hiện tại trước.');
       if(!pending||pending.done){
@@ -667,8 +693,9 @@
         if(!Number.isFinite(speed)||speed<.05||speed>.6)throw Error('Tốc độ tuyến phải 0,05–0,6 m/s.');
         const map=await api('/api/v1/maps/'+id);
         if(map.status!=='ACTIVE'||map.assetHash?.toLowerCase()!==state.meta.asset_hash.toLowerCase())throw Error('Map đã đổi; tải lại map.');
-        for(const endpointId of new Set(ids)){
-          const point=await api('/api/v1/endpoints/'+endpointId),saved=state.endpoints.find(e=>e.endpointId===endpointId);
+        const routePoints=await Promise.all([...new Set(ids)].map(endpointId=>api('/api/v1/endpoints/'+endpointId)));
+        for(const point of routePoints){
+          const saved=state.endpoints.find(e=>e.endpointId===point.endpointId);
           if(!saved||point.mapId!==id||!point.active||!point.accessible||!inside(state.meta,point.xM,point.yM))throw Error('Endpoint trong tuyến không hợp lệ.');
           if(stable([point.xM,point.yM,point.yawRad])!==stable([saved.xM,saved.yM,saved.yawRad]))throw Error('Endpoint đã đổi; tải lại map/endpoint.');
         }
@@ -679,11 +706,12 @@
       }
       try{
         if(!pending.requestId){
+          say('Đang chuẩn bị tuyến trên BE; robot chưa nhận lệnh chạy.');
           const result=await api('/api/v1/navigation-routes',{method:'POST',body:pending.body,headers:{'Idempotency-Key':pending.key}});
           if(!UUID.test(result.request?.serviceRequestId||''))throw Error('BE chưa trả request ID; dùng nút tiếp tục để gửi lại cùng key.');
           pending.requestId=result.request.serviceRequestId;pending.workflowId=result.workflowId;persist();
         }
-        pending.retryable=false;persist();say('Đã gửi một tuyến '+pending.body.endpointIds.length+' điểm. Request '+pending.requestId+'.');
+        pending.retryable=false;persist();say('Đã gửi tuyến '+pending.body.endpointIds.length+' điểm sau '+((performance.now()-routeStarted)/1000).toFixed(1)+' giây. Đang chờ Pi nhận bước MOVE. Request '+pending.requestId+'.');
         await trackRequest();await snapshot();
       }catch(error){
         // A definitive validation/auth conflict created no route. Release the
@@ -822,5 +850,5 @@
     controls();
     return {loadMap, state};
   }
-  return {geometry, pixelToMap, mapToPixel, inside, renderSize, viewTransform, freshPose, poseView, plannedPath, workflowContract, templateContract, consumeRobotEvents, mount};
+  return {geometry, pixelToMap, mapToPixel, inside, renderSize, viewTransform, freshPose, poseView, liveNavigationPose, plannedPath, workflowContract, templateContract, consumeRobotEvents, mount};
 });

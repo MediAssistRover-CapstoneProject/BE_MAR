@@ -62,6 +62,7 @@ public class MqttSessionRegistry {
 
     /** Processor acquired active Job locks before this call; always lock Robot before Session. */
     public RobotMqttSession hello(MqttWire.Envelope e,List<Job> active) {
+        applicationEvents.publishEvent(new NavigationLivePoseService.Closed(e.robotId()));
         UUID currentConnection=connection.connectionId();
         if (currentConnection==null) throw new MqttSessionUnavailableException("MQTT subscription is not ready");
         Robot robot=robots.findByIdForUpdate(e.robotId()).orElseThrow(()->new BusinessRuleException("Unknown MQTT robot"));
@@ -197,6 +198,12 @@ public class MqttSessionRegistry {
         if (next==RobotStatus.ERROR) session.setDispatchReady(false);
         for (Job job:active) if (job.isBeOrchestrated() && job.getStatus()!=JobStatus.RECOVERY_REQUIRED) wakeups.request(job);
         applicationEvents.publishEvent(new com.mediassistrover.backend.service.RobotRealtimeEventStream.Changed(e.robotId()));
+        if(context!=null&&fresh(session)&&pose.path("fresh").asBoolean()
+                &&telemetry.path("localization").path("ready").asBoolean())
+            applicationEvents.publishEvent(new NavigationLivePoseService.Authorization(e.robotId(),session.getTransportSessionId(),
+                session.getProducerSessionId(),session.getConnectionId(),context.getSessionId(),context.getMap().getMapId(),
+                context.getMapAssetHash(),context.getInitializationRevision(),now.plusSeconds(15)));
+        else applicationEvents.publishEvent(new NavigationLivePoseService.Closed(e.robotId()));
     }
 
     private void validateFreshMapPose(JsonNode pose,FacilityMap map,String mappingSessionId) {
@@ -237,6 +244,7 @@ public class MqttSessionRegistry {
         close(session,active);
     }
     private void close(RobotMqttSession session,List<Job> active) {
+        applicationEvents.publishEvent(new NavigationLivePoseService.Closed(session.getRobotId()));
         session.setClosed(true);session.setDispatchReady(false);session.setFailureReason("MQTT session offline");
         for (Job job:active) if (mapping.open(job.getJobId()) || commands.findByRobotIdAndStateIn(session.getRobotId(),List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED")).stream().anyMatch(c->c.getJobId().equals(job.getJobId())))
             safety.recovery(job,"MQTT disconnected with an in-flight operation");

@@ -73,6 +73,9 @@ public class PahoMqttTransport implements SmartLifecycle {
                 public void messageArrived(String topic,MqttMessage message) {
                     byte[] bytes=message.getPayload().clone();int qos=message.getQos();boolean retained=message.isRetained();
                     long queuedAt=System.nanoTime();
+                    // This validated display lane has no JDBC or browser writes. Do not
+                    // queue its latest pose behind durable cloud transactions.
+                    if(topic.endsWith("/navigation/pose")){router.getObject().receive(topic,bytes,qos,retained);return;}
                     try {inbound.execute(()->{
                         long queueMs=(System.nanoTime()-queuedAt)/1_000_000;
                         if(queueMs>500)log.warn("MQTT inbound queue delay: topic={} queueMs={}",topic,queueMs);
@@ -102,10 +105,10 @@ public class PahoMqttTransport implements SmartLifecycle {
     }
     /** Preserve the broker's retain flag; ignore stored retained messages when subscribing. */
     public static MqttSubscription[] subscriptions() {
-        String[] lanes={"events","heartbeat","presence","map-preview","mapping/preview","profile-acks","mapping/control-acks","camera/preview"};
+        String[] lanes={"events","heartbeat","presence","map-preview","mapping/preview","profile-acks","mapping/control-acks","camera/preview","navigation/pose"};
         MqttSubscription[] subscriptions=new MqttSubscription[lanes.length];
         for(int i=0;i<lanes.length;i++) {
-            var value=new MqttSubscription("mar/robots/+/"+lanes[i],java.util.Set.of("heartbeat","map-preview","mapping/preview","camera/preview").contains(lanes[i])?0:1);
+            var value=new MqttSubscription("mar/robots/+/"+lanes[i],java.util.Set.of("heartbeat","map-preview","mapping/preview","camera/preview","navigation/pose").contains(lanes[i])?0:1);
             value.setRetainAsPublished(true);value.setRetainHandling(2);subscriptions[i]=value;
         }
         return subscriptions;
