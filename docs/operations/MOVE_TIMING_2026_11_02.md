@@ -8,6 +8,7 @@ Mạng nhà đã xác minh: BE `192.168.1.63`, Pi `192.168.1.65`. HTTPS, DEVICE 
 
 - Tuyến cùng số điểm, tốc độ và phiên bản template tái sử dụng workflow đã PUBLISHED. Endpoint/map/session vẫn lấy từ request mới. Lượt đầu tạo/validate/publish; các lượt sau bỏ phần này. Mẫu bị archive/disable không tự được bật lại.
 - BE lấy danh sách endpoint trong một truy vấn; UI kiểm tra endpoint song song thay vì nối tiếp từng HTTP request. Kiểm tra trạng thái và map hash vẫn áp dụng.
+- Tạo/validate/publish template diễn ra trước khi khóa Robot để submit request; heartbeat vẫn cập nhật được trong lúc chuẩn bị graph. Ngay trước submit BE khóa Robot và kiểm tra lại READY hiện tại.
 - Xác nhận READY ở đầu giao dịch tạo tuyến được dùng lại trong chính giao dịch đang giữ khóa Robot. Trước đây các lần kiểm tra sau có thể tự hết hạn 5 giây do heartbeat phải chờ khóa này. Bằng chứng không tồn tại sau commit/rollback, không đi vào giao dịch REQUIRES_NEW, không dùng lại nếu session/map/revision/transport/producer thay đổi. Pi vẫn kiểm tra cảm biến và pose hiện tại trước khi chạy.
 - Pi hỏi quyền sử dụng phiên qua HTTPS mỗi 2 giây. Một xác nhận đã kiểm chứng có thể được giữ tối đa 15 giây khi timeout/HTTP 5xx; lỗi TLS, 401/403, đóng phiên hoặc đổi identity vẫn vô hiệu ngay. Điều này không tăng tuổi pose/LiDAR được phép dùng.
 - UI hiển thị giai đoạn kiểm tra, chuẩn bị BE và tổng thời gian gửi tuyến. Log BE có `Navigation route prepared` với `reusedWorkflow`, `prepareMs`, `requestMs`, `totalMs` (không bao gồm thời gian commit sau khi method trả về).

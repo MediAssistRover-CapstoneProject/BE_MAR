@@ -80,6 +80,10 @@ class NavigationRouteTest {
         assertThat(r.workflowId()).isEqualTo(f.wf);assertThat(r.endpointIds()).isEqualTo(f.ids);
         verify(f.workflows).validate(f.wf,f.actor.accountId(),null);verify(f.workflows).publish(f.wf,f.actor.accountId(),null);
         verify(f.requests).submit(f.requestId,f.actor,null);
+        var order=inOrder(f.workflows,f.robots,f.sessions);
+        order.verify(f.workflows).publish(f.wf,f.actor.accountId(),null);
+        order.verify(f.robots).findByIdForUpdate(f.robot);
+        order.verify(f.sessions).pinReadyContextForLockedRoute(f.robot,f.session,f.map);
         var input=org.mockito.ArgumentCaptor.forClass(com.mediassistrover.backend.dto.request.request.ServiceRequestRequests.NavigationCreateRequest.class);
         verify(f.requests).createNavigation(input.capture(),eq("route-key"),eq(f.actor),isNull());
         assertThat(input.getValue().destinationEndpointId()).isEqualTo(f.ids.getLast());

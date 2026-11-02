@@ -39,10 +39,10 @@ public class NavigationRouteService {
             throw new BusinessRuleException("Route requires 1..20 endpoint IDs");
         double speed=r.maxSpeedMps()==null?.6:r.maxSpeedMps();
         if(!Double.isFinite(speed)||speed<.05||speed>.6)throw new BusinessRuleException("Route speed must be 0.05..0.60 m/s");
-        // Match runtime lock ordering: rollout, then robot. Prevent concurrent
-        // route creation from changing ownership or submitting duplicate work.
+        // Serialize template creation through rollout, but do not hold Robot
+        // while compiling/publishing a new graph: heartbeats need that lock.
+        // Submission below still acquires rollout then robot in runtime order.
         rollout.lockForRuntimeCreation();
-        robots.findByIdForUpdate(r.robotId()).orElseThrow(()->new ResourceNotFoundException("Robot not found"));
         var existing=requestRows.findByIdempotencyKey(key).orElse(null);UUID workflowId;
         if(existing!=null) {
             if(existing.getRequestType()!=ServiceRequestType.NAVIGATION||existing.getRequestedByAccount()==null
@@ -51,7 +51,7 @@ public class NavigationRouteService {
                 throw new ConflictException("Idempotency-Key belongs to another request");
             workflowId=UUID.fromString(existing.getRequestDataJson().path("workflow_id").asText());
         }else {
-            sessions.pinReadyContextForLockedRoute(r.robotId(),r.navigationSessionId(),r.mapId());
+            sessions.requireReadyContext(r.robotId(),r.navigationSessionId(),r.mapId());
             var points=new HashMap<UUID,com.mediassistrover.backend.entity.Endpoint>();
             endpoints.findAllById(new HashSet<>(r.endpointIds())).forEach(e->points.put(e.getEndpointId(),e));
             for(UUID id:r.endpointIds()) {
@@ -84,6 +84,8 @@ public class NavigationRouteService {
                 workflows.validate(workflowId,actor.accountId(),metadata);workflows.publish(workflowId,actor.accountId(),metadata);
             }
         }
+        robots.findByIdForUpdate(r.robotId()).orElseThrow(()->new ResourceNotFoundException("Robot not found"));
+        if(existing==null)sessions.pinReadyContextForLockedRoute(r.robotId(),r.navigationSessionId(),r.mapId());
         long prepared=System.nanoTime();
         var data=json.createObjectNode();data.set("route_endpoint_ids",json.valueToTree(r.endpointIds()));
         data.set("route_waypoint_ids",json.valueToTree(r.endpointIds().subList(0,r.endpointIds().size()-1)));
