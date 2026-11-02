@@ -9,6 +9,7 @@ import com.mediassistrover.backend.mapping.MapBundleService;
 import com.mediassistrover.backend.mqtt.MqttWire;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.DevicePrincipal;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -28,7 +29,7 @@ public class NavigationSessionService {
     private final MqttWire wire;
     private final Clock clock;
     private static final List<JobStatus> HELD=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
-    public record Create(@NotNull UUID mapId,@Min(60) @Max(28800) int durationSec) { }
+    @Schema(name="NavigationSessionCreateRequest") public record Create(@NotNull UUID mapId,@Min(60) @Max(28800) int durationSec) { }
     public record Initialize(@NotNull UUID sessionId,@NotBlank @Pattern(regexp="SEED|GLOBAL") String mode,
                              Double xM,Double yM,Double yawRad) { }
     public record Close(@NotNull UUID sessionId) { }

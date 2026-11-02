@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.*;
 import java.util.*;
+import com.mediassistrover.backend.storage.S3ObjectStorageService;
 
 @Service @RequiredArgsConstructor @Transactional(readOnly=true)
 public class StaffServiceImpl implements StaffService {
@@ -25,6 +26,7 @@ public class StaffServiceImpl implements StaffService {
     private final RefreshTokenService refreshTokens;
     private final AuditService audit;
     private final Clock clock;
+    private final S3ObjectStorageService storage;
 
     @Override @Transactional
     public StaffResponse create(StaffRequests.Create r, UUID actorId, RequestMetadata md) {
@@ -40,6 +42,7 @@ public class StaffServiceImpl implements StaffService {
                 .passwordChangedAt(Instant.now(clock)).build());
         StaffProfile profile=profiles.save(StaffProfile.builder().account(account).staffCode(r.staffCode().trim())
                 .departmentCode(r.departmentCode()).jobTitle(r.jobTitle()).contactExtension(r.contactExtension())
+                .url(staffImageUrl(r.url()))
                 .active(true).build());
         record(actorId,"STAFF_CREATED",profile,md);
         return mapper.toResponse(profile);
@@ -51,7 +54,7 @@ public class StaffServiceImpl implements StaffService {
         unique(profile,email,phone,r.staffCode().trim());
         account.setFullName(r.fullName().trim());account.setEmail(email);account.setPhone(phone);
         profile.setStaffCode(r.staffCode().trim());profile.setDepartmentCode(r.departmentCode());
-        profile.setJobTitle(r.jobTitle());profile.setContactExtension(r.contactExtension());
+        profile.setJobTitle(r.jobTitle());profile.setContactExtension(r.contactExtension());profile.setUrl(staffImageUrl(r.url()));
         record(actorId,"STAFF_UPDATED",profile,md);return mapper.toResponse(profile);
     }
     @Override public StaffResponse get(UUID id){return mapper.toResponse(require(id));}
@@ -72,6 +75,12 @@ public class StaffServiceImpl implements StaffService {
         if((current==null || !code.equalsIgnoreCase(current.getStaffCode())) && profiles.existsByStaffCodeIgnoreCase(code))throw new ConflictException("Staff code already exists");
     }
     private String phone(String value){return value==null||value.isBlank()?null:value.trim().replaceAll("[ .-]","");}
+    private String staffImageUrl(String value){
+        if(value==null||value.isBlank())return null;
+        String normalized=value.trim();
+        try{storage.keyFromPublicUrl(normalized,Set.of("images"));return normalized;}
+        catch(IllegalArgumentException e){throw new BusinessRuleException("url must be a fixed image URL from the configured S3 bucket");}
+    }
     private StaffProfile require(UUID id){return profiles.findById(id).orElseThrow(()->new ResourceNotFoundException("Staff not found"));}
     private void record(UUID actorId,String action,StaffProfile profile,RequestMetadata md){
         Account actor=accounts.findById(actorId).orElseThrow(()->new ResourceNotFoundException("Account not found"));

@@ -1,6 +1,7 @@
 target/
 .idea/
 .vscode/
+.playwright-cli/
 *.iml
 *.log
 .env

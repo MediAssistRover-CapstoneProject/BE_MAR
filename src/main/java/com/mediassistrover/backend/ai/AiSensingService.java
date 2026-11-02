@@ -29,6 +29,7 @@ public class AiSensingService {
     private final DetectionEventRepository detections;
     private final MqttWire wire;
     private final Clock clock;
+    private final com.mediassistrover.backend.storage.MediaReferenceValidator mediaReferences;
     public record Configure(@NotNull UUID zoneId,@NotBlank @Pattern(regexp="CROWD_DENSITY|RESTRICTED_ZONE") String sensingType,
             @NotBlank @Size(max=100) String modelVersion,@NotBlank @Size(max=255) String producerRef,
             boolean enabled,boolean personPositionsEnabled,@NotBlank @Size(max=1000) String commissioningNote) { }
@@ -96,6 +97,7 @@ public class AiSensingService {
         var row=AiObservation.builder().observationKey(key).robotId(command.getRobotId()).jobStepId(step.getJobStepId()).payloadHash(hash).outputJson(output.deepCopy()).profileSnapshotJson(profile.deepCopy()).storedAt(Instant.now(clock)).build();
         String evidence=output.path("evidence_ref").isNull() || output.path("evidence_ref").isMissingNode()?null:output.path("evidence_ref").asText();
         if(evidence!=null && (evidence.length()>4000 || evidence.regionMatches(true,0,"data:",0,5)))fail("AI evidence must be a bounded reference");
+        mediaReferences.validateEvidenceReference(evidence,"evidence_ref");
         if("CROWD_DENSITY".equals(output.path("sensing_type").asText())) {
             JsonNode count=output.path("metrics").path("count");if(!count.canConvertToInt() || count.asInt()<0)fail("AI person count exceeds database range");
             crowd.saveAndFlush(CrowdDensityRecord.builder().crowdDensityRecordId(id).robot(step.getJobTask().getJob().getRobot()).zone(zone).jobStep(step)

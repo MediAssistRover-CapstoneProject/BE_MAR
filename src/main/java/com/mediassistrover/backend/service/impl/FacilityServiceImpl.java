@@ -28,6 +28,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class FacilityServiceImpl implements FacilityService {
+    private final com.mediassistrover.backend.storage.S3ObjectStorageService s3;
     private final HospitalInformationRepository hospitalRepository;
     private final FloorRepository floorRepository;
     private final FacilityMapRepository mapRepository;
@@ -107,6 +108,7 @@ public class FacilityServiceImpl implements FacilityService {
     @Override @Transactional
     public MapResponse createMap(MapRequest r, UUID actorId, RequestMetadata md) {
         if (mapRepository.existsByMapCodeIgnoreCaseAndVersionNo(r.mapCode(), r.versionNo())) throw new ConflictException("Map code and version already exist");
+        validateMapUrl(r.mapFileUri());
         FacilityMap entity=mapper.toEntity(r);entity.setFloor(floor(r.floorId()));entity=mapRepository.save(entity);
         audit(account(actorId),"MAP_CREATED","Map",entity.getMapId(),md);return mapper.toResponse(entity);
     }
@@ -115,6 +117,7 @@ public class FacilityServiceImpl implements FacilityService {
         FacilityMap entity=facilityMap(id);
         if(entity.getStatus()!=MapStatus.DRAFT) throw new BusinessRuleException("Only DRAFT map metadata can be updated");
         if((!entity.getMapCode().equalsIgnoreCase(r.mapCode())||entity.getVersionNo()!=r.versionNo())&&mapRepository.existsByMapCodeIgnoreCaseAndVersionNo(r.mapCode(),r.versionNo())) throw new ConflictException("Map code and version already exist");
+        validateMapUrl(r.mapFileUri());
         mapper.update(r,entity);entity.setFloor(floor(r.floorId()));audit(account(actorId),"MAP_UPDATED","Map",id,md);return mapper.toResponse(entity);
     }
     @Override @Transactional
@@ -131,6 +134,7 @@ public class FacilityServiceImpl implements FacilityService {
         FacilityMap e=facilityMap(id);e.setStatus(MapStatus.ARCHIVED);audit(account(actorId),"MAP_ARCHIVED","Map",id,md);return mapper.toResponse(e);
     }
     @Override public MapArtifactResponse getMapArtifact(UUID id) { FacilityMap e=facilityMap(id);return new MapArtifactResponse(e.getMapId(),e.getMapCode(),e.getVersionNo(),e.getMapFileUri(),e.getAssetHash(),e.getFrameId(),e.getStatus()); }
+    private void validateMapUrl(String value){try{String key=s3.keyFromPublicUrl(value,java.util.Set.of("maps"));if(!key.endsWith(".zip")&&!key.endsWith(".tar.gz"))throw new IllegalArgumentException();}catch(IllegalArgumentException e){throw new BusinessRuleException("mapFileUri must be a fixed S3 URL for a .zip or .tar.gz map archive");}}
     @Override public Page<MapResponse> listMaps(Pageable p) { return mapRepository.findAll(p).map(mapper::toResponse); }
     @Override public MapResponse getMap(UUID id){return mapper.toResponse(facilityMap(id));}
 

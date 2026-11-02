@@ -2,6 +2,7 @@ package com.mediassistrover.backend.controller.job;
 
 import com.mediassistrover.backend.service.JobExecutionService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
@@ -16,7 +17,7 @@ import java.util.UUID;
 @Tag(name="Robot Speech", description="Run a published INTERACT/SPEAK workflow through MQTT")
 public class SpeechJobController {
     private final JobExecutionService execution;
-    public record Create(@NotNull UUID workflowId, @NotNull UUID robotId,
+    @Schema(name="SpeechJobCreateRequest") public record Create(@NotNull UUID workflowId, @NotNull UUID robotId,
                          @NotBlank @Size(max=500) String text,
                          @NotNull @Pattern(regexp="vi|en") String languageCode) { }
     public record Created(UUID jobId, String jobCode) { }

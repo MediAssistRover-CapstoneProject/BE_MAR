@@ -31,11 +31,12 @@ public class RestAccessDeniedHandler implements AccessDeniedHandler {
         response.setStatus(HttpServletResponse.SC_FORBIDDEN);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         Object correlationId = request.getAttribute(CorrelationIdFilter.CORRELATION_ID_ATTRIBUTE);
+        boolean passwordChangeRequired = "Password change is required".equals(accessDeniedException.getMessage());
         objectMapper.writeValue(response.getOutputStream(), new ApiErrorResponse(
                 Instant.now(clock),
                 HttpServletResponse.SC_FORBIDDEN,
-                "FORBIDDEN",
-                "Bạn không có quyền thực hiện thao tác này",
+                passwordChangeRequired ? "PASSWORD_CHANGE_REQUIRED" : "FORBIDDEN",
+                passwordChangeRequired ? "Bạn phải đổi mật khẩu tạm trước khi sử dụng hệ thống" : "Bạn không có quyền thực hiện thao tác này",
                 request.getRequestURI(),
                 correlationId == null ? null : correlationId.toString(),
                 null

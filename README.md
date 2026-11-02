@@ -8,16 +8,16 @@ Giữ `.env` và chứng chỉ hiện tại. Môi trường mới dùng `.env.ex
 
 ```powershell
 docker compose config --quiet
-docker compose --profile production up -d --build mysql backend reverse-proxy
+docker compose --profile production up -d --build mysql qdrant backend reverse-proxy
 docker compose --profile production restart reverse-proxy
 docker compose logs --tail 80 backend
 ```
 
-Swagger: http://localhost:8080/swagger-ui/index.html. UI: http://localhost:8080/mapping.html. Sao lưu DB trước khi áp dụng V31–V34; không xóa volume database.
+Swagger: http://localhost:8080/swagger-ui/index.html. UI: `mapping.html`, `knowledge-admin.html`, `assistant-kiosk.html`, `assistant-staff.html`. Sao lưu DB trước khi áp dụng migration; không xóa volume database.
 
 ## OpenAI / bản đồ
 
-Trong `.env`: TTS_ENABLED=true, OPENAI_API_KEY=<key riêng>, OPENAI_TTS_MODEL=gpt-4o-mini-tts, OPENAI_TTS_VOICE=coral, OPENAI_TTS_SPEED=1.0. Key chỉ ở BE. WAV cache nằm trong volume speech-cache.
+Trong `.env`: `TTS_ENABLED=true`, `OPENAI_API_KEY=<key riêng>`, `OPENAI_TTS_MODEL=gpt-realtime-2.1-mini`, `OPENAI_TTS_VOICE=coral`. Key chỉ ở BE. Backend nhận PCM16 24 kHz từ Realtime API, đóng gói WAV và cache trong volume `speech-cache`.
 
 - POST /api/v1/pi/speech/prepare: ADMIN chuẩn bị âm thanh, body text/languageCode/speedWpm.
 - POST /api/v1/speech-jobs: tạo job phát loa; Pi tải WAV từ BE qua HTTPS.
@@ -26,5 +26,29 @@ Trong `.env`: TTS_ENABLED=true, OPENAI_API_KEY=<key riêng>, OPENAI_TTS_MODEL=gp
 - GET /api/v1/pi/maps/{mapId}/bundle: YAML/PGM/metadata; DEVICE chỉ tải map được gán.
 
 Giữ 11 step types. BE xử lý nghiệp vụ; Pi chạy handler robot. MOVE cần map đã nạp và profile ACK. Tạo workflow không tự tạo handler phần cứng mới.
+
+## Knowledge RAG và voice assistant
+
+1. Bật `ASSISTANT_ENABLED=true`, điền `OPENAI_API_KEY`, chạy thêm Qdrant.
+2. Đăng nhập ADMIN và mở `/knowledge-admin.html` để upload PDF, DOCX, JPG hoặc PNG. Tệp tối đa 25 MB; pipeline tự extract/OCR, chunk, embedding và chuyển `READY`.
+3. Chỉ bật `ASSISTANT_PUBLIC_ENABLED` sau khi điền UUID robot vào `ASSISTANT_PUBLIC_ROBOT_IDS`. API Guest có rate limit và action cần nonce xác nhận 60 giây.
+4. `ASSISTANT_VOICE_ACTIONS_ENABLED` và `ASSISTANT_PI_BRIDGE_ENABLED` mặc định tắt; chỉ bật sau hardware acceptance.
+
+API mới:
+
+- `/api/v1/admin/knowledge/documents`: upload, xem OCR/chunks, re-index, archive.
+- `/api/v1/public/assistant/**`: kiosk Guest, chỉ nguồn PUBLIC.
+- `/api/v1/assistant/**`: STAFF/ADMIN, cho phép nguồn INTERNAL.
+- `/api/v1/pi/assistant/**`: DEVICE JWT cho `mediassist_voice_bridge`.
+
+MySQL giữ metadata/text/citation/audit, volume `knowledge-files` giữ file gốc, Qdrant giữ vector. Audio đầu vào chỉ được xử lý trong bộ nhớ và không lưu trong backend. Transcript, câu trả lời và nguồn được xóa sau 90 ngày.
+
+Package ROS 2 nằm ở `../mentorpi_ws/src/mediassist_voice_bridge`; xem `../mentorpi_ws/README.md` để chạy trên MentorPi M1.
+
+## Amazon S3 media
+
+Backend dùng AWS SDK v2 và credential provider chain; không lưu access key trong source. Cấu hình `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION=ap-southeast-1` và `AWS_S3_BUCKET=mediassistrover-media-2026`, sau đó áp bucket/IAM policy trong `docs/S3_MEDIA.md`.
+
+Trong Swagger, đăng nhập rồi Authorize bằng Staff/Admin JWT. Dùng `POST /api/v1/media` để upload trường multipart `file`, `GET /api/v1/media/url?objectKey=...` để kiểm tra Public URL, và ADMIN dùng `DELETE /api/v1/media?objectKey=...` sau khi đã gỡ mọi tham chiếu nghiệp vụ. Ảnh tối đa 10 MB; video tối đa 100 MB.
 
 Lệnh upload Pi, cấu hình HTTPS và script API nằm trong README duy nhất của gói MAR_OpenAI_Final_2026_10_20 trong Downloads. Source BE này đã được sửa; container đang chạy chỉ đổi sau khi recreate.

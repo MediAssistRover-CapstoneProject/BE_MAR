@@ -30,12 +30,24 @@ public class VoiceInteraction {
     @Column(name = "language_code", nullable = false, length = 16)
     private String languageCode;
 
+    @Column(name = "channel", nullable = false, length = 16)
+    private String channel;
+
+    @Column(name = "visibility_scope", nullable = false, length = 16)
+    private String visibilityScope;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 16)
     private VoiceInteractionStatus status;
 
     @Column(name = "started_at", nullable = false)
     private Instant startedAt;
+
+    @Column(name = "last_activity_at")
+    private Instant lastActivityAt;
+
+    @Column(name = "expires_at")
+    private Instant expiresAt;
 
     @Column(name = "ended_at")
     private Instant endedAt;

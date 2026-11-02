@@ -18,6 +18,7 @@ public record StaffMeResponse(
             String departmentCode,
             String jobTitle,
             String contactExtension,
+            String url,
             boolean active,
             Instant createdAt,
             Instant updatedAt

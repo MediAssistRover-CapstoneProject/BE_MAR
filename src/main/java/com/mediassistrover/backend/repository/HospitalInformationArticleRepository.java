@@ -28,6 +28,9 @@ public interface HospitalInformationArticleRepository extends JpaRepository<Hosp
     @Query("""
             select a from HospitalInformationArticle a
             where a.status = :status and a.publicVisible = true
+              and a.hospitalInformation.status = :status and a.hospitalInformation.publicVisible = true
+              and (a.hospitalInformation.effectiveFrom is null or a.hospitalInformation.effectiveFrom <= :now)
+              and (a.hospitalInformation.effectiveUntil is null or a.hospitalInformation.effectiveUntil > :now)
               and lower(a.languageCode) = lower(:languageCode)
               and (a.effectiveFrom is null or a.effectiveFrom <= :now)
               and (a.effectiveUntil is null or a.effectiveUntil >= :now)

@@ -1,6 +1,7 @@
 package com.mediassistrover.backend.speech;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mediassistrover.backend.assistant.OpenAiGateway;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -24,6 +25,8 @@ public class OpenAiTtsService implements AutoCloseable {
     private final double speed;
     private final Path directory;
     private final URI endpoint;
+    private final OpenAiGateway realtimeGateway;
+    private final com.mediassistrover.backend.storage.S3ObjectStorageService s3;
     private final ObjectMapper json;
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
         .followRedirects(HttpClient.Redirect.NEVER).build();
@@ -37,14 +40,21 @@ public class OpenAiTtsService implements AutoCloseable {
                            @Value("${app.tts.openai-api-key:}") String key,
                            @Value("${app.tts.voice:coral}") String voice,
                            @Value("${app.tts.speed:1.0}") double speed,
-                           @Value("${app.tts.model:gpt-4o-mini-tts}") String model,
+                           @Value("${app.tts.model:gpt-realtime-2.1-mini}") String model,
                            @Value("${app.tts.instructions:Speak Vietnamese with a clear Northern Vietnamese accent and a calm adult female tone. Read only the supplied text.}") String instructions,
-                           @Value("${app.tts.cache-dir:./data/speech}") String directory, ObjectMapper json) {
-        this(enabled,key,voice,speed,model,instructions,Path.of(directory),json,URI.create("https://api.openai.com/v1/audio/speech"));
+                           @Value("${app.tts.cache-dir:./data/speech}") String directory, ObjectMapper json,
+                           OpenAiGateway realtimeGateway,com.mediassistrover.backend.storage.S3ObjectStorageService s3) {
+        this(enabled,key,voice,speed,model,instructions,Path.of(directory),json,URI.create("https://api.openai.com/v1/audio/speech"),realtimeGateway,s3);
     }
     OpenAiTtsService(boolean enabled,String key,String voice,double speed,String model,String instructions,Path directory,ObjectMapper json,URI endpoint) {
-        this.enabled=enabled;this.apiKey=key;this.voice=voice;this.speed=speed;this.directory=directory;
-        this.json=json;this.endpoint=endpoint;this.model=model;this.instructions=instructions;
+        this(enabled,key,voice,speed,model,instructions,directory,json,endpoint,null,null);
+    }
+    OpenAiTtsService(boolean enabled,String key,String voice,double speed,String model,String instructions,Path directory,ObjectMapper json,URI endpoint,OpenAiGateway realtimeGateway) {
+        this(enabled,key,voice,speed,model,instructions,directory,json,endpoint,realtimeGateway,null);
+    }
+    OpenAiTtsService(boolean enabled,String key,String voice,double speed,String model,String instructions,Path directory,ObjectMapper json,URI endpoint,OpenAiGateway realtimeGateway,com.mediassistrover.backend.storage.S3ObjectStorageService s3) {
+        this.enabled=enabled;this.apiKey=key;this.voice=voice;this.speed=speed;this.directory=directory;this.s3=s3;
+        this.json=json;this.endpoint=endpoint;this.model=model;this.instructions=instructions;this.realtimeGateway=realtimeGateway;
         if(!Set.of("alloy","ash","ballad","coral","echo","fable","nova","onyx","sage","shimmer","verse","marin","cedar").contains(voice)
                 ||!Double.isFinite(speed)||speed<0.25||speed>4.0||model.isBlank()||instructions.length()>1000)
             throw new IllegalArgumentException("Invalid OpenAI TTS configuration");
@@ -63,6 +73,7 @@ public class OpenAiTtsService implements AutoCloseable {
         String id=sha256(("openai\n"+model+"\n"+voice+"\n"+renderSpeed+"\n"+language+"\n"+instructions+"\n"+text).getBytes(StandardCharsets.UTF_8));
         Path file=directory.resolve(id+".wav");
         try {
+            if(s3!=null)try{byte[] audio=s3.get(cacheKey(id),MAX_BYTES);if(wav(audio))return new Result("READY",null,audio);}catch(com.mediassistrover.backend.exception.ResourceNotFoundException ignored){}
             if(Files.isRegularFile(file)) {
                 if(Files.size(file)>MAX_BYTES)Files.delete(file);
                 else {byte[] audio=Files.readAllBytes(file);if(wav(audio))return new Result("READY",null,audio);Files.delete(file);}
@@ -84,6 +95,12 @@ public class OpenAiTtsService implements AutoCloseable {
         } catch(IOException e){return new Result("FAILED","TTS_CACHE_ERROR",null);}
     }
     private byte[] generate(String text,String language,Path file,double renderSpeed) throws Exception {
+        if(model.startsWith("gpt-realtime")){
+            if(realtimeGateway==null)throw new IOException("TTS_REALTIME_GATEWAY_UNAVAILABLE");
+            byte[] bytes=realtimeGateway.synthesizeWav(text,language);
+            if(!wav(bytes))throw new IOException("TTS_INVALID_WAV");
+            cache(file,bytes);return bytes;
+        }
         var body=json.createObjectNode().put("model",model).put("voice",voice).put("input",text)
             .put("response_format","wav").put("speed",renderSpeed);
         if(!Set.of("tts-1","tts-1-hd").contains(model))body.put("instructions",language.equals("vi")?instructions:"Speak clearly in English. Read only the supplied text.");
@@ -97,13 +114,14 @@ public class OpenAiTtsService implements AutoCloseable {
         if(response.statusCode()!=200)throw new IOException("TTS_PROVIDER_REJECTED");
         byte[] bytes=response.body();
         if(!wav(bytes))throw new IOException("TTS_INVALID_WAV");
-        Files.createDirectories(directory);
-        Path temporary=Files.createTempFile(directory,"tts-",".tmp");
-        try {Files.write(temporary,bytes);Files.move(temporary,file,StandardCopyOption.REPLACE_EXISTING);}
-        finally {Files.deleteIfExists(temporary);}
-        trimCache();
+        cache(file,bytes);
         return bytes;
     }
+    private void cache(Path file,byte[] bytes)throws IOException{
+        if(s3!=null){String id=file.getFileName().toString().replaceFirst("\\.wav$","");s3.put(cacheKey(id),new ByteArrayInputStream(bytes),bytes.length,"audio/wav",sha256(bytes),true);return;}
+        Files.createDirectories(directory);Path temporary=Files.createTempFile(directory,"tts-",".tmp");try{Files.write(temporary,bytes);Files.move(temporary,file,StandardCopyOption.REPLACE_EXISTING);}finally{Files.deleteIfExists(temporary);}trimCache();
+    }
+    private String cacheKey(String id){return "audio/"+UUID.nameUUIDFromBytes(id.getBytes(StandardCharsets.UTF_8))+".wav";}
     private void trimCache() throws IOException {
         try(var files=Files.list(directory)) {
             var entries=files.filter(p->p.toString().endsWith(".wav"))

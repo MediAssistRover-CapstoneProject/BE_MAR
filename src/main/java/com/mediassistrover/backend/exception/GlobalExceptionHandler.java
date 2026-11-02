@@ -110,6 +110,22 @@ public class GlobalExceptionHandler {
         return response(HttpStatus.UNPROCESSABLE_ENTITY, "BUSINESS_RULE_VIOLATION", exception.getMessage(), request, null);
     }
 
+    @ExceptionHandler({org.springframework.web.multipart.MaxUploadSizeExceededException.class,
+            FileTooLargeException.class})
+    ResponseEntity<ApiErrorResponse> handleUploadTooLarge(Exception exception, HttpServletRequest request) {
+        return response(HttpStatus.PAYLOAD_TOO_LARGE, "FILE_TOO_LARGE",
+                exception instanceof FileTooLargeException ? exception.getMessage()
+                        : "Uploaded file exceeds the configured request limit", request, null);
+    }
+
+    @ExceptionHandler(StorageUnavailableException.class)
+    ResponseEntity<ApiErrorResponse> handleStorageUnavailable(StorageUnavailableException exception,
+                                                                HttpServletRequest request) {
+        log.error("S3 storage unavailable, correlationId={}", correlationId(request), exception);
+        return response(HttpStatus.SERVICE_UNAVAILABLE, "STORAGE_UNAVAILABLE",
+                "Media storage is temporarily unavailable", request, null);
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     ResponseEntity<ApiErrorResponse> handleAccessDenied(AccessDeniedException exception, HttpServletRequest request) {
         return response(HttpStatus.FORBIDDEN, "FORBIDDEN", "Bạn không có quyền thực hiện thao tác này", request, null);

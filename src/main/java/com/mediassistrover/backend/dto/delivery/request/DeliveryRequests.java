@@ -2,6 +2,7 @@ package com.mediassistrover.backend.dto.delivery.request;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.mediassistrover.backend.enums.*;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import java.time.Instant;
@@ -14,7 +15,7 @@ public final class DeliveryRequests {
                        @NotBlank @Size(max=64) String itemCategory,@Min(1) int quantity,
                        @NotBlank @Size(max=32) String unit,boolean sensitive,
                        @Size(max=4000) String handlingInstruction,@Size(max=4000) String itemNote) { }
-    public record Create(@NotNull UUID mapId,UUID pickupRoomId,UUID deliveryRoomId,
+    @Schema(name="DeliveryCreateRequest") public record Create(@NotNull UUID mapId,UUID pickupRoomId,UUID deliveryRoomId,
                          @NotNull UUID pickupEndpointId,UUID deliveryEndpointId,UUID deliveryGroupId,
                          @NotNull TargetMode targetMode,@NotBlank @Size(max=160) String recipientName,
                          @Size(max=100) String recipientContact,@AssertTrue boolean requiresConfirmation,

@@ -27,6 +27,13 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.io.InputStream;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+import org.springframework.web.multipart.MultipartFile;
+import com.mediassistrover.backend.dto.media.response.MediaObjectResponse;
+import com.mediassistrover.backend.storage.MediaFileValidator;
+import com.mediassistrover.backend.storage.S3ObjectStorageService;
 
 @Service
 @RequiredArgsConstructor
@@ -44,6 +51,8 @@ public class VoiceServiceImpl implements VoiceService {
     private final VoiceMapper mapper;
     private final StaffOperationalScopePolicy staffScope;
     private final Clock clock;
+    private final MediaFileValidator mediaValidator;
+    private final S3ObjectStorageService storage;
 
     @Override
     @Transactional
@@ -61,8 +70,11 @@ public class VoiceServiceImpl implements VoiceService {
                 .voiceInteractionId(envelope.messageId())
                 .robot(robot)
                 .languageCode(payload.languageCode().replace('_', '-'))
+                .channel("LEGACY")
+                .visibilityScope("PUBLIC")
                 .status(VoiceInteractionStatus.ACTIVE)
                 .startedAt(payload.startedAt())
+                .lastActivityAt(payload.startedAt())
                 .build());
         return ack(envelope, robot, false);
     }
@@ -90,7 +102,8 @@ public class VoiceServiceImpl implements VoiceService {
             throw new BusinessRuleException("endedAt must not be before startedAt");
         }
         validateNotFarFuture(payload.endedAt(), "endedAt");
-        validateReference(payload.audioUri(), "audioUri");
+        String requestedAudio = trimToNull(payload.audioUri());
+        if (requestedAudio != null) validateAudioUrl(requestedAudio);
         if (payload.status() == VoiceInteractionStatus.COMPLETED &&
                 commandRepository.existsByVoiceInteractionVoiceInteractionIdAndStatus(
                         interactionId, VoiceCommandStatus.RECEIVED)) {
@@ -100,8 +113,31 @@ public class VoiceServiceImpl implements VoiceService {
         interaction.setEndedAt(payload.endedAt());
         interaction.setDetectedIntent(trimToNull(payload.detectedIntent()));
         interaction.setTranscriptSummary(trimToNull(payload.transcriptSummary()));
-        interaction.setAudioUri(trimToNull(payload.audioUri()));
+        if (requestedAudio != null) interaction.setAudioUri(requestedAudio);
         return ack(envelope, robot, false);
+    }
+
+    @Override
+    @Transactional
+    public MediaObjectResponse uploadInteractionAudio(UUID interactionId, MultipartFile file, DevicePrincipal principal) {
+        VoiceInteraction interaction = interaction(interactionId);
+        Robot robot = robot(principal.robotId());
+        if(!robot.getRobotCode().equals(principal.robotCode())||robot.getDeviceTokenVersion()!=principal.tokenVersion()
+                ||principal.expiresAt()==null||!principal.expiresAt().isAfter(Instant.now(clock)))
+            throw new AccessDeniedException("Current device session required");
+        ensureRobot(interaction, robot);
+        if (interaction.getStatus() != VoiceInteractionStatus.ACTIVE)
+            throw new BusinessRuleException("Audio can only be uploaded for an ACTIVE interaction");
+        MediaFileValidator.Validated valid = mediaValidator.wav(file);
+        String key = "audio/" + interactionId + ".wav";
+        String hash = sha256(file);
+        try {
+            var stored = storage.put(key, file.getInputStream(), valid.sizeBytes(), valid.contentType(), hash, true);
+            interaction.setAudioUri(stored.url());
+            return new MediaObjectResponse(stored.objectKey(), stored.url(), "AUDIO", stored.contentType(),
+                    stored.sizeBytes(), stored.sha256());
+        } catch (RuntimeException e) { throw e; }
+        catch (Exception e) { throw new BusinessRuleException("Uploaded audio cannot be read"); }
     }
 
     @Override
@@ -305,6 +341,21 @@ public class VoiceServiceImpl implements VoiceService {
         if (value != null && value.regionMatches(true, 0, "data:", 0, 5)) {
             throw new BusinessRuleException(field + " must be a reference, not embedded data");
         }
+    }
+
+    private void validateAudioUrl(String value) {
+        try { storage.keyFromPublicUrl(value, Set.of("audio")); }
+        catch (IllegalArgumentException e) {
+            throw new BusinessRuleException("audioUri must be a fixed audio URL from the configured S3 bucket");
+        }
+    }
+
+    private String sha256(MultipartFile file) {
+        try (InputStream input=file.getInputStream()) {
+            MessageDigest digest=MessageDigest.getInstance("SHA-256");byte[] buffer=new byte[8192];
+            for(int read;(read=input.read(buffer))>=0;)if(read>0)digest.update(buffer,0,read);
+            return HexFormat.of().formatHex(digest.digest());
+        } catch(Exception e){throw new BusinessRuleException("Uploaded audio cannot be hashed");}
     }
 
     private void validateNotFarFuture(Instant value, String field) {

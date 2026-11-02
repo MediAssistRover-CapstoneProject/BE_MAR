@@ -13,10 +13,13 @@ import org.springframework.data.domain.Pageable;
 
 import java.time.Instant;
 import java.util.UUID;
+import com.mediassistrover.backend.dto.media.response.MediaObjectResponse;
+import org.springframework.web.multipart.MultipartFile;
 
 public interface VoiceService {
     AckResponse startInteraction(PiEnvelope<InteractionStartPayload> envelope, DevicePrincipal principal);
     AckResponse completeInteraction(UUID interactionId, PiEnvelope<InteractionCompletionPayload> envelope, DevicePrincipal principal);
+    MediaObjectResponse uploadInteractionAudio(UUID interactionId, MultipartFile file, DevicePrincipal principal);
     AckResponse recordCommand(PiEnvelope<CommandPayload> envelope, DevicePrincipal principal);
     AckResponse recordCommandResult(UUID commandId, PiEnvelope<CommandResultPayload> envelope, DevicePrincipal principal);
     InteractionResponse getInteraction(UUID id, AccountPrincipal principal);

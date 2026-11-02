@@ -15,17 +15,21 @@ import java.util.zip.ZipInputStream;
 public class SavedMapImageService {
     private final MapBundleService bundles;
     private final ObjectMapper json;
+    private final com.mediassistrover.backend.storage.S3ObjectStorageService s3;
     private record Saved(byte[] pgm,ObjectNode metadata) { }
     public record Image(byte[] png,ObjectNode metadata) { }
 
     public Image image(UUID mapId) {
         Saved saved=load(mapId);
-        return new Image(PgmPngRenderer.render(saved.pgm()),saved.metadata());
+        byte[] png=storeImage(mapId,saved.pgm());
+        return new Image(png,saved.metadata());
     }
 
     public ObjectNode metadata(UUID mapId) {
-        ObjectNode meta=load(mapId).metadata();
-        meta.put("image_url","/api/v1/maps/"+mapId+"/image.png");
+        Saved saved=load(mapId);
+        storeImage(mapId,saved.pgm());
+        ObjectNode meta=saved.metadata();
+        meta.put("image_url",s3.publicUrl(imageKey(mapId)));
         meta.put("image_format","png").put("pixel_origin","TOP_LEFT").put("row_order","TOP_TO_BOTTOM");
         meta.put("navigation_reload_safe",bundles.navigationSafe(mapId));
         // Matrix maps image cell-centre indices [u,v,1] into map-frame metres.
@@ -36,6 +40,12 @@ public class SavedMapImageService {
         transform.addArray().add(r*s).add(-r*c).add(meta.path("origin_y_m").asDouble()+r*s*.5+r*c*(h-.5));
         transform.addArray().add(0).add(0).add(1);
         return meta;
+    }
+    private String imageKey(UUID mapId){return "images/maps/"+mapId+".png";}
+    private byte[] storeImage(UUID mapId,byte[] pgm){
+        byte[] png=PgmPngRenderer.render(pgm);String key=imageKey(mapId);
+        s3.put(key,new ByteArrayInputStream(png),png.length,"image/png",MappingArchiveReader.hash(png),true);
+        return png;
     }
 
     private Saved load(UUID mapId) {

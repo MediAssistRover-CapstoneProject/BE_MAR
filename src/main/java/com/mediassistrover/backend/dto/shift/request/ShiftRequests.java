@@ -2,6 +2,7 @@ package com.mediassistrover.backend.dto.shift.request;
 
 import com.mediassistrover.backend.enums.ShiftStatus;
 import com.mediassistrover.backend.enums.SlotStatus;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 
@@ -20,7 +21,7 @@ public final class ShiftRequests {
             @Size(max = 4000) String note
     ) { }
 
-    public record Create(
+    @Schema(name="ShiftCreateRequest") public record Create(
             @NotNull UUID staffProfileId,
             @NotNull UUID roomId,
             @NotBlank @Size(max = 64) @Pattern(regexp = "[A-Z0-9][A-Z0-9_-]*") String shiftCode,
@@ -31,7 +32,7 @@ public final class ShiftRequests {
             @Valid @NotNull List<SlotInput> slots
     ) { }
 
-    public record Update(
+    @Schema(name="ShiftUpdateRequest") public record Update(
             @NotNull UUID staffProfileId,
             @NotNull UUID roomId,
             @NotBlank @Size(max = 100) String shiftName,

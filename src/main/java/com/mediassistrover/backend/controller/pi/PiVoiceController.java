@@ -14,6 +14,12 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.web.multipart.MultipartFile;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Schema;
+import com.mediassistrover.backend.dto.media.response.MediaObjectResponse;
 
 import java.util.UUID;
 
@@ -39,6 +45,15 @@ public class PiVoiceController {
                                 @Valid @RequestBody PiEnvelope<InteractionCompletionPayload> envelope,
                                 @AuthenticationPrincipal DevicePrincipal principal) {
         return service.completeInteraction(interactionId, envelope, principal);
+    }
+
+    @PostMapping(value = "/interactions/{interactionId}/audio", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
+    @Operation(summary = "Upload scoped WAV audio for this robot interaction")
+    public MediaObjectResponse audio(@PathVariable UUID interactionId,
+                                     @Parameter(required=true,schema=@Schema(type="string",format="binary")) @RequestPart("file") MultipartFile file,
+                                     @AuthenticationPrincipal DevicePrincipal principal) {
+        return service.uploadInteractionAudio(interactionId, file, principal);
     }
 
     @PostMapping("/commands")

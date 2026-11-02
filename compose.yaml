@@ -25,6 +25,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      qdrant:
+        condition: service_healthy
     environment:
       DB_URL: jdbc:mysql://mysql:3306/${MYSQL_DATABASE:-backend_robot_v1}
       DB_USERNAME: ${MYSQL_USER:-mediassist}
@@ -34,6 +36,10 @@ services:
       JWT_REFRESH_EXPIRATION_MS: ${JWT_REFRESH_EXPIRATION_MS:-604800000}
       DEVICE_JWT_SECRET: ${DEVICE_JWT_SECRET:?DEVICE_JWT_SECRET is required}
       DEVICE_JWT_EXPIRATION_MS: ${DEVICE_JWT_EXPIRATION_MS:-3600000}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?AWS_ACCESS_KEY_ID is required}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?AWS_SECRET_ACCESS_KEY is required}
+      AWS_REGION: ${AWS_REGION:-ap-southeast-1}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:-mediassistrover-media-2026}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
@@ -62,11 +68,29 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_TTS_VOICE: ${OPENAI_TTS_VOICE:-coral}
       OPENAI_TTS_SPEED: ${OPENAI_TTS_SPEED:-1.0}
-      OPENAI_TTS_MODEL: ${OPENAI_TTS_MODEL:-gpt-4o-mini-tts}
+      OPENAI_TTS_MODEL: ${OPENAI_TTS_MODEL:-gpt-realtime-2.1-mini}
       TTS_CACHE_DIR: /app/data/speech
+      ASSISTANT_ENABLED: ${ASSISTANT_ENABLED:-false}
+      ASSISTANT_PUBLIC_ENABLED: ${ASSISTANT_PUBLIC_ENABLED:-false}
+      ASSISTANT_VOICE_ACTIONS_ENABLED: ${ASSISTANT_VOICE_ACTIONS_ENABLED:-false}
+      ASSISTANT_PI_BRIDGE_ENABLED: ${ASSISTANT_PI_BRIDGE_ENABLED:-false}
+      ASSISTANT_PUBLIC_ROBOT_IDS: ${ASSISTANT_PUBLIC_ROBOT_IDS:-}
+      ASSISTANT_TRUST_FORWARDED_FOR: ${ASSISTANT_TRUST_FORWARDED_FOR:-false}
+      ASSISTANT_PUBLIC_RATE_LIMIT_PER_MINUTE: ${ASSISTANT_PUBLIC_RATE_LIMIT_PER_MINUTE:-30}
+      ASSISTANT_SESSION_TTL_MINUTES: ${ASSISTANT_SESSION_TTL_MINUTES:-30}
+      ASSISTANT_RETENTION_DAYS: ${ASSISTANT_RETENTION_DAYS:-90}
+      OPENAI_RESPONSE_MODEL: ${OPENAI_RESPONSE_MODEL:-gpt-6.1-sol}
+      OPENAI_OCR_MODEL: ${OPENAI_OCR_MODEL:-gpt-6.1-terra}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      OPENAI_TRANSCRIBE_MODEL: ${OPENAI_TRANSCRIBE_MODEL:-gpt-transcribe}
+      OPENAI_REALTIME_TTS_MODEL: ${OPENAI_REALTIME_TTS_MODEL:-gpt-realtime-2.1-mini}
+      QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-mediassist_knowledge}
+      KNOWLEDGE_STORAGE_DIR: /app/data/knowledge
     volumes:
       - map-artifacts:/app/data/map-artifacts
       - speech-cache:/app/data/speech
+      - knowledge-files:/app/data/knowledge
     ports:
       - "${BACKEND_BIND_ADDRESS:-127.0.0.1}:${BACKEND_PORT:-8080}:8080"
 
@@ -82,7 +106,22 @@ services:
       - ./deploy/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ${TLS_CERT_DIR:-./secrets/tls}:/etc/nginx/tls:ro
 
+  qdrant:
+    image: qdrant/qdrant:v1.15.4
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_BIND_ADDRESS:-127.0.0.1}:${QDRANT_PORT:-6333}:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
 volumes:
+  qdrant-data:
+  knowledge-files:
   speech-cache:
   map-artifacts:
   mysql-data:

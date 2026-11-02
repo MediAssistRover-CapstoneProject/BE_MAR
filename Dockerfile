@@ -6,7 +6,9 @@ RUN --mount=type=cache,id=s/7c61045a-bacd-4265-a22e-75000517ebd4-/root/.m2,targe
 
 FROM eclipse-temurin:21-jre
 WORKDIR /app
-RUN useradd --system --uid 10001 appuser && mkdir -p /app/data/map-artifacts /app/data/speech && chown -R appuser:appuser /app/data
+RUN useradd --system --uid 10001 appuser \
+    && mkdir -p /app/data/map-artifacts /app/data/speech /app/data/knowledge \
+    && chown -R appuser:appuser /app/data
 COPY --from=build /workspace/target/backend-*.jar app.jar
 USER appuser
 EXPOSE 8080

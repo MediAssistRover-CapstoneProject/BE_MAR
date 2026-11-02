@@ -49,6 +49,7 @@ public class StaffMeService {
                         profile.getDepartmentCode(),
                         profile.getJobTitle(),
                         profile.getContactExtension(),
+                        profile.getUrl(),
                         profile.isActive(),
                         profile.getCreatedAt(),
                         profile.getUpdatedAt()),
