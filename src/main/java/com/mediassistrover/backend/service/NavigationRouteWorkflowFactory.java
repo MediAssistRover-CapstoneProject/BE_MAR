@@ -7,7 +7,9 @@ import com.mediassistrover.backend.exception.BusinessRuleException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
-import java.util.UUID;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 
 /** Builds trusted sequential MOVE graphs; endpoint identities remain request data. */
 @Component @RequiredArgsConstructor
@@ -17,8 +19,15 @@ public class NavigationRouteWorkflowFactory {
         if(count<1||count>20||!Double.isFinite(speed)||speed<.05||speed>.6)
             throw new BusinessRuleException("Route requires 1..20 endpoints and speed 0.05..0.60 m/s");
         try(var in=new ClassPathResource("static/navigation-move-workflow.json").getInputStream()) {
-            ObjectNode root=(ObjectNode)json.readTree(in),w=(ObjectNode)root.path("workflow"),g=(ObjectNode)root.path("graph");
-            w.put("workflowCode","WF_NAV_ROUTE_"+UUID.randomUUID().toString().replace("-","").toUpperCase())
+            byte[] template=in.readAllBytes();
+            ObjectNode root=(ObjectNode)json.readTree(template),w=(ObjectNode)root.path("workflow"),g=(ObjectNode)root.path("graph");
+            // Endpoint IDs are bound by each request. Identical immutable route
+            // shapes can share a published definition instead of rebuilding it
+            // through many cloud DB writes on every click. Template/version,
+            // stop count and exact speed all participate in the identity.
+            var hash=MessageDigest.getInstance("SHA-256");hash.update(template);
+            hash.update(("route-v2:"+count+":"+Double.toString(speed)).getBytes(StandardCharsets.UTF_8));
+            w.put("workflowCode","WF_NAV_ROUTE_"+HexFormat.of().formatHex(hash.digest()).substring(0,32).toUpperCase())
                 .put("versionNo",1).put("workflowName","Route through "+count+" endpoints")
                 .put("description","Ordered MOVE steps in one navigation session; advance only after confirmed arrival")
                 .put("maxTotalVisits",count).put("maxDurationSec",count*180+60);
@@ -45,7 +54,7 @@ public class NavigationRouteWorkflowFactory {
             }
             g.put("startStepCode","MOVE_01").set("steps",steps);g.set("transitions",edges);
             return json.treeToValue(root,GraphCreateRequest.class);
-        }catch(java.io.IOException e){throw new IllegalStateException("Cannot build navigation route definition",e);}
+        }catch(java.io.IOException|java.security.NoSuchAlgorithmException e){throw new IllegalStateException("Cannot build navigation route definition",e);}
     }
     private ObjectNode edge(String code,String outcome){return json.createObjectNode().put("fromStepCode",code).put("outcome",outcome).put("priority",1).put("defaultTransition",true);}
 }

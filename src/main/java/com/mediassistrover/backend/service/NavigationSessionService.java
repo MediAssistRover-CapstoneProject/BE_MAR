@@ -13,6 +13,8 @@ import jakarta.validation.constraints.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.time.*;
 import java.util.*;
 
@@ -29,6 +31,8 @@ public class NavigationSessionService {
     private final MqttWire wire;
     private final Clock clock;
     private static final List<JobStatus> HELD=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
+    private static final Object ROUTE_READY_RESOURCE=new Object();
+    private record RouteReady(UUID robot,UUID session,UUID map,long revision,UUID transport,UUID producer) { }
     public record Create(@NotNull UUID mapId,@Min(60) @Max(28800) int durationSec) { }
     public record Initialize(@NotNull UUID sessionId,@NotBlank @Pattern(regexp="SEED|GLOBAL") String mode,
                              Double xM,Double yM,Double yawRad) { }
@@ -167,9 +171,35 @@ public class NavigationSessionService {
     }
     public void requireReadyContext(UUID robotId,UUID id,UUID mapId){
         var row=required(robotId,id);var link=links.findById(robotId).orElse(null);Instant now=Instant.now(clock);
+        boolean checkedInThisLockedRouteTransaction=link!=null&&Objects.equals(
+            TransactionSynchronizationManager.getResource(ROUTE_READY_RESOURCE),
+            new RouteReady(robotId,id,mapId,row.getInitializationRevision(),link.getTransportSessionId(),link.getProducerSessionId()));
         if(!row.getMap().getMapId().equals(mapId)||link==null||link.isClosed()||!link.isDispatchReady()
-                ||link.getLastHeartbeatAt()==null||!link.getLastHeartbeatAt().isAfter(now.minusSeconds(5))||!localized(robotId,link))
+                ||!checkedInThisLockedRouteTransaction&&(link.getLastHeartbeatAt()==null
+                ||!link.getLastHeartbeatAt().isAfter(now.minusSeconds(5))||!localized(robotId,link)))
             throw new BusinessRuleException("NAVIGATION_SESSION_NOT_LOCALIZED: wait for a verified fresh robot pose in this map");
+    }
+    /** Route caller already holds Robot FOR UPDATE until transaction completion.
+     * A heartbeat cannot acquire that lock while the graph is being published.
+     * Reuse only this transaction's verified identity/revision, never a global
+     * ready flag. Other requests, closed/expired sessions and changed identities
+     * still require new evidence; Pi verifies live sensors before physical MOVE.
+     */
+    public void pinReadyContextForLockedRoute(UUID robotId,UUID id,UUID mapId){
+        requireReadyContext(robotId,id,mapId);
+        if(!TransactionSynchronizationManager.isActualTransactionActive()
+                ||!TransactionSynchronizationManager.isSynchronizationActive())return;
+        var row=required(robotId,id);var link=links.findById(robotId).orElseThrow();
+        var proof=new RouteReady(robotId,id,mapId,row.getInitializationRevision(),link.getTransportSessionId(),link.getProducerSessionId());
+        if(TransactionSynchronizationManager.hasResource(ROUTE_READY_RESOURCE))return;
+        TransactionSynchronizationManager.bindResource(ROUTE_READY_RESOURCE,proof);
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){
+                @Override public void suspend(){TransactionSynchronizationManager.unbindResourceIfPossible(ROUTE_READY_RESOURCE);}
+                @Override public void resume(){TransactionSynchronizationManager.bindResource(ROUTE_READY_RESOURCE,proof);}
+                @Override public void afterCompletion(int status){
+                    TransactionSynchronizationManager.unbindResourceIfPossible(ROUTE_READY_RESOURCE);
+                }
+            });
     }
     public boolean commandMatches(UUID robotId,JsonNode context){var row=current(robotId);
         return row==null?context==null||context.isMissingNode()||context.isNull():matches(row,context)&&context.path("initialization_revision").asLong(-1)==row.getInitializationRevision();}
