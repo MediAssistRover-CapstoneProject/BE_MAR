@@ -142,6 +142,14 @@ class MappingLiveTest {
         controls.send(jobId,new MappingControlService.Request(sid,0.,0.,900));
         assertThat(published.path("linearX").asDouble()).isZero();
     }
+    @Test void cloudDelayCannotRejectAnOtherwiseValidZeroVelocityStop() {
+        var request=new MappingControlService.Request(sid,0.,0.,400,UUID.randomUUID(),1L,now.minusSeconds(10));
+        assertThatCode(()->controls.send(jobId,request)).doesNotThrowAnyException();
+        contracts.live(published);
+        assertThat(published.path("linearX").asDouble()).isZero();
+        when(registry.fresh(link)).thenReturn(false);
+        assertThatThrownBy(()->controls.send(jobId,request)).hasMessageContaining("not ready");
+    }
     @Test void stopSequencePreventsAnOlderHttpMoveArrivingAfterStop() {
         UUID ui=UUID.randomUUID();
         controls.send(jobId,new MappingControlService.Request(sid,0.,0.,600,ui,2L,now));

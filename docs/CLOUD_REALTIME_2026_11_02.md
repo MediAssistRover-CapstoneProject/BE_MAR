@@ -50,3 +50,17 @@ khởi tạo vị trí. Không tái dùng ID phiên đã đóng. Dùng Use-MarCl
 DB cloud ghi nghiệp vụ. Asset map vẫn trong volume laptop. RAG/voice không được
 đưa inference vào MQTT callback, scheduler hay vòng Nav2. Đánh giá AI chi tiết ở
 AI_VOICE/docs/LOCAL_VOICE_READINESS_2026_11_02.md.
+
+## Lưu map khi HTTP chậm
+
+Nút lưu không chờ transient STOP ACK rồi mới gửi event. Nó ngừng renewal cục bộ,
+phát STOP best-effort và gửi MAPPING_SAVE_REQUESTED với eventId/body giữ nguyên khi
+người dùng bấm lại sau timeout. SAVE_MAPPING trên Pi tự dừng, xác nhận odometry
+đứng yên rồi mới ghi/upload map; event receipt không phải xác nhận bánh đã dừng.
+HTTP lưu chờ tối đa 30 giây; HTTP zero STOP 15 giây. Request bắt đầu chuyển động
+vẫn giữ thời hạn ngắn và kiểm tra tuổi lệnh. Zero STOP không bị loại vì timestamp
+UI cũ, nhưng vẫn phải đúng session, heartbeat và sequence.
+
+Khi polling HTTP tạm lỗi, nút lưu dựa vào trạng thái phiên cuối đã biết thay vì
+mất quyền gửi save ngay. BE vẫn kiểm tra workflow/session và idempotency mỗi lần.
+Không tự gửi lại event khi reload; chỉ gửi khi người dùng bấm lưu.
