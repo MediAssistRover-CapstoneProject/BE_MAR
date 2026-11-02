@@ -87,3 +87,7 @@ A negative RETURN_GAMEPAD_TO_NEUTRAL ACK for an unstarted SAVE can now use GET/P
 Pi step_worker.py now allows an exact job/session SAVE to take over from a held joystick, alongside STOP. Existing command validation, acceptance/started acknowledgements and physical stationary confirmation before writing map files remain in place. Foreign sessions and other actions retain the neutral-stick gate.
 
 Validation: three targeted MySQL MappingRuntimeIntegrationTest cases, three save UI tests, and Pi manual-drive/handoff tests passed.
+
+Mapping creation concurrency
+
+Mapping and speech creation now obtain the Robot write lock on the first entity read, instead of loading its version without a lock and then upgrading it. This removes the heartbeat version-change window before pinned-robot selection. Existing IDLE/open-job/session guards remain. Optimistic conflict logs now include entity, identifier and correlation ID for diagnosing any separate conflict; no physical command is retried automatically.
