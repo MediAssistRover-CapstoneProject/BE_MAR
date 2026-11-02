@@ -37,7 +37,7 @@ public class MqttProperties {
     private Set<UUID> robotIds=new HashSet<>();
     private Set<String> enabledStepTypes=new HashSet<>();
     private int commandTtlSec=30;
-    private int retryIntervalSec=3;
+    private int retryIntervalSec=8;
     public boolean manages(UUID robotId) { return enabled && robotIds.contains(robotId); }
     public boolean dispatches(StepType stepType) {
         return enabled && dispatchEnabled && stepType!=null && enabledStepTypes.contains(stepType.name());

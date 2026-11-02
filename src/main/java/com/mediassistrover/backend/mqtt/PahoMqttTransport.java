@@ -72,7 +72,12 @@ public class PahoMqttTransport implements SmartLifecycle {
                 }
                 public void messageArrived(String topic,MqttMessage message) {
                     byte[] bytes=message.getPayload().clone();int qos=message.getQos();boolean retained=message.isRetained();
-                    try {inbound.execute(()->router.getObject().receive(topic,bytes,qos,retained));}
+                    long queuedAt=System.nanoTime();
+                    try {inbound.execute(()->{
+                        long queueMs=(System.nanoTime()-queuedAt)/1_000_000;
+                        if(queueMs>500)log.warn("MQTT inbound queue delay: topic={} queueMs={}",topic,queueMs);
+                        router.getObject().receive(topic,bytes,qos,retained);
+                    });}
                     catch (RejectedExecutionException ex) {log.warn("MQTT inbound queue full; durable event receives no application ACK");}
                 }
             });

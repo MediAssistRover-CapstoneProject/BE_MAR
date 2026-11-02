@@ -57,7 +57,9 @@ public class MqttInboundRouter {
         if ("heartbeat".equals(lane.lane())) {if (!"HEARTBEAT".equals(type)) throw new BusinessRuleException("Heartbeat topic requires HEARTBEAT");heartbeat(e);return;}
         if (Set.of("HEARTBEAT","MAP_PREVIEW").contains(type)) throw new BusinessRuleException("Transient message on durable events topic");
         if ("PROTOCOL_ERROR".equals(type)) {log.warn("Pi protocol error for robot {}: {}",e.robotId(),e.payload().path("errorCode").asText());return;}
+        long timingStart=System.nanoTime();
         var receipt=store.receive(raw,e);
+        long storedAt=System.nanoTime();
         if (receipt.conflict()) {
             processor.protocolConflict(e.robotId());
             var ack="HELLO".equals(type)?wire.helloAck(e.robotId(),e.transportSessionId(),false):wire.eventAck(e.robotId(),e.transportSessionId(),e.messageId(),false);
@@ -65,7 +67,13 @@ public class MqttInboundRouter {
         }
         try {processor.process(receipt.messageId());}
         catch (BusinessRuleException ex) {processor.reject(receipt.messageId(),ex.getMessage());}
+        long processedAt=System.nanoTime();
         publisher.acknowledgement(receipt.messageId(),true); // Receive/process transactions have both committed.
+        long acknowledgedAt=System.nanoTime();
+        if(acknowledgedAt-timingStart>1_000_000_000L)
+            log.warn("MQTT durable timing: type={} robot={} message={} storeMs={} processMs={} ackScheduleMs={}",
+                type,e.robotId(),e.messageId(),(storedAt-timingStart)/1_000_000,
+                (processedAt-storedAt)/1_000_000,(acknowledgedAt-processedAt)/1_000_000);
     }
     private void heartbeat(MqttWire.Envelope envelope) {
         for(int attempt=0;;attempt++) {
