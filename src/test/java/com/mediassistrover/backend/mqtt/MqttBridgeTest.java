@@ -41,7 +41,10 @@ class MqttBridgeTest {
         var props=new MqttProperties();props.setEnabled(true);props.setRobotIds(Set.of(robot));
         var registry=mock(MqttSessionRegistry.class);
         var nav=mock(NavigationProfileService.class);
-        var router=new MqttInboundRouter(props,wire,new MqttContractValidator(),registry,mock(MqttInboxStore.class),mock(MqttInboxProcessor.class),mock(MqttDurablePublisher.class),nav,mock(com.mediassistrover.backend.mapping.MappingControlService.class));
+        var router=new MqttInboundRouter(props,wire,new MqttContractValidator(),registry,mock(MqttInboxStore.class),mock(MqttInboxProcessor.class),mock(MqttDurablePublisher.class),nav,
+mock(com.mediassistrover.backend.mapping.MappingControlService.class),
+mock(NavigationLivePoseService.class));
+
         var presence=wire.object().put("robotId",robot.toString()).put("transportSessionId",session.toString()).put("online",false);
         router.route(MqttTopics.topic(robot,"presence"),wire.bytes(presence),1,true);
         verify(registry).offline(robot,session); // Registry rejects a foreign/old session itself.
