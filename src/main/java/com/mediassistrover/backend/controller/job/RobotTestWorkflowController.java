@@ -21,7 +21,10 @@ public class RobotTestWorkflowController {
     private final RobotTestWorkflowService tests;
     @GetMapping("/api/v1/test-workflows/by-idempotency-key")
     @Operation(summary="Find a previous test job without issuing another command")
-    public RobotTestWorkflowService.Result lookup(@RequestParam String key,@AuthenticationPrincipal AccountPrincipal actor){return tests.lookup(key,actor);}
+    public org.springframework.http.ResponseEntity<RobotTestWorkflowService.Result> lookup(@RequestParam String key,@AuthenticationPrincipal AccountPrincipal actor){
+        var result=tests.lookup(key,actor);
+        return result==null?org.springframework.http.ResponseEntity.noContent().build():org.springframework.http.ResponseEntity.ok(result);
+    }
     @PostMapping("/api/v1/test-workflows/preview")
     @Operation(summary="Preview a basic-step workflow; no robot command or database write")
     public GraphCreateRequest preview(@Valid @RequestBody RobotTestWorkflowService.Create body){return tests.preview(body);}
