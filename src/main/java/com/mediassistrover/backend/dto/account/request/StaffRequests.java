@@ -13,7 +13,8 @@ public final class StaffRequests {
             @NotBlank @Size(max=64) String staffCode,
             @Size(max=64) String departmentCode,
             @Size(max=100) String jobTitle,
-            @Size(max=20) String contactExtension) {}
+            @Size(max=20) String contactExtension,
+            @Size(max=2048) String url) {}
     public record Update(
             @NotBlank @Size(max=160) String fullName,
             @NotBlank @Email @Size(max=254) String email,
@@ -21,5 +22,6 @@ public final class StaffRequests {
             @NotBlank @Size(max=64) String staffCode,
             @Size(max=64) String departmentCode,
             @Size(max=100) String jobTitle,
-            @Size(max=20) String contactExtension) {}
+            @Size(max=20) String contactExtension,
+            @Size(max=2048) String url) {}
 }

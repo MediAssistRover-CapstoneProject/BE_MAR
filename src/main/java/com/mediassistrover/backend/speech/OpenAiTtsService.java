@@ -25,6 +25,7 @@ public class OpenAiTtsService implements AutoCloseable {
     private final Path directory;
     private final URI endpoint;
     private final ObjectMapper json;
+    private final com.mediassistrover.backend.storage.S3ObjectStorageService s3;
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
         .followRedirects(HttpClient.Redirect.NEVER).build();
     private final ThreadPoolExecutor executor = new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,
@@ -39,12 +40,16 @@ public class OpenAiTtsService implements AutoCloseable {
                            @Value("${app.tts.speed:1.0}") double speed,
                            @Value("${app.tts.model:gpt-4o-mini-tts}") String model,
                            @Value("${app.tts.instructions:Speak Vietnamese with a clear Northern Vietnamese accent and a calm adult female tone. Read only the supplied text.}") String instructions,
-                           @Value("${app.tts.cache-dir:./data/speech}") String directory, ObjectMapper json) {
-        this(enabled,key,voice,speed,model,instructions,Path.of(directory),json,URI.create("https://api.openai.com/v1/audio/speech"));
+                           @Value("${app.tts.cache-dir:./data/speech}") String directory, ObjectMapper json,
+                           com.mediassistrover.backend.storage.S3ObjectStorageService s3) {
+        this(enabled,key,voice,speed,model,instructions,Path.of(directory),json,URI.create("https://api.openai.com/v1/audio/speech"),s3);
     }
     OpenAiTtsService(boolean enabled,String key,String voice,double speed,String model,String instructions,Path directory,ObjectMapper json,URI endpoint) {
+        this(enabled,key,voice,speed,model,instructions,directory,json,endpoint,null);
+    }
+    OpenAiTtsService(boolean enabled,String key,String voice,double speed,String model,String instructions,Path directory,ObjectMapper json,URI endpoint,com.mediassistrover.backend.storage.S3ObjectStorageService s3) {
         this.enabled=enabled;this.apiKey=key;this.voice=voice;this.speed=speed;this.directory=directory;
-        this.json=json;this.endpoint=endpoint;this.model=model;this.instructions=instructions;
+        this.json=json;this.endpoint=endpoint;this.model=model;this.instructions=instructions;this.s3=s3;
         if(!Set.of("alloy","ash","ballad","coral","echo","fable","nova","onyx","sage","shimmer","verse","marin","cedar").contains(voice)
                 ||!Double.isFinite(speed)||speed<0.25||speed>4.0||model.isBlank()||instructions.length()>1000)
             throw new IllegalArgumentException("Invalid OpenAI TTS configuration");
@@ -63,6 +68,7 @@ public class OpenAiTtsService implements AutoCloseable {
         String id=sha256(("openai\n"+model+"\n"+voice+"\n"+renderSpeed+"\n"+language+"\n"+instructions+"\n"+text).getBytes(StandardCharsets.UTF_8));
         Path file=directory.resolve(id+".wav");
         try {
+            if(s3!=null)try{byte[] audio=s3.get(cacheKey(id),MAX_BYTES);if(wav(audio))return new Result("READY",null,audio);}catch(com.mediassistrover.backend.exception.ResourceNotFoundException ignored){}
             if(Files.isRegularFile(file)) {
                 if(Files.size(file)>MAX_BYTES)Files.delete(file);
                 else {byte[] audio=Files.readAllBytes(file);if(wav(audio))return new Result("READY",null,audio);Files.delete(file);}
@@ -97,6 +103,7 @@ public class OpenAiTtsService implements AutoCloseable {
         if(response.statusCode()!=200)throw new IOException("TTS_PROVIDER_REJECTED");
         byte[] bytes=response.body();
         if(!wav(bytes))throw new IOException("TTS_INVALID_WAV");
+        if(s3!=null){s3.put(cacheKey(file.getFileName().toString().replaceFirst("\\.wav$","")),new ByteArrayInputStream(bytes),bytes.length,"audio/wav",sha256(bytes),true);return bytes;}
         Files.createDirectories(directory);
         Path temporary=Files.createTempFile(directory,"tts-",".tmp");
         try {Files.write(temporary,bytes);Files.move(temporary,file,StandardCopyOption.REPLACE_EXISTING);}
@@ -104,6 +111,7 @@ public class OpenAiTtsService implements AutoCloseable {
         trimCache();
         return bytes;
     }
+    private String cacheKey(String id){return "audio/"+UUID.nameUUIDFromBytes(id.getBytes(StandardCharsets.UTF_8))+".wav";}
     private void trimCache() throws IOException {
         try(var files=Files.list(directory)) {
             var entries=files.filter(p->p.toString().endsWith(".wav"))

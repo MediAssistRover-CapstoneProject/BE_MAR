@@ -94,6 +94,17 @@ public class OpenApiConfig {
             operation.setSecurity(List.of(new SecurityRequirement().addList(USER_BEARER_SCHEME)));
         }
 
+        if(path.equals("/api/v1/media")||path.equals("/api/v1/media/url")
+                ||path.matches("/api/v1/pi/voice/interactions/\\{[^}]+}/audio")) {
+            ensureSuccessResponse(operation);
+            addError(operation,"401","Unauthorized");
+            addError(operation,"403","Forbidden");
+            addError(operation,"404","ResourceNotFound");
+            addError(operation,"409","Conflict");
+            addError(operation,"413","PayloadTooLarge");
+            addError(operation,"503","StorageUnavailable");
+        }
+
         String patientStaffTag = patientStaffTag(path);
         if (patientStaffTag == null) {
             return;
@@ -230,6 +241,8 @@ public class OpenApiConfig {
         components.addResponses("Conflict", errorResponse("Idempotency conflict or concurrent update"));
         components.addResponses("LegacyExecutionRetired", errorResponse("Legacy schema 2 execution is unavailable for this workflow"));
         components.addResponses("BusinessRuleViolation", errorResponse("Request violates a workflow or domain rule"));
+        components.addResponses("PayloadTooLarge", errorResponse("Uploaded file exceeds the request limit"));
+        components.addResponses("StorageUnavailable", errorResponse("Amazon S3 is temporarily unavailable"));
     }
 
     private void registerClosedEnumContracts(OpenAPI openApi) {

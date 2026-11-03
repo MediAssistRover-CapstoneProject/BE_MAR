@@ -83,7 +83,7 @@ public class MappingArtifactService {
                     .mapName(input.path("map_name").asText()).status(MapStatus.DRAFT).widthM(n.path("width_m").decimalValue()).heightM(n.path("height_m").decimalValue())
                     .resolutionMPerPixel(n.path("resolution_m_per_pixel").decimalValue()).originXM(n.path("origin_x_m").decimalValue()).originYM(n.path("origin_y_m").decimalValue())
                     .originYawRad(n.path("origin_yaw_rad").decimalValue()).frameId(n.path("frame_id").asText()).assetHash(artifact.getAssetHash())
-                    .mapFileUri("/api/v1/pi/mapping-artifacts/"+artifact.getArtifactId()).build());artifact.setMapId(map.getMapId());
+                    .mapFileUri(storage.publicUrl(artifact.getArtifactId())).build());artifact.setMapId(map.getMapId());
         }
         return json.createObjectNode().put("map_id",map.getMapId().toString()).put("artifact_id",artifact.getArtifactId().toString()).put("asset_hash",artifact.getAssetHash()).put("created",created);
     }

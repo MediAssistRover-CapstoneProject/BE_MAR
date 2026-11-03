@@ -53,6 +53,9 @@ public class StaffProfile {
     @Column(name = "contact_extension", length = 20)
     private String contactExtension;
 
+    @Column(name = "url", columnDefinition = "TEXT")
+    private String url;
+
     @Column(name = "is_active", nullable = false)
     @Builder.Default
     private boolean active = true;

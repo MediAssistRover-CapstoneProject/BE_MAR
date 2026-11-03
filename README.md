@@ -27,4 +27,9 @@ Trong `.env`: TTS_ENABLED=true, OPENAI_API_KEY=<key riêng>, OPENAI_TTS_MODEL=gp
 
 Giữ 11 step types. BE xử lý nghiệp vụ; Pi chạy handler robot. MOVE cần map đã nạp và profile ACK. Tạo workflow không tự tạo handler phần cứng mới.
 
+## Amazon S3 media
+
+Cấu hình `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION=ap-southeast-1` và
+`AWS_S3_BUCKET=mediassistrover-media-2026`. Xem `docs/S3_MEDIA.md` để cấu hình IAM, bucket policy và test Swagger.
+
 Lệnh upload Pi, cấu hình HTTPS và script API nằm trong README duy nhất của gói MAR_OpenAI_Final_2026_10_20 trong Downloads. Source BE này đã được sửa; container đang chạy chỉ đổi sau khi recreate.
