@@ -171,7 +171,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          CMD="/usr/local/bin/mar-deploy.sh ${BUCKET} ${GITHUB_SHA}"
+          CMD="bash /usr/local/bin/mar-deploy.sh ${BUCKET} ${GITHUB_SHA}"
+
 
           jq -n --arg command "$CMD" \
             '{commands:[$command]}' > ssm-params.json
