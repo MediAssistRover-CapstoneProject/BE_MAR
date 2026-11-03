@@ -12,7 +12,7 @@
     }
     if(step.kind==='WAIT'){
       const seconds=Number(step.durationSec);
-      if(!Number.isFinite(seconds)||seconds<.1||seconds>300)throw Error('WAIT phải từ 0,1 đến 300 giây.');
+      if(!Number.isFinite(seconds)||seconds<1||seconds>300)throw Error('WAIT phải từ 1 đến 300 giây.');
       return {kind:'WAIT',durationSec:seconds};
     }
     return {kind:step.kind};
@@ -48,7 +48,7 @@
       <small>Trạng thái thành công xác nhận Pi đã phát lệnh; servo hiện không có cảm biến xác nhận cửa đã mở/đóng thực tế.</small>
       <hr><label>Endpoint MOVE<select id="testEndpoint"><option value="">Tải endpoint từ map ở trên</option></select></label>
       <button id="testLoadEndpoints">Lấy endpoint từ map</button><button id="testAddMove">Thêm MOVE</button>
-      <label>WAIT (giây)<input id="testWaitSeconds" type="number" min="0.1" max="300" step="0.1" value="5"></label>
+      <label>WAIT (giây)<input id="testWaitSeconds" type="number" min="1" max="300" step="0.1" value="5"></label>
       <button id="testAddWait">Thêm WAIT</button><button id="testAddOpen">Thêm mở servo</button><button id="testAddClose">Thêm đóng servo</button>
       <button id="testAddConfirm">Thêm chờ xác nhận lấy hàng</button><button id="testClear">Xóa danh sách</button>
       <ol id="testSteps"></ol><button id="testPreview">Xem JSON workflow</button><button id="testRun">Chạy workflow test</button>

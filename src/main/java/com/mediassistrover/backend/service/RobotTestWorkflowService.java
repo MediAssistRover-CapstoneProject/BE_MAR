@@ -25,7 +25,7 @@ import java.time.Instant;
 public class RobotTestWorkflowService {
     public enum Kind { MOVE, WAIT, OPEN_SERVO, CLOSE_SERVO, WAIT_CONFIRM }
     public record TestStep(@NotNull Kind kind, UUID endpointId,
-            @DecimalMin("0.1") @DecimalMax("300") Double durationSec) { }
+            @DecimalMin("1") @DecimalMax("300") Double durationSec) { }
     public record Create(@NotNull UUID robotId,UUID mapId,UUID navigationSessionId,
             @DecimalMin("0.05") @DecimalMax("0.60") Double maxSpeedMps,
             @Pattern(regexp="[A-Za-z0-9_-]{1,64}") String compartmentId,
@@ -61,8 +61,8 @@ public class RobotTestWorkflowService {
             if(step.kind()==Kind.MOVE&&step.endpointId()==null)throw new BusinessRuleException("MOVE requires endpointId");
             if(step.kind()!=Kind.MOVE&&step.endpointId()!=null)throw new BusinessRuleException("Only MOVE accepts endpointId");
             if(step.kind()==Kind.WAIT){
-                if(step.durationSec()==null||!Double.isFinite(step.durationSec())||step.durationSec()<.1||step.durationSec()>300)
-                    throw new BusinessRuleException("WAIT requires durationSec 0.1..300");
+                if(step.durationSec()==null||!Double.isFinite(step.durationSec())||step.durationSec()<1||step.durationSec()>300)
+                    throw new BusinessRuleException("WAIT requires durationSec 1..300");
             }else if(step.durationSec()!=null)throw new BusinessRuleException("Only WAIT accepts durationSec");
         }
     }

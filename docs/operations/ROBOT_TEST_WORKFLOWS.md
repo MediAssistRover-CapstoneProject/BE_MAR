@@ -5,7 +5,7 @@ Use `/mapping.html#robotTestWorkflow` with an ADMIN token. No command is sent on
 Supported items, executed in order in one schema 3 workflow/job:
 
 - `MOVE`: `endpointId` on the selected map; uses the existing READY navigation session and Nav2 path.
-- `WAIT`: `durationSec` between 0.1 and 300; Pi executes WAIT/DURATION.
+- `WAIT`: `durationSec` between 1 and 300; Pi executes WAIT/DURATION.
 - `OPEN_SERVO` / `CLOSE_SERVO`: CONTROL_HARDWARE on `compartmentId` (default `CART_MAIN`).
 - `WAIT_CONFIRM`: BE WAIT/EVENT, timeout 600 seconds; the operator explicitly confirms in the HTML page.
 
