@@ -41,6 +41,7 @@ public class SecurityConfig {
                                 "/v3/api-docs/**",
                                 "/swagger-ui.html",
                                 "/mapping.html",
+                                "/robot-test-workflow.js",
                                 "/map-preview.html",
                                 "/swagger-ui/**",
                                 "/api/v1/auth/login",

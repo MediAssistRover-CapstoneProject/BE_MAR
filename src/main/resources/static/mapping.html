@@ -54,6 +54,7 @@
 </section>
 <section id="mappingAutonomy" class="panel"></section>
 <section id="mapNavigation" class="panel" aria-label="Đặt endpoint và dẫn đường trên map đã lưu"></section>
+<section id="robotTestWorkflow" class="panel" aria-label="Thử workflow WAIT MOVE và servo"></section>
 <section class="panel"><h2>Phát giọng nói</h2><small>Giọng thông báo được tổng hợp bằng AI.</small>
 <p>Dùng Robot ID và token ở trên. Kết thúc nhiệm vụ quét trước khi tạo nhiệm vụ phát loa riêng.</p>
 <label>Workflow phát loa<input id="speechWorkflow" placeholder="Bấm Chuẩn bị workflow để lấy ID"></label>
@@ -1412,5 +1413,9 @@ autoMapping=MappingAutonomy.mount({
   manualStop:()=>jog.stop(),save:requestSaveMap
 });buttons();
 </script>
-<script>SavedMapNavigation.mount({element:document.getElementById('mapNavigation'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,isMappingActive:()=>mapping||jog.active,getSavedMapId:()=>document.getElementById('savedMapId').value});</script>
+<script src="/robot-test-workflow.js"></script>
+<script>
+const savedMapNavigation=SavedMapNavigation.mount({element:document.getElementById('mapNavigation'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,isMappingActive:()=>mapping||jog.active,getSavedMapId:()=>document.getElementById('savedMapId').value});
+RobotTestWorkflow.mount({element:document.getElementById('robotTestWorkflow'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,getNavigation:()=>savedMapNavigation.state,isMappingActive:()=>mapping||jog.active});
+</script>
 </html>
