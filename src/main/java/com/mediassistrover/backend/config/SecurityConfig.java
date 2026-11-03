@@ -41,6 +41,7 @@ public class SecurityConfig {
                                 "/v3/api-docs/**",
                                 "/swagger-ui.html",
                                 "/mapping.html",
+                                "/map-preview.html",
                                 "/swagger-ui/**",
                                 "/api/v1/auth/login",
                                 "/api/v1/auth/refresh",

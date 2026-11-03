@@ -25,6 +25,7 @@ public class MappingLifecycleService {
     private final OrchestrationWorkService wakeups;
     private final ObjectMapper json;
     private final Clock clock;
+    @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager entityManager;
 
     public static boolean mapping(JobStep step) {
         return step!=null && "EXECUTE_SENSING".equals(step.getStepTypeSnapshot())
@@ -82,12 +83,17 @@ public class MappingLifecycleService {
         if(!mapping(step))return;
         MappingSession session=requireBound(step);
         if("START".equals(step.getResolvedInputsJson().path("action").asText())) {
-            session.setPotentiallyOpen(true);session.setState("STARTING");
+            // Commit the server's session authority before publishing START. An
+            // older managed ALLOCATED instance must not undo this transition.
+            if(sessions.markStarting(session.getSessionId(),session.getJobId())!=1)
+                fail("Mapping START transition changed; no command published");
+            entityManager.refresh(session);
         } else if("SAVE".equals(step.getResolvedInputsJson().path("action").asText()))session.setState("SAVING");
     }
     public void completed(JobStep step,JsonNode output,boolean stopped) {
         if(!mapping(step))return;
         MappingSession session=sessions.findByJobId(step.getJobTask().getJob().getJobId()).orElseThrow();
+        entityManager.refresh(session,jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
         if(!stopped)fail("Mapping result requires physicalStopConfirmed=true");
         String action=step.getResolvedInputsJson().path("action").asText();
         if("STOP".equals(action)) {session.setPotentiallyOpen(false);session.setState("STOPPED");session.setClosedAt(Instant.now(clock));}
@@ -149,6 +155,7 @@ public class MappingLifecycleService {
         }
         MappingSession session;
         try{session=sessions.findById(UUID.fromString(reported.path("session_id").asText())).orElse(null);}catch(IllegalArgumentException ex){return false;}
+        if(session!=null)entityManager.refresh(session,jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
         return session!=null && session.getRobotId().equals(robotId) && session.isPotentiallyOpen()
                 && session.getJobId().toString().equalsIgnoreCase(reported.path("job_id").asText());
     }
