@@ -20,6 +20,7 @@ import java.util.*;
 
 @Service @RequiredArgsConstructor @Transactional(readOnly=true)
 public class MonitoringServiceImpl implements MonitoringService {
+    private final com.mediassistrover.backend.storage.MediaReferenceValidator mediaReferences;
     private final DetectionEventRepository detectionRepository;
     private final CrowdDensityRecordRepository crowdRepository;
     private final HeatmapRecordRepository heatmapRepository;
@@ -85,7 +86,7 @@ public class MonitoringServiceImpl implements MonitoringService {
     @Override @Transactional
     public HeatmapResponse createHeatmap(HeatmapCreate r,UUID actorId,RequestMetadata metadata){
         if(!r.periodStart().isBefore(r.periodEnd()))throw new BusinessRuleException("periodStart must be before periodEnd");
-        validateJsonObject(r.gridData(),"gridData"); FacilityMap map=mapRepository.findById(r.mapId()).orElseThrow(()->new ResourceNotFoundException("Map not found: "+r.mapId()));
+        validateJsonObject(r.gridData(),"gridData");mediaReferences.requireImageUrl(r.imageUri(),"imageUri"); FacilityMap map=mapRepository.findById(r.mapId()).orElseThrow(()->new ResourceNotFoundException("Map not found: "+r.mapId()));
         String type=r.heatmapType().trim().toUpperCase(Locale.ROOT);
         var generated=peopleHeatmaps.generate(r,map,type);
         if(heatmapRepository.existsByMapMapIdAndHeatmapTypeIgnoreCaseAndPeriodStartAndPeriodEndAndCellSizeM(r.mapId(),type,r.periodStart(),r.periodEnd(),r.cellSizeM()))throw new ConflictException("Heatmap window already exists");
@@ -133,7 +134,7 @@ public class MonitoringServiceImpl implements MonitoringService {
     private JobStep jobStep(UUID id,Robot robot){if(id==null)return null;JobStep s=jobStepRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("JobStep not found: "+id));Robot assigned=s.getJobTask().getJob().getRobot();if(assigned==null||!assigned.getRobotId().equals(robot.getRobotId()))throw new BusinessRuleException("JobStep is not assigned to this robot");return s;}
     private void validateCoordinates(Object x,Object y){if((x==null)!=(y==null))throw new BusinessRuleException("xM and yM must both be present or both be null");}
     private void validateJsonObject(com.fasterxml.jackson.databind.JsonNode n,String name){if(!n.isObject())throw new BusinessRuleException(name+" must be a JSON object");}
-    private void validateEvidence(String value){if(value!=null&&value.regionMatches(true,0,"data:",0,5))throw new BusinessRuleException("evidenceRef must be a reference, not embedded base64 data");}
+    private void validateEvidence(String value){mediaReferences.validateEvidenceReference(value,"evidenceRef");}
     private void validateWindow(Instant from,Instant to){if(from!=null&&to!=null&&!from.isBefore(to))throw new BusinessRuleException("from must be before to");}
     private AckResponse ack(PiEnvelope<?> e,Robot r,boolean duplicate){return new AckResponse(e.messageId(),e.operationKey(),e.correlationId(),true,duplicate,Instant.now(clock),r.getStatus(),false,false,null);}
 }

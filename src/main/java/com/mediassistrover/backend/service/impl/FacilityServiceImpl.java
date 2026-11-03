@@ -38,6 +38,7 @@ public class FacilityServiceImpl implements FacilityService {
     private final EndpointGroupMemberRepository memberRepository;
     private final AccountRepository accountRepository;
     private final FacilityMapper mapper;
+    private final com.mediassistrover.backend.storage.S3ObjectStorageService s3;
     private final AuditService auditService;
     private final Clock clock;
 
@@ -106,12 +107,14 @@ public class FacilityServiceImpl implements FacilityService {
 
     @Override @Transactional
     public MapResponse createMap(MapRequest r, UUID actorId, RequestMetadata md) {
+        validateMapUrl(r.mapFileUri());
         if (mapRepository.existsByMapCodeIgnoreCaseAndVersionNo(r.mapCode(), r.versionNo())) throw new ConflictException("Map code and version already exist");
         FacilityMap entity=mapper.toEntity(r);entity.setFloor(floor(r.floorId()));entity=mapRepository.save(entity);
         audit(account(actorId),"MAP_CREATED","Map",entity.getMapId(),md);return mapper.toResponse(entity);
     }
     @Override @Transactional
     public MapResponse updateMap(UUID id, MapRequest r, UUID actorId, RequestMetadata md) {
+        validateMapUrl(r.mapFileUri());
         FacilityMap entity=facilityMap(id);
         if(entity.getStatus()!=MapStatus.DRAFT) throw new BusinessRuleException("Only DRAFT map metadata can be updated");
         if((!entity.getMapCode().equalsIgnoreCase(r.mapCode())||entity.getVersionNo()!=r.versionNo())&&mapRepository.existsByMapCodeIgnoreCaseAndVersionNo(r.mapCode(),r.versionNo())) throw new ConflictException("Map code and version already exist");
@@ -205,6 +208,7 @@ public class FacilityServiceImpl implements FacilityService {
     private HospitalInformation hospital(UUID id){return hospitalRepository.findById(id).orElseThrow(()->notFound("HospitalInformation",id));}
     private Floor floor(UUID id){return floorRepository.findById(id).orElseThrow(()->notFound("Floor",id));}
     private FacilityMap facilityMap(UUID id){return mapRepository.findById(id).orElseThrow(()->notFound("Map",id));}
+    private void validateMapUrl(String value){try{String key=s3.keyFromPublicUrl(value,java.util.Set.of("maps"));if(!key.endsWith(".zip")&&!key.endsWith(".tar.gz"))throw new IllegalArgumentException();}catch(IllegalArgumentException e){throw new BusinessRuleException("mapFileUri must be a fixed S3 URL for a .zip or .tar.gz map archive");}}
     private Zone zone(UUID id){return zoneRepository.findById(id).orElseThrow(()->notFound("Zone",id));}
     private Room room(UUID id){return roomRepository.findById(id).orElseThrow(()->notFound("Room",id));}
     private Endpoint endpoint(UUID id){return endpointRepository.findById(id).orElseThrow(()->notFound("Endpoint",id));}

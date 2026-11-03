@@ -34,6 +34,7 @@ public class MapBundleService {
     private final RobotNavigationSessionRepository navigationSessions;
     private final EndpointRepository endpoints;
     private final java.time.Clock clock;
+    private final com.mediassistrover.backend.storage.S3ObjectStorageService s3;
     public record Imported(UUID mapId,String assetHash,String status) { }
     private Path imported(UUID mapId) throws IOException {
         Path p=Path.of(properties.getStorageDir()).toAbsolutePath().normalize().resolve("imports").resolve(mapId.toString());
@@ -59,7 +60,9 @@ public class MapBundleService {
             Path root=imported(map.getMapId());Files.write(root.resolve("map.yaml"),yaml,StandardOpenOption.CREATE_NEW);
             Files.write(root.resolve("map.pgm"),pgm,StandardOpenOption.CREATE_NEW);
         } catch(IOException e){throw new BusinessRuleException("Cannot persist imported map");}
-        map.setMapFileUri("/api/v1/pi/maps/"+map.getMapId()+"/bundle");
+        byte[] archive=sourceZip(map,yaml,pgm,hash);String key="maps/"+map.getMapId()+".zip";
+        s3.put(key,new ByteArrayInputStream(archive),archive.length,"application/zip",MappingArchiveReader.hash(archive),true);
+        map.setMapFileUri(s3.publicUrl(key));
         return new Imported(map.getMapId(),hash,"DRAFT");
     }
     @Transactional(readOnly=true)
@@ -89,6 +92,9 @@ public class MapBundleService {
                 if(!id.equals(receipt.getMapId()))throw new BusinessRuleException("Map artifact is not linked to this map");
                 // The map/temporary-session scope was checked above, including the linked map ID.
                 files=reader.mapFiles(storage.read(artifact,receipt.getArchiveHash()));
+            } else if(uri.startsWith("https://")) {
+                String key;try{key=s3.keyFromPublicUrl(uri,Set.of("maps"));}catch(IllegalArgumentException e){throw new BusinessRuleException("Map URL is outside the configured S3 bucket");}
+                byte[] object=s3.get(key,properties.getMaxArchiveBytes());files=key.endsWith(".tar.gz")?reader.mapFiles(object):zipMapFiles(object);
             } else throw new BusinessRuleException("Map URI is not a supported local asset/import; use the map import API");
             String hash=fingerprint(files.get("map.yaml"),files.get("map.pgm"));
             if(!hash.equalsIgnoreCase(map.getAssetHash()))throw new BusinessRuleException("Map asset hash differs from catalog");
@@ -111,6 +117,8 @@ public class MapBundleService {
             return output.toByteArray();
         } catch(IOException e){throw new BusinessRuleException("Map files are not available");}
     }
+    private byte[] sourceZip(FacilityMap map,byte[] yaml,byte[] pgm,String hash){try{var meta=reader.inspectMap(yaml,pgm);meta.put("map_id",map.getMapId().toString()).put("asset_hash",hash).put("frame_id",map.getFrameId());var output=new ByteArrayOutputStream();try(var zip=new ZipOutputStream(output)){for(var e:Map.of("map.yaml",yaml,"map.pgm",pgm).entrySet()){zip.putNextEntry(new ZipEntry(e.getKey()));zip.write(e.getValue());zip.closeEntry();}zip.putNextEntry(new ZipEntry("metadata.json"));zip.write(json.writeValueAsBytes(meta));zip.closeEntry();}return output.toByteArray();}catch(IOException e){throw new BusinessRuleException("Cannot create imported map archive");}}
+    private Map<String,byte[]> zipMapFiles(byte[] archive){Map<String,byte[]> files=new HashMap<>();try(var zip=new ZipInputStream(new ByteArrayInputStream(archive))){ZipEntry e;while((e=zip.getNextEntry())!=null){if("map.yaml".equals(e.getName()))files.put("map.yaml",reader.readBounded(zip,65536));else if("map.pgm".equals(e.getName()))files.put("map.pgm",reader.readBounded(zip,4_100_000));}}catch(IOException e){throw new BusinessRuleException("Stored map ZIP is invalid");}if(!files.keySet().containsAll(Set.of("map.yaml","map.pgm")))throw new BusinessRuleException("Stored map ZIP is incomplete");return files;}
     private boolean catalogNumber(com.fasterxml.jackson.databind.JsonNode meta,String field,BigDecimal stored,int scale) {
         return meta.path(field).decimalValue().setScale(scale,RoundingMode.HALF_UP).compareTo(stored)==0;
     }

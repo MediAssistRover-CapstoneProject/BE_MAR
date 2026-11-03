@@ -10,4 +10,5 @@ public interface StaffProfileRepository extends JpaRepository<StaffProfile, UUID
     Optional<StaffProfile> findByAccountAccountId(UUID accountId);
     boolean existsByStaffCode(String staffCode);
     boolean existsByStaffCodeIgnoreCase(String staffCode);
+    boolean existsByUrl(String url);
 }

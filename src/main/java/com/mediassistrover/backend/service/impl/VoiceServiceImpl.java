@@ -27,6 +27,13 @@ import java.time.Instant;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.io.InputStream;
+import java.security.MessageDigest;
+import java.util.HexFormat;
+import com.mediassistrover.backend.dto.media.response.MediaObjectResponse;
+import com.mediassistrover.backend.storage.MediaFileValidator;
+import com.mediassistrover.backend.storage.S3ObjectStorageService;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 @RequiredArgsConstructor
@@ -44,6 +51,8 @@ public class VoiceServiceImpl implements VoiceService {
     private final VoiceMapper mapper;
     private final StaffOperationalScopePolicy staffScope;
     private final Clock clock;
+    private final MediaFileValidator mediaValidator;
+    private final S3ObjectStorageService storage;
 
     @Override
     @Transactional
@@ -90,7 +99,8 @@ public class VoiceServiceImpl implements VoiceService {
             throw new BusinessRuleException("endedAt must not be before startedAt");
         }
         validateNotFarFuture(payload.endedAt(), "endedAt");
-        validateReference(payload.audioUri(), "audioUri");
+        String requestedAudio=trimToNull(payload.audioUri());
+        if(requestedAudio!=null)validateAudioUrl(requestedAudio);
         if (payload.status() == VoiceInteractionStatus.COMPLETED &&
                 commandRepository.existsByVoiceInteractionVoiceInteractionIdAndStatus(
                         interactionId, VoiceCommandStatus.RECEIVED)) {
@@ -100,8 +110,17 @@ public class VoiceServiceImpl implements VoiceService {
         interaction.setEndedAt(payload.endedAt());
         interaction.setDetectedIntent(trimToNull(payload.detectedIntent()));
         interaction.setTranscriptSummary(trimToNull(payload.transcriptSummary()));
-        interaction.setAudioUri(trimToNull(payload.audioUri()));
+        if(requestedAudio!=null)interaction.setAudioUri(requestedAudio);
         return ack(envelope, robot, false);
+    }
+
+    @Override @Transactional
+    public MediaObjectResponse uploadInteractionAudio(UUID interactionId,MultipartFile file,DevicePrincipal principal){
+        VoiceInteraction interaction=interaction(interactionId);Robot robot=robot(principal.robotId());
+        if(!robot.getRobotCode().equals(principal.robotCode())||robot.getDeviceTokenVersion()!=principal.tokenVersion()||principal.expiresAt()==null||!principal.expiresAt().isAfter(Instant.now(clock)))throw new AccessDeniedException("Current device session required");
+        ensureRobot(interaction,robot);if(interaction.getStatus()!=VoiceInteractionStatus.ACTIVE)throw new BusinessRuleException("Audio can only be uploaded for an ACTIVE interaction");
+        var valid=mediaValidator.wav(file);String key="audio/"+interactionId+".wav";
+        try{var stored=storage.put(key,file.getInputStream(),valid.sizeBytes(),valid.contentType(),sha256(file),true);interaction.setAudioUri(stored.url());return new MediaObjectResponse(stored.objectKey(),stored.url(),"AUDIO",stored.contentType(),stored.sizeBytes(),stored.sha256());}catch(RuntimeException e){throw e;}catch(Exception e){throw new BusinessRuleException("Uploaded audio cannot be read");}
     }
 
     @Override
@@ -306,6 +325,9 @@ public class VoiceServiceImpl implements VoiceService {
             throw new BusinessRuleException(field + " must be a reference, not embedded data");
         }
     }
+
+    private void validateAudioUrl(String value){try{storage.keyFromPublicUrl(value,Set.of("audio"));}catch(IllegalArgumentException e){throw new BusinessRuleException("audioUri must be a fixed audio URL from the configured S3 bucket");}}
+    private String sha256(MultipartFile file){try(InputStream in=file.getInputStream()){MessageDigest d=MessageDigest.getInstance("SHA-256");byte[] b=new byte[8192];for(int n;(n=in.read(b))>=0;)if(n>0)d.update(b,0,n);return HexFormat.of().formatHex(d.digest());}catch(Exception e){throw new BusinessRuleException("Uploaded audio cannot be hashed");}}
 
     private void validateNotFarFuture(Instant value, String field) {
         if (value.isAfter(Instant.now(clock).plusSeconds(300))) {

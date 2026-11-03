@@ -18,6 +18,7 @@ import java.util.*;
 /** Profile is a BE commissioning decision, not evidence that an external AI model has been deployed. */
 @Service @RequiredArgsConstructor
 public class AiSensingService {
+    private final com.mediassistrover.backend.storage.MediaReferenceValidator mediaReferences;
     public static final Set<String> TYPES=Set.of("CROWD_DENSITY","RESTRICTED_ZONE");
     private final AiProperties properties;
     private final AiSensingProfileRepository profiles;
@@ -96,6 +97,7 @@ public class AiSensingService {
         var row=AiObservation.builder().observationKey(key).robotId(command.getRobotId()).jobStepId(step.getJobStepId()).payloadHash(hash).outputJson(output.deepCopy()).profileSnapshotJson(profile.deepCopy()).storedAt(Instant.now(clock)).build();
         String evidence=output.path("evidence_ref").isNull() || output.path("evidence_ref").isMissingNode()?null:output.path("evidence_ref").asText();
         if(evidence!=null && (evidence.length()>4000 || evidence.regionMatches(true,0,"data:",0,5)))fail("AI evidence must be a bounded reference");
+        mediaReferences.validateEvidenceReference(evidence,"evidence_ref");
         if("CROWD_DENSITY".equals(output.path("sensing_type").asText())) {
             JsonNode count=output.path("metrics").path("count");if(!count.canConvertToInt() || count.asInt()<0)fail("AI person count exceeds database range");
             crowd.saveAndFlush(CrowdDensityRecord.builder().crowdDensityRecordId(id).robot(step.getJobTask().getJob().getRobot()).zone(zone).jobStep(step)
