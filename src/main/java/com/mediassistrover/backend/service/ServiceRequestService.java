@@ -18,6 +18,7 @@ public interface ServiceRequestService {
     EscortResponse createEscort(EscortCreateRequest request,String idempotencyKey,AccountPrincipal actor,RequestMetadata metadata);
     ServiceRequestResponse createOperational(OperationalCreateRequest request,String idempotencyKey,AccountPrincipal actor,RequestMetadata metadata);
     ServiceRequestResponse get(UUID id,AccountPrincipal actor);
+    java.util.Optional<ServiceRequestResponse> findByIdempotencyKey(String key,AccountPrincipal actor);
     Page<ServiceRequestResponse> list(ServiceRequestStatus status,ServiceRequestType requestType,UUID robotId,
                                       Instant from,Instant to,AccountPrincipal actor,Pageable pageable);
     ServiceRequestResponse submit(UUID id,AccountPrincipal actor,RequestMetadata metadata);

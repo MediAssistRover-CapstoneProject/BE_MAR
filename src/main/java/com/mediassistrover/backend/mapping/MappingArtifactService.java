@@ -28,6 +28,8 @@ public class MappingArtifactService {
     private final MappingArtifactStorage storage;
     private final Clock clock;
     private final ObjectMapper json;
+    private final MapPngStorage pngs;
+    private final MappingProperties properties;
     @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager em;
     public record Receipt(boolean stored,UUID artifactId,String assetHash) { }
 
@@ -73,7 +75,7 @@ public class MappingArtifactService {
         if(job.getInputJson().has("floor_id") && !floorId.toString().equalsIgnoreCase(job.getInputJson().path("floor_id").asText()))throw new BusinessRuleException("Artifact floor differs from mapping Job input");
         if(!floor.isActive())throw new BusinessRuleException("Mapping requires an active floor");
         if(job.getMap()!=null && !job.getMap().getFloor().getFloorId().equals(floorId))throw new BusinessRuleException("Artifact floor differs from Job floor");
-        storage.read(artifact.getArtifactId(),artifact.getArchiveHash());boolean created=artifact.getMapId()==null;FacilityMap map;
+        byte[] archive=storage.read(artifact.getArtifactId(),artifact.getArchiveHash());boolean created=artifact.getMapId()==null;FacilityMap map;
         if(!created) {
             map=maps.findById(artifact.getMapId()).orElseThrow();
             if(!map.getFloor().getFloorId().equals(floorId) || !map.getMapName().equals(input.path("map_name").asText()))throw new ConflictException("Committed artifact metadata cannot change");
@@ -83,8 +85,9 @@ public class MappingArtifactService {
                     .mapName(input.path("map_name").asText()).status(MapStatus.DRAFT).widthM(n.path("width_m").decimalValue()).heightM(n.path("height_m").decimalValue())
                     .resolutionMPerPixel(n.path("resolution_m_per_pixel").decimalValue()).originXM(n.path("origin_x_m").decimalValue()).originYM(n.path("origin_y_m").decimalValue())
                     .originYawRad(n.path("origin_yaw_rad").decimalValue()).frameId(n.path("frame_id").asText()).assetHash(artifact.getAssetHash())
-                    .mapFileUri(storage.publicUrl(artifact.getArtifactId())).build());artifact.setMapId(map.getMapId());
+                    .mapFileUri(properties.databaseStorage()?"/api/v1/pi/mapping-artifacts/"+artifact.getArtifactId():storage.publicUrl(artifact.getArtifactId())).build());artifact.setMapId(map.getMapId());
         }
+        pngs.store(map.getMapId(),reader.mapFiles(archive).get("map.pgm"));
         return json.createObjectNode().put("map_id",map.getMapId().toString()).put("artifact_id",artifact.getArtifactId().toString()).put("asset_hash",artifact.getAssetHash()).put("created",created);
     }
     @Transactional(readOnly=true)

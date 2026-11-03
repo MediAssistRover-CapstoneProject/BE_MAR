@@ -7,6 +7,17 @@ import org.springframework.data.repository.query.Param;
 import java.time.Instant;
 import java.util.*;
 public interface JobStepRepository extends JpaRepository<JobStep,UUID> {
+    interface HelloOperation {
+        UUID getJobStepId();
+        String getOperationKey();
+        UUID getJobId();
+        UUID getRobotId();
+    }
+    // HELLO includes historical receipts. Read their identities in one query,
+    // without loading every Step -> JobTask -> Job -> Robot lazy association.
+    @Query("select s.jobStepId as jobStepId,s.operationKey as operationKey,j.jobId as jobId,r.robotId as robotId "
+            +"from JobStep s join s.jobTask t join t.job j left join j.robot r where s.jobStepId in :ids")
+    List<HelloOperation> findHelloOperations(@Param("ids") Collection<UUID> ids);
     @Query("select s.jobTask.job.jobId from JobStep s where s.jobStepId=:id")
     Optional<UUID> findJobId(@Param("id") UUID id);
     @Query("select s from JobStep s join fetch s.step where s.jobTask.job.jobId=:jobId order by s.executionSequenceNo")

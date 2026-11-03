@@ -35,6 +35,7 @@ public class MapBundleService {
     private final EndpointRepository endpoints;
     private final java.time.Clock clock;
     private final com.mediassistrover.backend.storage.S3ObjectStorageService s3;
+    private final MapPngStorage pngs;
     public record Imported(UUID mapId,String assetHash,String status) { }
     private Path imported(UUID mapId) throws IOException {
         Path p=Path.of(properties.getStorageDir()).toAbsolutePath().normalize().resolve("imports").resolve(mapId.toString());
@@ -62,7 +63,8 @@ public class MapBundleService {
         } catch(IOException e){throw new BusinessRuleException("Cannot persist imported map");}
         byte[] archive=sourceZip(map,yaml,pgm,hash);String key="maps/"+map.getMapId()+".zip";
         s3.put(key,new ByteArrayInputStream(archive),archive.length,"application/zip",MappingArchiveReader.hash(archive),true);
-        map.setMapFileUri(s3.publicUrl(key));
+        map.setMapFileUri(properties.databaseStorage()?"/api/v1/pi/maps/"+map.getMapId()+"/bundle":s3.publicUrl(key));
+        pngs.store(map.getMapId(),pgm);
         return new Imported(map.getMapId(),hash,"DRAFT");
     }
     @Transactional(readOnly=true)
@@ -94,7 +96,13 @@ public class MapBundleService {
                 files=reader.mapFiles(storage.read(artifact,receipt.getArchiveHash()));
             } else if(uri.startsWith("https://")) {
                 String key;try{key=s3.keyFromPublicUrl(uri,Set.of("maps"));}catch(IllegalArgumentException e){throw new BusinessRuleException("Map URL is outside the configured S3 bucket");}
-                byte[] object=s3.get(key,properties.getMaxArchiveBytes());files=key.endsWith(".tar.gz")?reader.mapFiles(object):zipMapFiles(object);
+                if(properties.databaseStorage()&&key.equals("maps/"+id+".zip"))files=cloudFiles(id);
+                else if(properties.databaseStorage()&&key.matches("maps/[0-9a-fA-F-]{36}\\.tar\\.gz")){
+                    UUID artifact=UUID.fromString(key.substring(5,key.length()-7));
+                    var receipt=receipts.findById(artifact).orElseThrow(()->new ResourceNotFoundException("Map artifact not found"));
+                    if(!id.equals(receipt.getMapId())||!map.getAssetHash().equals(receipt.getAssetHash()))throw new BusinessRuleException("Map artifact is not linked to this map/hash");
+                    files=reader.mapFiles(storage.read(artifact,receipt.getArchiveHash()));
+                }else{byte[] object=s3.get(key,properties.getMaxArchiveBytes());files=key.endsWith(".tar.gz")?reader.mapFiles(object):zipMapFiles(object);}
             } else throw new BusinessRuleException("Map URI is not a supported local asset/import; use the map import API");
             String hash=fingerprint(files.get("map.yaml"),files.get("map.pgm"));
             if(!hash.equalsIgnoreCase(map.getAssetHash()))throw new BusinessRuleException("Map asset hash differs from catalog");

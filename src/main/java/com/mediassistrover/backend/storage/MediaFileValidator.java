@@ -9,7 +9,7 @@ import java.util.*;
 
 @Component
 public class MediaFileValidator {
-    public static final long IMAGE_MAX=10L*1024*1024,VIDEO_MAX=100L*1024*1024,WAV_MAX=5L*1024*1024;
+    public static final long IMAGE_MAX=20L*1024*1024,VIDEO_MAX=100L*1024*1024,WAV_MAX=5L*1024*1024;
     private static final Map<String,String> EXTENSIONS=Map.of("image/jpeg","jpg","image/png","png","image/webp","webp","video/mp4","mp4","video/webm","webm","video/quicktime","mov","audio/wav","wav");
     private static final Map<String,Set<String>> ACCEPTED=Map.of("image/jpeg",Set.of("jpg","jpeg"),"image/png",Set.of("png"),"image/webp",Set.of("webp"),"video/mp4",Set.of("mp4"),"video/webm",Set.of("webm"),"video/quicktime",Set.of("mov"),"audio/wav",Set.of("wav"));
     public record Validated(String kind,String contentType,String extension,long sizeBytes) { }

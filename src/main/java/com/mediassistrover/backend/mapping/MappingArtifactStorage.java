@@ -45,12 +45,12 @@ public class MappingArtifactStorage {
         finally {if(temporary!=null)try{Files.deleteIfExists(temporary);}catch(IOException ignored){}}
     }
     public byte[] read(UUID artifact,String hash) {
-        if(s3!=null)try{byte[] raw=s3.get(s3Key(artifact),properties.getMaxArchiveBytes());if(!MappingArchiveReader.hash(raw).equals(hash))throw new BusinessRuleException("Stored archive integrity failed");return raw;}catch(com.mediassistrover.backend.exception.ResourceNotFoundException ignored){}
         if(properties.databaseStorage()) {
             byte[] raw=binary.read(archiveKey(artifact,hash),properties.getMaxArchiveBytes());
             if(!MappingArchiveReader.hash(raw).equals(hash))throw new BusinessRuleException("Stored archive integrity failed");
             return raw;
         }
+        if(s3!=null)try{byte[] raw=s3.get(s3Key(artifact),properties.getMaxArchiveBytes());if(!MappingArchiveReader.hash(raw).equals(hash))throw new BusinessRuleException("Stored archive integrity failed");return raw;}catch(com.mediassistrover.backend.exception.ResourceNotFoundException ignored){}
         return readLocal(artifact,hash);
     }
     public String publicUrl(UUID artifact){if(s3==null)throw new BusinessRuleException("S3 storage is unavailable");return s3.publicUrl(s3Key(artifact));}

@@ -23,7 +23,7 @@
         <jjwt.version>0.12.6</jjwt.version>
         <springdoc.version>2.8.13</springdoc.version>
         <shedlock.version>7.10.1</shedlock.version>
-        <aws.sdk.version>2.55.11</aws.sdk.version>
+        <aws.sdk.version>2.57.2</aws.sdk.version>
         <maven.test.skip>true</maven.test.skip>
     </properties>
 

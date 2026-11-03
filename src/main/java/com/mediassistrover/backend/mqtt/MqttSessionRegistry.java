@@ -75,17 +75,21 @@ public class MqttSessionRegistry {
         JsonNode hello=e.payload();
         navigationSessions.hello(e.robotId(),e.producerSessionId(),hello.path("navigationSession"));
         Map<String,JsonNode> journal=new HashMap<>();
+        Set<UUID> journalIds=new HashSet<>();
+        hello.path("states").forEach(state->journalIds.add(UUID.fromString(state.path("jobStepId").asText())));
+        Map<UUID,JobStepRepository.HelloOperation> identities=new HashMap<>();
+        if(!journalIds.isEmpty())steps.findHelloOperations(journalIds).forEach(known->identities.put(known.getJobStepId(),known));
         for (JsonNode state:hello.path("states")) {
             if (journal.put(state.path("operationKey").asText(),state)!=null) throw new BusinessRuleException("Duplicate operation in HELLO journal");
-            JobStep known=steps.findById(UUID.fromString(state.path("jobStepId").asText())).orElse(null);
+            var known=identities.get(UUID.fromString(state.path("jobStepId").asText()));
             // Historical completed receipts may belong to a previous BE database.
             // Keep local deduplication history without blocking a new idle session.
             // Known foreign identities and every unresolved receipt remain blocked.
             if(known==null && Set.of("SUCCEEDED","FAILED","CANCELLED","TIMED_OUT").contains(state.path("status").asText()))
                 continue;
-            if (known==null || !known.getOperationKey().equals(state.path("operationKey").asText())
-                    || !known.getJobTask().getJob().getJobId().equals(UUID.fromString(state.path("jobId").asText()))
-                    || known.getJobTask().getJob().getRobot()==null || !known.getJobTask().getJob().getRobot().getRobotId().equals(e.robotId())) {
+            if (known==null || !Objects.equals(known.getOperationKey(),state.path("operationKey").asText())
+                    || !known.getJobId().equals(UUID.fromString(state.path("jobId").asText()))
+                    || !e.robotId().equals(known.getRobotId())) {
                 reconciled=false;reason="Unknown or foreign operation in HELLO journal";
             }
             if ("RECOVERY_REQUIRED".equals(state.path("status").asText())) {reconciled=false;reason="Pi journal requires recovery";}

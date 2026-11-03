@@ -2,6 +2,7 @@ package com.mediassistrover.backend.storage;
 
 import com.mediassistrover.backend.config.S3Properties;
 import com.mediassistrover.backend.exception.ResourceNotFoundException;
+import com.mediassistrover.backend.exception.ConflictException;
 import com.mediassistrover.backend.exception.StorageUnavailableException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -37,6 +38,29 @@ public class S3ObjectStorageService {
         requireKey(key);
         if(!properties.isEnabled())try(input){byte[] bytes=input.readAllBytes();if(bytes.length!=size)throw new IllegalArgumentException("Object length differs from request");ObjectInfo info=new ObjectInfo(key,publicObject?publicUrl(key):s3Uri(key),contentType,size,sha256);testObjects.put(key,bytes);testMetadata.put(key,info);return info;}catch(Exception e){throw new StorageUnavailableException("Unable to store test object",e);}
         try(input){PutObjectRequest.Builder request=PutObjectRequest.builder().bucket(properties.getBucket()).key(key).contentLength(size).contentType(contentType).metadata(sha256==null?Map.of():Map.of("sha256",sha256));if(publicObject)request.cacheControl("public, max-age=31536000, immutable");client.putObject(request.build(),RequestBody.fromInputStream(input,size));return new ObjectInfo(key,publicObject?publicUrl(key):s3Uri(key),contentType,size,sha256);}catch(S3Exception e){throw unavailable(e);}catch(Exception e){throw new StorageUnavailableException("Unable to upload object to S3",e);}
+    }
+    /** Conditional creation needs object permissions only, including when ListBucket is denied. */
+    public ObjectInfo putIfAbsent(String key,byte[] bytes,String contentType,String sha256,boolean publicObject){
+        requireKey(key);
+        if(!properties.isEnabled())synchronized(testMetadata){
+            if(!testMetadata.containsKey(key))return put(key,new java.io.ByteArrayInputStream(bytes),bytes.length,contentType,sha256,publicObject);
+            return sameObject(head(key,publicObject),bytes.length,contentType,sha256);
+        }
+        try{
+            var request=PutObjectRequest.builder().bucket(properties.getBucket()).key(key).ifNoneMatch("*")
+                .contentType(contentType).contentLength((long)bytes.length).metadata(Map.of("sha256",sha256));
+            if(publicObject)request.cacheControl("public, max-age=31536000, immutable");
+            client.putObject(request.build(),RequestBody.fromBytes(bytes));
+            return new ObjectInfo(key,publicObject?publicUrl(key):s3Uri(key),contentType,bytes.length,sha256);
+        }catch(S3Exception error){
+            if(error.statusCode()==412)return sameObject(head(key,publicObject),bytes.length,contentType,sha256);
+            throw unavailable(error);
+        }
+    }
+    private ObjectInfo sameObject(ObjectInfo existing,long size,String type,String hash){
+        if(existing.sizeBytes()!=size||!type.equals(existing.contentType())||!hash.equals(existing.sha256()))
+            throw new ConflictException("Immutable S3 object differs from the verified map image");
+        return existing;
     }
     public ObjectInfo head(String key,boolean publicObject){requireKey(key);if(!properties.isEnabled()){ObjectInfo i=testMetadata.get(key);if(i==null)throw new ResourceNotFoundException("Media object not found");return new ObjectInfo(key,publicObject?publicUrl(key):s3Uri(key),i.contentType(),i.sizeBytes(),i.sha256());}try{HeadObjectResponse r=client.headObject(HeadObjectRequest.builder().bucket(properties.getBucket()).key(key).build());return new ObjectInfo(key,publicObject?publicUrl(key):s3Uri(key),r.contentType(),r.contentLength(),r.metadata().get("sha256"));}catch(S3Exception e){if(e.statusCode()==404)throw new ResourceNotFoundException("Media object not found");throw unavailable(e);}}
     public ObjectPage list(String prefix,String cursor,int size,boolean publicObjects){

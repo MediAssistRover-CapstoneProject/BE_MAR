@@ -13,6 +13,8 @@ public class S3Config {
         return S3Client.builder()
                 .region(Region.of(properties.getRegion()))
                 .credentialsProvider(DefaultCredentialsProvider.builder().build())
+                .overrideConfiguration(c -> c.apiCallTimeout(java.time.Duration.ofSeconds(20))
+                        .apiCallAttemptTimeout(java.time.Duration.ofSeconds(8)))
                 .build();
     }
 }
