@@ -1,9 +1,12 @@
 package com.mediassistrover.backend.entity;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.mediassistrover.backend.enums.*;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.UuidGenerator;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
@@ -28,5 +31,7 @@ public class EmergencyIncident {
     @Column(name="acknowledged_at") private Instant acknowledgedAt;
     @Column(name="resolved_at") private Instant resolvedAt;
     @Column(name="closed_at") private Instant closedAt;
+    @Column(name="resolution_note",columnDefinition="TEXT") private String resolutionNote;
+    @JdbcTypeCode(SqlTypes.JSON) @Column(name="resolution_evidence_json",columnDefinition="JSON") private JsonNode resolutionEvidenceJson;
     @Version @Column(name="row_version",nullable=false) private long rowVersion;
 }

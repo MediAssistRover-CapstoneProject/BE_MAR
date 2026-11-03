@@ -1,5 +1,6 @@
 package com.mediassistrover.backend.dto.emergency.response;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.mediassistrover.backend.enums.*;
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -11,7 +12,8 @@ public final class EmergencyResponses {
                                    UUID acknowledgedByAccountId,UUID resolvedByAccountId,String incidentType,
                                    EmergencyIncidentSeverity severity,EmergencyIncidentStatus status,String description,
                                    BigDecimal xM,BigDecimal yM,Instant occurredAt,Instant acknowledgedAt,
-                                   Instant resolvedAt,Instant closedAt,long rowVersion) { }
+                                   Instant resolvedAt,Instant closedAt,String sourceEvidenceRef,
+                                   String resolutionNote,JsonNode resolutionEvidence,long rowVersion) { }
     public record SosResponse(IncidentResponse incident,UUID serviceRequestId,UUID alertId,UUID jobId) { }
     public record DeviceIncidentStatusResponse(UUID incidentId,UUID robotId,UUID mapId,UUID endpointId,
             EmergencyIncidentSeverity severity,EmergencyIncidentStatus status,String description,

@@ -47,4 +47,9 @@ Backend IAM policy:
 4. Put an uploaded image URL into staff create/update and verify `GET /api/v1/staff/me`.
 5. Remove business references before ADMIN calls `DELETE /api/v1/media`; referenced objects return `409`.
 
+The frontend media library can call `GET /api/v1/media?size=20`. Filter with
+`mediaType=IMAGE` or `mediaType=VIDEO`; pass the opaque `nextCursor` value to the next request.
+The response contains fixed public URLs plus media type and content type, so the frontend can
+choose an `<img>` or `<video controls>` element without guessing from the URL.
+
 Images are limited to 10 MB, videos to 100 MB and Pi WAV uploads to 5 MB.
