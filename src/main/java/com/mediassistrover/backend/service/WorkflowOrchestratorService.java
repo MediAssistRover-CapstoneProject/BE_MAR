@@ -132,6 +132,11 @@ public class WorkflowOrchestratorService {
         JobTask task=next.getJobTask(); task.setStatus(JobTaskStatus.RUNNING); task.setEndedAt(null);
         if (task.getStartedAt()==null) task.setStartedAt(now);
         event(job,next,"BE_STEP_SELECTED",next.getResolvedInputsJson());
+        // Freeze and enqueue a ready Pi action in this selection transaction.
+        // Publishing still happens only after commit. Missing HELLO/profile
+        // keeps the durable wake-up below; no extra scheduler turn is required
+        // solely to discover the PENDING step we have just selected.
+        if(!executionPolicy.isServer(next,next.getResolvedInputsJson()))mqttDispatch.dispatch(next);
         wakeups.request(job);
         updates.publishEvent(new RuntimeChanged(jobId));
     }

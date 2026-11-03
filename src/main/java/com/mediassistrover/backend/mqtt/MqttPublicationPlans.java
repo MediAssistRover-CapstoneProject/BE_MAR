@@ -87,6 +87,13 @@ public class MqttPublicationPlans {
         return new Publication(id,row.getRobotId(),row.getTransportSessionId(),row.getResponseJson().deepCopy());
     }
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    public void eventAcknowledged(UUID id,UUID sessionId) {
+        // Receipt bookkeeping grants no authority. Session-qualified CAS cannot
+        // mark a receipt moved to another transport, and need not lock Session
+        // in front of the next physical step's business ACK.
+        inbox.markEventAcknowledged(id,sessionId,Instant.now(clock));
+    }
+    @Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public void acknowledged(UUID id,UUID sessionId) {
         RobotMqttInbox initial=inbox.findById(id).orElseThrow();
         RobotMqttSession session=sessions.lock(initial.getRobotId()).orElse(null);

@@ -141,7 +141,8 @@ public class MqttSessionRegistry {
         }
         FacilityMap map=mapId==null || mappingOpen?null:maps.findById(mapId).orElseThrow(()->new BusinessRuleException("Heartbeat map does not exist"));
         RobotNavigationProfile deployed=navigationProfiles.findById(e.robotId()).orElse(null);
-        boolean incompatibleMove=commands.findByRobotIdAndStateIn(e.robotId(),List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED")).stream()
+        var inFlight=commands.findByRobotIdAndStateIn(e.robotId(),List.of("PENDING","PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED"));
+        boolean incompatibleMove=inFlight.stream()
                 .filter(c->c.getSendAttempts()>0 && "MOVE".equals(c.getPayloadJson().path("step").path("stepType").asText()))
                 .anyMatch(c->deployed==null || c.getNavigationProfileHash()==null || !c.getNavigationProfileHash().equals(deployed.getProfileHash())
                         || !deployed.getMapAssetHash().equalsIgnoreCase(p.path("mapAssetHash").asText()));
@@ -187,16 +188,26 @@ public class MqttSessionRegistry {
         }
         if(pose.path("fresh").asBoolean())validateFreshMapPose(pose,map,
                 mappingOpen?p.path("mappingSession").path("session_id").asText():null);
-        if (map!=null && !mappingOpen && active.stream().noneMatch(j->mapping.open(j.getJobId())) && pose.path("fresh").asBoolean() && !locations.existsById(e.messageId())) {
-            JsonNode value=pose.path("value");locations.save(RobotLocationHistory.builder().robotLocationHistoryId(e.messageId()).robot(robot).map(map)
-                    .frameId("map").source("MQTT_HEARTBEAT_MAP_POSE")
-                    .xM(value.path("x_m").decimalValue()).yM(value.path("y_m").decimalValue()).yawRad(value.path("yaw_rad").decimalValue()).fresh(true)
-                    .capturedAt(e.time().minusMillis((long)(pose.path("age_sec").asDouble()*1000))).receivedAt(now).build());
+        if (map!=null && !mappingOpen && active.stream().noneMatch(j->mapping.open(j.getJobId())) && pose.path("fresh").asBoolean()) {
+            // One idempotent INSERT, rather than exists + merge SELECT + INSERT.
+            // All map/session/freshness validation above still precedes storage.
+            JsonNode value=pose.path("value");
+            locations.insertHeartbeat(e.messageId(),robot.getRobotId(),map.getMapId(),value.path("x_m").decimalValue(),
+                value.path("y_m").decimalValue(),value.path("yaw_rad").decimalValue(),
+                e.time().minusMillis((long)(pose.path("age_sec").asDouble()*1000)),now);
         }
         ObjectNode heartbeat=(ObjectNode)p.deepCopy();heartbeat.put("occurredAt",e.occurredAt());session.setHeartbeatJson(heartbeat);session.setLastHeartbeatAt(now);
         if(session.isDispatchReady()&&mappingOpen)for(var job:active)mappingCompletion.observe(job,p.path("mappingSession"),telemetry);
         if (next==RobotStatus.ERROR) session.setDispatchReady(false);
-        for (Job job:active) if (job.isBeOrchestrated() && job.getStatus()!=JobStatus.RECOVERY_REQUIRED) wakeups.request(job);
+        for (Job job:active) if (job.isBeOrchestrated() && job.getStatus()!=JobStatus.RECOVERY_REQUIRED) {
+            var selected=job.getSelectedJobStep();
+            boolean stablePhysical=selected!=null&&(selected.getStatus()==JobStepStatus.RUNNING
+                ||selected.getStatus()==JobStepStatus.PENDING&&inFlight.stream().anyMatch(c->selected.getJobStepId().equals(c.getJobStepId())))
+                &&Set.of("MOVE","CONTROL_HARDWARE","EXECUTE_SENSING","INTERACT").contains(selected.getStepTypeSnapshot());
+            // A heartbeat is health/telemetry, not a request to rewrite the graph
+            // while the same physical action is running. Deadlines remain polled.
+            if(!stablePhysical||job.getCancelRequestedAt()!=null||selected.getInterruptionRequestedAt()!=null)wakeups.request(job);
+        }
         applicationEvents.publishEvent(new com.mediassistrover.backend.service.RobotRealtimeEventStream.Changed(e.robotId()));
         if(context!=null&&fresh(session)&&pose.path("fresh").asBoolean()
                 &&telemetry.path("localization").path("ready").asBoolean())

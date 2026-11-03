@@ -34,12 +34,13 @@ public class JobDispatchServiceImpl implements JobDispatchService {
     @Transactional
     public int dispatchQueuedJobs(int limit) {
         if (limit < 1) return 0;
-        List<Job> queued = jobRepository.findByStatusAndRobotIsNullOrderByPriorityDescQueuedAtAsc(
-                JobStatus.QUEUED, PageRequest.of(0, limit));
+        // Discover queue IDs without locking the shared status index. Lock only
+        // each selected primary row, in dispatch priority order, then recheck.
+        List<UUID> queued = jobRepository.findUnassignedQueuedJobIds(PageRequest.of(0, limit));
         int assigned = 0;
-        for (Job candidate : queued) {
-            Job job=jobRepository.lockById(candidate.getJobId()).orElseThrow();
-            if (job.getStatus()!=JobStatus.QUEUED || job.getRobot()!=null) continue;
+        for (UUID id : queued) {
+            Job job=jobRepository.lockById(id).orElse(null);
+            if (job==null || job.getStatus()!=JobStatus.QUEUED || job.getRobot()!=null) continue;
             Robot robot = chooseRobot(job);
             if (robot == null) continue;
             job.setRobot(robot);

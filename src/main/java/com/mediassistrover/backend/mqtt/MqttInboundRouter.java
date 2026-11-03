@@ -60,7 +60,20 @@ public class MqttInboundRouter {
         if (Set.of("HEARTBEAT","MAP_PREVIEW").contains(type)) throw new BusinessRuleException("Transient message on durable events topic");
         if ("PROTOCOL_ERROR".equals(type)) {log.warn("Pi protocol error for robot {}: {}",e.robotId(),e.payload().path("errorCode").asText());return;}
         long timingStart=System.nanoTime();
-        var receipt=store.receive(raw,e);
+        MqttInboxProcessor.CommittedReceipt committed=null;
+        if(Set.of("COMMAND_ACK","STEP_STARTED").contains(type)) {
+            try {
+                for(int attempt=0;;attempt++) {
+                    try {committed=processor.receiveAndProcess(raw,e);break;}
+                    catch(org.springframework.dao.ConcurrencyFailureException ex) {if(attempt>=2)throw ex;}
+                }
+            }
+            catch(BusinessRuleException ex) {
+                // The combined transaction rolled back. Persist/reject through
+                // the existing durable path, with the same identity and checks.
+            }
+        }
+        var receipt=committed==null?store.receive(raw,e):committed.receipt();
         long storedAt=System.nanoTime();
         if (receipt.conflict()) {
             processor.protocolConflict(e.robotId());
@@ -68,7 +81,7 @@ public class MqttInboundRouter {
             publisher.rejection(e.robotId(),ack);throw new BusinessRuleException("MQTT identity reused with conflicting business content");
         }
         MqttPublicationPlans.Publication acknowledgement;
-        try {acknowledgement=processor.process(receipt.messageId());}
+        try {acknowledgement=committed==null?processor.process(receipt.messageId()):committed.acknowledgement();}
         catch (BusinessRuleException ex) {acknowledgement=processor.reject(receipt.messageId(),ex.getMessage());}
         long processedAt=System.nanoTime();
         // The processing proxy has committed; avoid another DB read of the same receipt/session.
@@ -77,7 +90,7 @@ public class MqttInboundRouter {
         long acknowledgedAt=System.nanoTime();
         if(acknowledgedAt-timingStart>1_000_000_000L)
             log.warn("MQTT durable timing: type={} robot={} message={} storeMs={} processMs={} ackScheduleMs={}",
-                type,e.robotId(),e.messageId(),(storedAt-timingStart)/1_000_000,
+                type+(committed==null?"":"_COMMITTED"),e.robotId(),e.messageId(),(storedAt-timingStart)/1_000_000,
                 (processedAt-storedAt)/1_000_000,(acknowledgedAt-processedAt)/1_000_000);
     }
     private void heartbeat(MqttWire.Envelope envelope) {

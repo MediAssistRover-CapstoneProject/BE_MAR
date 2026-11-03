@@ -9,6 +9,9 @@ import java.util.concurrent.*;
 
 @Service @RequiredArgsConstructor @Slf4j
 public class MqttDurablePublisher {
+    public record CommandQueued(UUID commandId,MqttPublicationPlans.Publication initial) {
+        public CommandQueued(UUID commandId){this(commandId,null);}
+    }
     private final MqttPublicationPlans plans;
     private final PahoMqttTransport transport;
     private final MqttWire wire;
@@ -16,9 +19,18 @@ public class MqttDurablePublisher {
     private final ExecutorService receipts=new ThreadPoolExecutor(2,2,0,TimeUnit.MILLISECONDS,new ArrayBlockingQueue<>(256),
             task->{var thread=new Thread(task,"mar-mqtt-receipt");thread.setDaemon(true);return thread;},new ThreadPoolExecutor.AbortPolicy());
     public void command(UUID id) { afterCommit(()->publishCommand(id)); }
+    @org.springframework.transaction.event.TransactionalEventListener(phase=org.springframework.transaction.event.TransactionPhase.AFTER_COMMIT)
+    public void queued(CommandQueued event){record(()->{
+        if(event.initial()==null)publishCommand(event.commandId());else publishPreparedCommand(event.initial());
+    });}
     private void publishCommand(UUID id) {
         if (!transport.connected()) return;
-        var plan=plans.command(id);if (plan==null) return;contracts.command(plan.payload());
+        var plan=plans.command(id);if (plan==null) return;publishPreparedCommand(plan);
+    }
+    private void publishPreparedCommand(MqttPublicationPlans.Publication plan) {
+        if(!transport.connected() || !java.time.Instant.parse(plan.payload().path("expiresAt").asText()).isAfter(java.time.Instant.now()))return;
+        contracts.command(plan.payload());
+        UUID id=plan.id();
         transport.publish(MqttTopics.topic(plan.robotId(),"commands"),wire.bytes(plan.payload()),1)
                 .thenRun(()->record(()->plans.commandPublished(id,plan.sessionId()))).exceptionally(error->{log.warn("MQTT command {} not confirmed published; durable outbox remains",id);return null;});
     }
@@ -39,7 +51,10 @@ public class MqttDurablePublisher {
         if(!transport.connected())return;
         contracts.response(plan.payload());
         transport.publish(MqttTopics.topic(plan.robotId(),"event-acks"),wire.bytes(plan.payload()),1)
-                .thenRun(()->record(()->plans.acknowledged(plan.id(),plan.sessionId()))).exceptionally(error->{log.warn("MQTT ACK for {} will be retried",plan.id());return null;});
+                .thenRun(()->record(()->{
+                    if("EVENT_ACK".equals(plan.payload().path("messageType").asText()))plans.eventAcknowledged(plan.id(),plan.sessionId());
+                    else plans.acknowledged(plan.id(),plan.sessionId());
+                })).exceptionally(error->{log.warn("MQTT ACK for {} will be retried",plan.id());return null;});
     }
     // Paho completes publish futures on its callback thread. Never run JDBC there:
     // a slow receipt write would also delay inbound ACKs, commands and keepalives.

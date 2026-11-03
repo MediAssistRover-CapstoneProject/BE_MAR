@@ -654,11 +654,12 @@
           }
         }
         // Refetch catalog and pose so stale browser state cannot authorize a MOVE.
-        const [map, point] = await Promise.all([api('/api/v1/maps/' + id), api('/api/v1/endpoints/' + endpoint.endpointId)]);
+        const [map, point, detail, current] = await Promise.all([
+          api('/api/v1/maps/' + id), api('/api/v1/endpoints/' + endpoint.endpointId),
+          requireWorkflow($('navWorkflowId').value), snapshot()]);
         if (map.status !== 'ACTIVE' || map.assetHash?.toLowerCase() !== state.meta.asset_hash.toLowerCase()) throw Error('Map phải ACTIVE và đúng phiên bản đang hiển thị.');
         if (point.mapId !== id || !point.active || !point.accessible || !inside(state.meta, point.xM, point.yM)) throw Error('Endpoint đã đổi map/trạng thái hoặc nằm ngoài map.');
         if (stable([point.xM, point.yM, point.yawRad]) !== stable([endpoint.xM, endpoint.yM, endpoint.yawRad])) throw Error('Endpoint đã thay đổi. Tải lại map/endpoint trước khi chạy.');
-        const detail = await requireWorkflow($('navWorkflowId').value), current = await snapshot();
         if (current.robot.status !== 'IDLE' || !current.dispatchReady || !pose()) throw Error('Robot chưa IDLE/sẵn sàng hoặc chưa có pose định vị mới đúng map và hash.');
         const session=current.navigationSession;
         if(session?.state!=='READY'||session.mapId!==id)throw Error('Phiên map chưa xác minh vị trí.');
@@ -691,15 +692,16 @@
         const id=mapId(),ids=[...state.route],speed=Number($('navRouteSpeed').value);
         if(!ids.length||ids.length>20)throw Error('Tuyến cần 1–20 endpoint.');
         if(!Number.isFinite(speed)||speed<.05||speed>.6)throw Error('Tốc độ tuyến phải 0,05–0,6 m/s.');
-        const map=await api('/api/v1/maps/'+id);
+        const [map,routePoints,current]=await Promise.all([
+          api('/api/v1/maps/'+id),
+          Promise.all([...new Set(ids)].map(endpointId=>api('/api/v1/endpoints/'+endpointId))),snapshot()]);
         if(map.status!=='ACTIVE'||map.assetHash?.toLowerCase()!==state.meta.asset_hash.toLowerCase())throw Error('Map đã đổi; tải lại map.');
-        const routePoints=await Promise.all([...new Set(ids)].map(endpointId=>api('/api/v1/endpoints/'+endpointId)));
         for(const point of routePoints){
           const saved=state.endpoints.find(e=>e.endpointId===point.endpointId);
           if(!saved||point.mapId!==id||!point.active||!point.accessible||!inside(state.meta,point.xM,point.yM))throw Error('Endpoint trong tuyến không hợp lệ.');
           if(stable([point.xM,point.yM,point.yawRad])!==stable([saved.xM,saved.yM,saved.yawRad]))throw Error('Endpoint đã đổi; tải lại map/endpoint.');
         }
-        const current=await snapshot(),session=current.navigationSession;
+        const session=current.navigationSession;
         if(current.robot.status!=='IDLE'||!current.dispatchReady||!pose()||session?.state!=='READY'||session.mapId!==id||state.zoneAck!==true)throw Error('Robot/map/profile chưa sẵn sàng cho tuyến.');
         pending={kind:'ROUTE',key:crypto.randomUUID(),body:{robotId:robotId(),mapId:id,navigationSessionId:session.sessionId,endpointIds:ids,maxSpeedMps:speed,submit:true,note:'Tuyến nhiều endpoint từ trang map'},retryable:true,done:false};
         state.pending=pending;persist();

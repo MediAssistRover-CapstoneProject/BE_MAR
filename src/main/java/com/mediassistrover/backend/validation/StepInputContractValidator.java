@@ -77,7 +77,8 @@ public class StepInputContractValidator {
                 && step.getWorkflow().getSchemaVersion() == 3
                 && step.getStepType() == StepType.CONTROL_HARDWARE
                 && Set.of("UNLOCK", "UNLOCK_COMPARTMENT")
-                .contains(merged.path("action").asText())) {
+                .contains(merged.path("action").asText())
+                && !HardwareCommissioningWorkflow.unlockWithoutGrant(step)) {
 
             if (!merged.has("authorization")) {
                 fail(

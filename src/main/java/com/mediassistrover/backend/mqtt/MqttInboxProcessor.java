@@ -22,6 +22,7 @@ public class MqttInboxProcessor {
     private final MqttJobSafety safety;
     private final MqttWire wire;
     private final Clock clock;
+    private final MqttInboxStore store;
     @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager entityManager;
     @Transactional(isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public MqttPublicationPlans.Publication process(UUID id) {
@@ -37,7 +38,38 @@ public class MqttInboxProcessor {
                 .orElseGet(()->jobs.lockById(scopedJob).orElseThrow(()->new BusinessRuleException("MQTT Job not found")));
         robots.findByIdForUpdate(e.robotId()).orElseThrow();
         RobotMqttSession session=sessions.lock(initial.getRobotId()).orElse(null);
-        RobotMqttInbox row=initial;entityManager.refresh(row,jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+        entityManager.refresh(initial,jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+        return apply(initial,session,job,active,e);
+    }
+    public record CommittedReceipt(MqttInboxStore.Receipt receipt,MqttPublicationPlans.Publication acknowledgement) { }
+    /** Acceptance/start receipts and their state transition commit together before ACK.
+     * Pi retains the event until that ACK, so a rollback/crash is replayable without
+     * a separate insert transaction or re-reading/re-locking every entity twice. */
+    @Transactional(isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public CommittedReceipt receiveAndProcess(com.fasterxml.jackson.databind.node.ObjectNode raw,MqttWire.Envelope e) {
+        if(!Set.of("COMMAND_ACK","STEP_STARTED").contains(e.messageType()))throw new IllegalArgumentException("Unsupported inline receipt");
+        UUID bound=e.jobId();
+        if(bound==null && "COMMAND_ACK".equals(e.messageType())) {
+            var command=commands.findById(UUID.fromString(e.payload().path("commandId").asText())).orElse(null);
+            if(command!=null && "CANCEL_STEP".equals(command.getCommandType()))bound=command.getJobId();
+        }
+        Job job=bound==null?null:jobs.lockById(bound).orElseThrow(()->new BusinessRuleException("MQTT Job not found"));
+        // Runtime events are scoped to this selected operation; only HELLO and
+        // rejection recovery need the robot-wide occupied-job scan.
+        List<Job> active=job==null?List.of():List.of(job);
+        robots.findByIdForUpdate(e.robotId()).orElseThrow();
+        var session=sessions.lock(e.robotId()).orElse(null);
+        var staged=store.stageStart(raw,e,session);var stored=staged.stored();
+        if(staged.freshProcessed()) {
+            // The INSERT and transition share this transaction. Failure rolls
+            // both back; the Pi cannot observe an ACK before proxy commit.
+            runtime.apply(job,e);
+            return new CommittedReceipt(stored.receipt(),acknowledgement(stored.row(),session));
+        }
+        return new CommittedReceipt(stored.receipt(),stored.receipt().conflict()?null:apply(stored.row(),session,job,active,e));
+    }
+    private MqttPublicationPlans.Publication apply(RobotMqttInbox row,RobotMqttSession session,Job job,List<Job> active,MqttWire.Envelope e) {
+        UUID id=row.getMessageId();
         if (!"PENDING".equals(row.getState())) return acknowledgement(row,session);
         if ("HELLO".equals(e.messageType())) {
             if (e.jobId()!=null || e.jobStepId()!=null) throw new BusinessRuleException("HELLO cannot bind a JobStep");
@@ -47,6 +79,8 @@ public class MqttInboxProcessor {
             // Session was already locked above in the shared Job -> Robot -> Session order.
             if(!registry.owned(session)||!e.transportSessionId().equals(session.getTransportSessionId()))
                 throw new MqttSessionUnavailableException("Stale MQTT session");
+            if(!e.producerSessionId().equals(session.getProducerSessionId()))
+                throw new BusinessRuleException("Runtime producer does not match HELLO");
             runtime.apply(job,e);row.setResponseJson(wire.eventAck(e.robotId(),e.transportSessionId(),id,true));
         }
         row.setAccepted(true);row.setState("PROCESSED");row.setProcessedAt(Instant.now(clock));

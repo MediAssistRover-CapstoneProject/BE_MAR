@@ -67,6 +67,129 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
     private ObjectNode result(boolean stopped) {var p=json.createObjectNode().put("stepType",fixture.type.name()).put("status","SUCCEEDED").put("retryable",false).put("physicalStopConfirmed",stopped);p.putNull("errorCode");p.putNull("details");p.set("result",fixture.output(json));return fixture.event(json,"STEP_RESULT",p);}
     private ObjectNode error(String status,Boolean stopped) {var p=json.createObjectNode().put("stepType",fixture.type.name()).put("status",status).put("errorCode","TEST_ERROR").put("errorMessage","test error").put("retryable",false);p.putNull("details");if(stopped!=null)p.put("physicalStopConfirmed",stopped);return fixture.event(json,"STEP_ERROR",p);}
     private Job currentJob() {return jobs.findById(fixture.jobId).orElseThrow();}
+    private void freezeCombinedMoveStart() {
+        // This fixture dispatches without a temporary map session. Supply the
+        // negotiated frozen context here to isolate runtime receipt validation.
+        tx.executeWithoutResult(status->{
+            var command=commands.lock(fixture.commandId).orElseThrow();var payload=(ObjectNode)command.getPayloadJson().deepCopy();
+            payload.put("startMode","ACCEPT_AND_START");
+            payload.putObject("navigationContext").put("session_id",UUID.randomUUID().toString()).put("map_id",fixture.mapId.toString())
+                .put("map_asset_hash","a".repeat(64)).put("initialization_revision",1).put("profile_hash",command.getNavigationProfileHash());
+            command.setPayloadJson(payload);
+        });
+    }
+    private ObjectNode combinedStart() {
+        ObjectNode message=ack(true);var payload=(ObjectNode)message.path("payload");payload.put("status","START_REQUESTED");
+        payload.putObject("start").put("attemptNo",1).put("stepType","MOVE")
+            .set("resolvedInputs",commands.findById(fixture.commandId).orElseThrow().getPayloadJson().path("step").path("params").deepCopy());
+        return message;
+    }
+
+    @Test void primaryJobOwnerCanChangeStatusWhileHeartbeatWaitsForTheSameJob() throws Exception {
+        fixture(StepType.WAIT,null);
+        var owned=new java.util.concurrent.CountDownLatch(1);var changing=new java.util.concurrent.CountDownLatch(1);
+        var pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var owner=pool.submit(()->tx.executeWithoutResult(status->{
+                var job=jobs.lockById(fixture.jobId).orElseThrow();owned.countDown();
+                try {if(!changing.await(3,java.util.concurrent.TimeUnit.SECONDS))throw new IllegalStateException("missing waiter");Thread.sleep(150);}
+                catch(InterruptedException ex){throw new IllegalStateException(ex);}
+                job.setStatus(JobStatus.FAILED);entityManager.flush();
+            }));
+            assertThat(owned.await(3,java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            var heartbeat=pool.submit(()->tx.execute(status->{changing.countDown();return jobs.lockRobotJobs(fixture.robotId,List.of(JobStatus.RUNNING));}));
+            owner.get(5,java.util.concurrent.TimeUnit.SECONDS);
+            assertThat(heartbeat.get(5,java.util.concurrent.TimeUnit.SECONDS)).isEmpty();
+        } finally {pool.shutdownNow();}
+    }
+
+    @Test void acceptanceAndStartUseOneCommittedReceiptAndReplayDoesNotDuplicateState() {
+        fixture(StepType.MOVE,null);dispatch();
+        ObjectNode accepted=ack(true);ObjectNode started=start();
+        receive(accepted);receive(started);
+        var step=steps.findById(fixture.piStepId).orElseThrow();
+        assertThat(step.getStatus()).isEqualTo(JobStepStatus.RUNNING);
+        long count=events.count();receive(accepted);receive(started);
+        assertThat(events.count()).isEqualTo(count);
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.RUNNING);
+    }
+
+    @Test void negotiatedMoveAcceptanceAndStartCommitAtomicallyAndReplayIsIdempotent() {
+        fixture(StepType.MOVE,null);dispatch();freezeCombinedMoveStart();ObjectNode receipt=combinedStart();
+        UUID id=UUID.fromString(receipt.path("messageId").asText());receive(receipt);
+        var step=steps.findById(fixture.piStepId).orElseThrow();
+        assertThat(step.getStatus()).isEqualTo(JobStepStatus.RUNNING);assertThat(step.getStartedAt()).isNotNull();
+        assertThat(commands.findById(fixture.commandId).orElseThrow().getState()).isEqualTo("STARTED");
+        assertThat(inbox.findById(id).orElseThrow().getAccepted()).isTrue();
+        assertThat(events.findById(id).orElseThrow().getNewStatus()).isEqualTo("RUNNING");
+        long count=events.count();receive(receipt);assertThat(events.count()).isEqualTo(count);
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStartedAt()).isEqualTo(step.getStartedAt());
+        receive(result(true));assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.SUCCEEDED);
+    }
+
+    @Test void negotiatedMoveStartWithDifferentParamsRollsBackAcceptanceAndStart() {
+        fixture(StepType.MOVE,null);var command=dispatch();freezeCombinedMoveStart();ObjectNode invalid=combinedStart();
+        ((ObjectNode)invalid.path("payload").path("start").path("resolvedInputs")).put("max_speed_mps",0.1);
+        UUID id=UUID.fromString(invalid.path("messageId").asText());
+        assertThatThrownBy(()->processor.receiveAndProcess(invalid,wire.envelope(invalid))).hasMessageContaining("frozen command params");
+        assertThat(inbox.findById(id)).isEmpty();assertThat(events.findById(id)).isEmpty();
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.PENDING);
+        assertThat(commands.findById(fixture.commandId).orElseThrow().getState()).isEqualTo(command.getState());
+        receive(invalid);assertThat(inbox.findById(id).orElseThrow().getAccepted()).isFalse();
+    }
+
+    @Test void unnegotiatedCombinedMoveMetadataCannotStartTheStep() {
+        fixture(StepType.MOVE,null);dispatch();ObjectNode invalid=combinedStart();
+        assertThatThrownBy(()->processor.receiveAndProcess(invalid,wire.envelope(invalid))).hasMessageContaining("not negotiated");
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.PENDING);
+        assertThat(events.findById(UUID.fromString(invalid.path("messageId").asText()))).isEmpty();
+    }
+
+    @Test void freshCombinedReceiptFromAnotherProducerCannotStartOrCommit() {
+        fixture(StepType.MOVE,null);var command=dispatch();freezeCombinedMoveStart();ObjectNode invalid=combinedStart();
+        invalid.put("producerSessionId",UUID.randomUUID().toString());UUID id=UUID.fromString(invalid.path("messageId").asText());
+        assertThatThrownBy(()->processor.receiveAndProcess(invalid,wire.envelope(invalid))).hasMessageContaining("producer does not match HELLO");
+        assertThat(inbox.findById(id)).isEmpty();assertThat(events.findById(id)).isEmpty();
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.PENDING);
+        assertThat(commands.findById(fixture.commandId).orElseThrow().getState()).isEqualTo(command.getState());
+    }
+
+    @Test void explicitlyMarkedCommissioningUnlockUsesBothPeersPolicyWithoutInventingStaffProof() {
+        fixture(StepType.CONTROL_HARDWARE,null);
+        try {
+            properties.setAllowCommissioningUnlock(true);
+            tx.executeWithoutResult(s->{
+                var step=steps.findById(fixture.piStepId).orElseThrow();
+                step.getStep().getWorkflow().setDefaultInputsJson(json.createObjectNode().put("hardware_test_mode","COMMISSIONING_ONLY"));
+                ((ObjectNode)step.getStep().getParamsJson()).put("action","UNLOCK_COMPARTMENT");
+                ((ObjectNode)step.getResolvedInputsJson()).put("action","UNLOCK_COMPARTMENT");
+            });
+            ObjectNode hi=fixture.hello(json);((ObjectNode)hi.path("payload")).put("unlockPolicy","COMMISSIONING_ONLY");receive(hi);heartbeat();
+            orchestrator.advance(fixture.jobId);var command=commands.findByJobStepId(fixture.piStepId).orElseThrow();fixture.commandId=command.getCommandId();
+            assertThat(command.getPayloadJson().path("step").path("params").has("authorization")).isFalse();
+            assertThat(command.getPayloadJson().has("startMode")).isFalse();
+            publisher.command(fixture.commandId);receive(ack(true));receive(start());
+            var output=json.createObjectNode().put("published",true).put("controller_ack",false).put("verified",false)
+                .put("commanded_state","UNLOCK").put("position_raw",2400).put("ros_servo_id",4)
+                .put("compartment_id","CART_MAIN").put("action","UNLOCK_COMPARTMENT").put("authorization_mode","COMMISSIONING_ONLY");
+            var payload=json.createObjectNode().put("status","SUCCEEDED").put("retryable",false).put("physicalStopConfirmed",true);
+            payload.putNull("errorCode");payload.putNull("details");payload.set("result",output);receive(fixture.event(json,"STEP_RESULT",payload));
+            assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.SUCCEEDED);
+        } finally {properties.setAllowCommissioningUnlock(false);}
+    }
+
+    @Test void negotiatedMovePositiveReceiptMustIncludeItsStartRequest() {
+        fixture(StepType.MOVE,null);dispatch();freezeCombinedMoveStart();ObjectNode invalid=ack(true);
+        assertThatThrownBy(()->processor.receiveAndProcess(invalid,wire.envelope(invalid))).hasMessageContaining("start metadata is required");
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.PENDING);
+    }
+
+    @Test void negotiatedMoveHistoricalReplayDoesNotRequestAnotherStart() {
+        fixture(StepType.MOVE,null);dispatch();freezeCombinedMoveStart();ObjectNode replay=ack(true);
+        var payload=(ObjectNode)replay.path("payload");payload.put("replayed",true).set("result",json.createObjectNode().put("status","ACCEPTED"));
+        receive(replay);assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.PENDING);
+        assertThat(commands.findById(fixture.commandId).orElseThrow().getState()).isEqualTo("ACKNOWLEDGED");
+    }
 
     @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"SUCCEEDED","FAILED","CANCELLED","TIMED_OUT"})
     void historicalUnknownTerminalJournalDoesNotBlockFreshDispatch(String status) {
@@ -194,6 +317,25 @@ class MqttRuntimeIntegrationTest extends MySqlIntegrationTest {
         long generation=work.findById(fixture.jobId).orElseThrow().getRequestedGeneration();long eventCount=events.count();receive(result);
         assertThat(events.count()).isEqualTo(eventCount);assertThat(work.findById(fixture.jobId).orElseThrow().getRequestedGeneration()).isEqualTo(generation);
         assertThat(published).filteredOn(p->result.path("messageId").asText().equals(p.json.path("messageId").asText())).hasSize(2);
+    }
+
+    @Test void stagedAcceptedReceiptRollsBackWithInvalidRuntimeTransition() {
+        fixture(StepType.WAIT,null);dispatch();receive(ack(true));
+        var invalid=start();((ObjectNode)invalid.path("payload").path("resolvedInputs")).put("duration_sec",3);
+        UUID id=UUID.fromString(invalid.path("messageId").asText());
+        assertThatThrownBy(()->processor.receiveAndProcess(invalid,wire.envelope(invalid))).hasMessageContaining("frozen command params");
+        assertThat(inbox.findById(id)).isEmpty();
+        assertThat(events.findById(id)).isEmpty();
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.PENDING);
+        receive(invalid);
+        assertThat(inbox.findById(id).orElseThrow().getAccepted()).isFalse();
+    }
+    @Test void reusedProducerSequenceWithNewMessageIdCannotAuthorizeAnotherStart() {
+        fixture(StepType.WAIT,null);dispatch();var accepted=ack(true);receive(accepted);
+        var conflict=accepted.deepCopy();conflict.put("messageId",UUID.randomUUID().toString());
+        assertThatThrownBy(()->receive(conflict)).hasMessageContaining("conflicting business content");
+        assertThat(inbox.findById(UUID.fromString(conflict.path("messageId").asText()))).isEmpty();
+        assertThat(steps.findById(fixture.piStepId).orElseThrow().getStatus()).isEqualTo(JobStepStatus.PENDING);
     }
 
     @Test void conflictingIdentityIsRejectedAndOriginalReceiptRemainsAccepted() {

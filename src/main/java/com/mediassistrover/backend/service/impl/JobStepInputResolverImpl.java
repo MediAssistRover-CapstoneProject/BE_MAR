@@ -57,7 +57,8 @@ public class JobStepInputResolverImpl implements JobStepInputResolver {
         }
         inputValidator.validateResolved(current.getStep(), resolved);
         if(job.getSchemaVersion()==3 && current.getStep().getStepType()==StepType.CONTROL_HARDWARE
-                && "UNLOCK_COMPARTMENT".equals(resolved.path("action").asText())) {
+                && "UNLOCK_COMPARTMENT".equals(resolved.path("action").asText())
+                && !com.mediassistrover.backend.validation.HardwareCommissioningWorkflow.unlockWithoutGrant(current.getStep())) {
             ObjectNode business=resolved.deepCopy(); business.remove("authorization");
             scopeValidator.validate(current.getStep(),business,job);
             resolved.set("authorization",operationAuthorization.bind(current,resolved.get("authorization")));

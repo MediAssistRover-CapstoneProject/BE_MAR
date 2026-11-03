@@ -45,6 +45,16 @@ class StepInputContractValidatorTest {
         assertThatThrownBy(()->validator.validateTemplate(s)).hasMessageContaining("purpose");
     }
 
+    @Test void explicitCommissioningWorkflowCanTestFixedUnlockWithoutPretendingStaffVerification() throws Exception {
+        Step s=step(StepType.CONTROL_HARDWARE,"{\"action\":\"UNLOCK_COMPARTMENT\",\"compartment_id\":\"CART_MAIN\"}");
+        s.setWorkflow(Workflow.builder().schemaVersion(3).defaultInputsJson(json.createObjectNode().put("hardware_test_mode","COMMISSIONING_ONLY")).build());
+        assertThatCode(()->validator.validateTemplate(s)).doesNotThrowAnyException();
+        assertThat(HardwareCommissioningWorkflow.unlockWithoutGrant(s)).isTrue();
+        ((ObjectNode)s.getInputMappingJson()).put("action","UNLOCK_COMPARTMENT");
+        assertThat(HardwareCommissioningWorkflow.unlockWithoutGrant(s)).isFalse();
+        assertThatThrownBy(()->validator.validateTemplate(s)).hasMessageContaining("authorization");
+    }
+
     static Stream<Arguments> validInputs() {
         return Stream.of(
                 Arguments.of(StepType.MOVE, "{\"map_id\":\"" + ID + "\",\"endpoint_id\":\"" + ID + "\",\"max_speed_mps\":0.8}"),

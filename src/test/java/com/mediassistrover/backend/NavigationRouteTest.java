@@ -48,6 +48,7 @@ class NavigationRouteTest {
         ObjectMapper json=new ObjectMapper();UUID robot=UUID.randomUUID(),map=UUID.randomUUID(),session=UUID.randomUUID(),wf=UUID.randomUUID(),requestId=UUID.randomUUID();
         List<UUID> ids=List.of(UUID.randomUUID(),UUID.randomUUID(),UUID.randomUUID());
         WorkflowService workflows=mock(WorkflowService.class,RETURNS_DEEP_STUBS);
+        WorkflowRepository workflowRows=mock(WorkflowRepository.class);
         ServiceRequestService requests=mock(ServiceRequestService.class);ServiceRequestRepository rows=mock(ServiceRequestRepository.class);
         EndpointRepository endpoints=mock(EndpointRepository.class);RobotRepository robots=mock(RobotRepository.class);
         NavigationSessionService sessions=mock(NavigationSessionService.class);
@@ -55,12 +56,17 @@ class NavigationRouteTest {
         AccountPrincipal actor=AccountPrincipal.fromAccount(account);
         ServiceRequestResponse response=mock(ServiceRequestResponse.class);
         NavigationResponse navigation=mock(NavigationResponse.class);
-        NavigationRouteService service=new NavigationRouteService(new NavigationRouteWorkflowFactory(json),workflows,requests,rows,endpoints,robots,sessions,json,mock(com.mediassistrover.backend.mqtt.MqttRolloutService.class));
+        NavigationRouteService service=new NavigationRouteService(new NavigationRouteWorkflowFactory(json),workflows,workflowRows,requests,rows,endpoints,robots,sessions,json,mock(com.mediassistrover.backend.mqtt.MqttRolloutService.class));
         Fixture() {
             when(robots.findByIdForUpdate(robot)).thenReturn(Optional.of(mock(Robot.class)));
             when(workflows.createGraph(any(),eq(actor.accountId()),isNull()).workflow().workflowId()).thenReturn(wf);
             for(UUID id:ids)when(endpoints.findById(id)).thenReturn(Optional.of(Endpoint.builder().endpointId(id)
                 .map(FacilityMap.builder().mapId(map).build()).active(true).accessible(true).build()));
+            when(endpoints.findAllById(any())).thenAnswer(call->{
+                List<Endpoint> points=new ArrayList<>();
+                for(UUID id:(Iterable<UUID>)call.getArgument(0))endpoints.findById(id).ifPresent(points::add);
+                return points;
+            });
             when(navigation.request()).thenReturn(response);when(response.serviceRequestId()).thenReturn(requestId);
             when(response.status()).thenReturn(ServiceRequestStatus.DRAFT);
             when(requests.createNavigation(any(),eq("route-key"),eq(actor),isNull())).thenReturn(navigation);
@@ -74,6 +80,10 @@ class NavigationRouteTest {
         assertThat(r.workflowId()).isEqualTo(f.wf);assertThat(r.endpointIds()).isEqualTo(f.ids);
         verify(f.workflows).validate(f.wf,f.actor.accountId(),null);verify(f.workflows).publish(f.wf,f.actor.accountId(),null);
         verify(f.requests).submit(f.requestId,f.actor,null);
+        var order=inOrder(f.workflows,f.robots,f.sessions);
+        order.verify(f.workflows).publish(f.wf,f.actor.accountId(),null);
+        order.verify(f.robots).findByIdForUpdate(f.robot);
+        order.verify(f.sessions).pinReadyContextForLockedRoute(f.robot,f.session,f.map);
         var input=org.mockito.ArgumentCaptor.forClass(com.mediassistrover.backend.dto.request.request.ServiceRequestRequests.NavigationCreateRequest.class);
         verify(f.requests).createNavigation(input.capture(),eq("route-key"),eq(f.actor),isNull());
         assertThat(input.getValue().destinationEndpointId()).isEqualTo(f.ids.getLast());
@@ -92,8 +102,27 @@ class NavigationRouteTest {
     }
     @Test void foreignMapEndpointIsRejectedBeforePublishingWorkflow() {
         var f=new Fixture();when(f.endpoints.findById(f.ids.getFirst())).thenReturn(Optional.of(Endpoint.builder()
-            .map(FacilityMap.builder().mapId(UUID.randomUUID()).build()).active(true).accessible(true).build()));
+            .endpointId(f.ids.getFirst()).map(FacilityMap.builder().mapId(UUID.randomUUID()).build()).active(true).accessible(true).build()));
         assertThatThrownBy(()->f.service.create(f.body(true),"route-key",f.actor,null)).hasMessageContaining("selected map");
         verify(f.workflows,never()).createGraph(any(),any(),any());verifyNoInteractions(f.requests);
+    }
+    @Test void publishedTemplateIsReusedButEveryNewRouteStillValidatesItsSessionAndEndpoints(){
+        var f=new Fixture();String code=new NavigationRouteWorkflowFactory(f.json).build(3,.6).workflow().workflowCode();
+        when(f.workflowRows.findFirstByWorkflowCodeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(code,WorkflowStatus.PUBLISHED))
+            .thenReturn(Optional.of(Workflow.builder().workflowId(f.wf).schemaVersion(3).graphVersion(3)
+                .definitionHash("compiled").publishedAt(java.time.Instant.now()).build()));
+        assertThat(f.service.create(f.body(true),"route-key",f.actor,null).workflowId()).isEqualTo(f.wf);
+        verify(f.workflows,never()).createGraph(any(),any(),any());
+        verify(f.workflows,never()).validate(any(),any(),any());
+        verify(f.sessions).pinReadyContextForLockedRoute(f.robot,f.session,f.map);
+        verify(f.endpoints).findAllById(new HashSet<>(f.ids));
+        verify(f.requests).submit(f.requestId,f.actor,null);
+    }
+    @Test void templateIdentityChangesWithStopCountAndSpeedButIsStableForRepeatRoutes(){
+        var factory=new NavigationRouteWorkflowFactory(json);
+        String code=factory.build(3,.4).workflow().workflowCode();
+        assertThat(factory.build(3,.4).workflow().workflowCode()).isEqualTo(code);
+        assertThat(factory.build(4,.4).workflow().workflowCode()).isNotEqualTo(code);
+        assertThat(factory.build(3,.5).workflow().workflowCode()).isNotEqualTo(code);
     }
 }
