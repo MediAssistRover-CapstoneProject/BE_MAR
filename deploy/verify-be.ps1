@@ -1,4 +1,3 @@
-param([switch]$WithRuntime)
 $ErrorActionPreference = 'Stop'
 
 $maven = Get-Command mvn -ErrorAction SilentlyContinue
@@ -9,9 +8,5 @@ if (-not $maven) {
 if (-not $maven) { throw 'Maven was not found on PATH or under .m2/wrapper/dists.' }
 $mavenPath = if ($maven.Source) { $maven.Source } else { $maven.FullName }
 
-if ($WithRuntime) {
-    & $mavenPath verify
-} else {
-    & $mavenPath '-Dtest=MqttBridgeTest,RobotRealtimeSnapshotServiceTest,FacilityMapperCoordinatesTest' test
-}
+& $mavenPath package
 exit $LASTEXITCODE
