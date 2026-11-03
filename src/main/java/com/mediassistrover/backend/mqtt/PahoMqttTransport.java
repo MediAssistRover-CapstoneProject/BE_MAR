@@ -45,7 +45,16 @@ public class PahoMqttTransport implements SmartLifecycle {
     private static char[] chars(String value) {return value==null?null:value.toCharArray();}
     @Override public synchronized void start() {
         if (running || !properties.isEnabled()) return;
-        properties.validateConnection();
+        final SSLSocketFactory socketFactory;
+        try {
+            properties.validateConnection();
+            socketFactory=tls(properties);
+        } catch (IllegalArgumentException ex) {
+            state.disconnected();
+            properties.setEnabled(false);
+            log.error("MQTT disabled because its configuration is invalid; HTTP backend startup will continue: {}",ex.getMessage());
+            return;
+        }
         try {
             client=new MqttAsyncClient(properties.getBrokerUri(),properties.getClientId(),new MemoryPersistence());
             client.setCallback(new MqttCallback() {
@@ -87,7 +96,7 @@ public class PahoMqttTransport implements SmartLifecycle {
             MqttConnectionOptions options=new MqttConnectionOptions();options.setUserName(properties.getUsername());options.setPassword(properties.getPassword().getBytes(StandardCharsets.UTF_8));
             options.setCleanStart(true);options.setSessionExpiryInterval(0L);options.setKeepAliveInterval(10);options.setConnectionTimeout(10);
             options.setAutomaticReconnect(true);options.setAutomaticReconnectDelay(1000,5000);options.setMaximumPacketSize(1_048_576L);
-            options.setSocketFactory(tls(properties));options.setHttpsHostnameVerificationEnabled(true);
+            options.setSocketFactory(socketFactory);options.setHttpsHostnameVerificationEnabled(true);
             running=true;
             if(outboundStarted.compareAndSet(false,true)) outbound.scheduleWithFixedDelay(this::drainPublication,0,10,TimeUnit.MILLISECONDS);
             client.connect(options,null,new MqttActionListener() {
