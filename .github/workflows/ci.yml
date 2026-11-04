@@ -67,6 +67,37 @@ jobs:
 
           echo "BUILD SUCCESS"
 
+      - name: Validate Flyway migration versions
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from collections import defaultdict
+          from pathlib import Path
+          import re
+          import sys
+
+          migration_dir = Path("src/main/resources/db/migration")
+          versions = defaultdict(list)
+
+          for migration in migration_dir.glob("V*__*.sql"):
+              match = re.fullmatch(r"V(.+)__.+\.sql", migration.name)
+              if match:
+                  versions[match.group(1)].append(migration.name)
+
+          duplicates = {
+              version: names
+              for version, names in versions.items()
+              if len(names) > 1
+          }
+
+          if duplicates:
+              for version, names in sorted(duplicates.items()):
+                  print(f"Duplicate Flyway version V{version}: {', '.join(sorted(names))}")
+              sys.exit(1)
+
+          print(f"Validated {len(versions)} unique Flyway migration versions")
+          PY
+
       # ========================================
       # 5. DEBUG GITHUB OIDC SUBJECT
       # ========================================
