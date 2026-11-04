@@ -61,7 +61,7 @@ For multi-stop use `targetMode=ENDPOINT_GROUP`, set `destinationGroupId`, clear 
 
 ## Verification order
 
-1. Railway/MySQL: backup, deploy V35, verify Flyway, map code/version/hash, and confirm both workflows are DRAFT.
+1. Production/MySQL: backup, deploy V35, verify Flyway, map code/version/hash, and confirm both workflows are DRAFT.
 2. EMQX: retain `All Users -> Deny #`; verify the `mar-be` principal has only the required rules and observe eight successful SUBACK codes.
 3. ROS/Gazebo: use the separate WSL handoff, stable preflight, correct map hash, TF, clock, sensors, and ACTIVE Nav2 lifecycle nodes.
 4. Admin: commission endpoints, create ordered endpoint group, validate and publish workflows.
@@ -81,7 +81,7 @@ The verification script builds the application package without compiling or runn
 |---|---|---|
 | Java 21 compile | PASS | 480 source files compiled |
 | EMQX wire ACL runtime | NOT RUN | No broker credentials/connectivity supplied |
-| Railway DB verification | NOT RUN | No production credentials supplied |
+| Production DB verification | NOT RUN | No production credentials supplied |
 | WSL/ROS/Nav2/Gazebo | BLOCKED | WSL is not installed on this machine; adapter sources absent |
 | Robot MOVE/CANCEL/10-minute telemetry | NOT RUN | Requires supervised robot/Gazebo session |
 
