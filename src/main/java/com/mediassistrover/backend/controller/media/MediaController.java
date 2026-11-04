@@ -2,6 +2,7 @@ package com.mediassistrover.backend.controller.media;
 
 import com.mediassistrover.backend.config.OpenApiConfig;
 import com.mediassistrover.backend.dto.media.response.MediaObjectResponse;
+import com.mediassistrover.backend.dto.media.response.MediaListResponse;
 import com.mediassistrover.backend.service.MediaService;
 import io.swagger.v3.oas.annotations.*;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -21,6 +22,8 @@ public class MediaController {
     @PostMapping(consumes=MediaType.MULTIPART_FORM_DATA_VALUE) @ResponseStatus(HttpStatus.CREATED)
     @Operation(summary="Upload an image or video to Amazon S3")
     public MediaObjectResponse upload(@Parameter(required=true,schema=@Schema(type="string",format="binary")) @RequestPart("file") MultipartFile file){return service.upload(file);}
+    @GetMapping @Operation(summary="List uploaded images and videos for the frontend media library")
+    public MediaListResponse list(@RequestParam(required=false) String mediaType,@RequestParam(required=false) @jakarta.validation.constraints.Size(max=2048) String cursor,@RequestParam(defaultValue="20") @jakarta.validation.constraints.Min(1) @jakarta.validation.constraints.Max(100) int size){return service.list(mediaType,cursor,size);}
     @GetMapping("/url") @Operation(summary="Resolve a fixed public URL for an existing media object")
     public MediaObjectResponse url(@RequestParam String objectKey){return service.get(objectKey);}
     @DeleteMapping @ResponseStatus(HttpStatus.NO_CONTENT) @PreAuthorize("hasRole('ADMIN')") @Operation(summary="Delete an unreferenced image or video")

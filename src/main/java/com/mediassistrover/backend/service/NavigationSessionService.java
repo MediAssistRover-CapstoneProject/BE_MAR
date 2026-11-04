@@ -85,13 +85,13 @@ public class NavigationSessionService {
     @Transactional
     public ObjectNode closeDevice(DevicePrincipal device,UUID id){requireDevice(device);return close(device.robotId(),id);}
 
-    /** Pi publishes the actual Nav2 global plan before enabling the MOVE goal. */
+    /** Observation of Pi's validated Nav2 path; this upload never authorizes motion. */
     @Transactional
     public ObjectNode publishPlan(DevicePrincipal device,PlannedPath request){
         requireDevice(device);
         var row=required(device.robotId(),request.sessionId());
         var link=links.findById(device.robotId()).orElse(null);
-        if(!peer(device.robotId(),link)||!localized(device.robotId(),link)
+        if(link==null||link.isClosed()||!peer(device.robotId(),link)
                 ||!row.getMap().getMapId().equals(request.mapId())
                 ||!row.getMapAssetHash().equalsIgnoreCase(request.mapAssetHash())
                 ||row.getInitializationRevision()!=request.initializationRevision())
@@ -123,6 +123,14 @@ public class NavigationSessionService {
                 throw new BusinessRuleException("Navigation plan contains invalid coordinates");
             points.addObject().put("xM",p.xM()).put("yM",p.yM());
         }
+        // One preview per MOVE. A retried upload or local replan must not
+        // rewrite the initial display path or create another UI update.
+        var initial=row.getPlannedPathJson();
+        if(initial!=null&&request.jobId().toString().equals(initial.path("jobId").asText())
+                &&request.jobStepId().toString().equals(initial.path("jobStepId").asText())
+                &&request.sessionId().toString().equals(initial.path("sessionId").asText())
+                &&row.getInitializationRevision()==initial.path("initializationRevision").asLong(-1))
+            return wire.object().put("accepted",true).put("jobStepId",request.jobStepId().toString());
         row.setPlannedPathJson(path);
         updates.publishEvent(new RobotRealtimeEventStream.Changed(device.robotId()));
         return wire.object().put("accepted",true).put("jobStepId",request.jobStepId().toString());
@@ -130,7 +138,8 @@ public class NavigationSessionService {
 
     @Transactional(readOnly=true)
     public JsonNode currentPlan(UUID robotId,Job active){
-        if(active==null||active.getStatus()!=JobStatus.RUNNING||active.getSelectedJobStep()==null)return null;
+        if(active==null||active.getStatus()!=JobStatus.RUNNING||active.getSelectedJobStep()==null
+                ||active.getSelectedJobStep().getStatus()!=JobStepStatus.RUNNING)return null;
         var row=current(robotId);if(row==null||row.getPlannedPathJson()==null)return null;
         var plan=row.getPlannedPathJson();
         if(!active.getJobId().toString().equals(plan.path("jobId").asText())
@@ -153,6 +162,25 @@ public class NavigationSessionService {
     }
     public boolean matches(RobotNavigationSession row,JsonNode context){return context!=null&&row.getSessionId().toString().equals(context.path("session_id").asText())
             &&row.getMap().getMapId().toString().equals(context.path("map_id").asText())&&row.getMapAssetHash().equals(context.path("map_asset_hash").asText());}
+    /** Carry authorization on the existing heartbeat, independent of pose freshness.
+     * Never return READY here: the Pi's live ROS evidence owns localization.
+     * One row read replaces the separate HTTPS polling of that same context.
+     */
+    @Transactional(readOnly=true)
+    public ObjectNode mqttAuthorization(RobotMqttSession link){
+        if(link.getHelloJson()==null||!link.getHelloJson().hasNonNull("navigationSession"))return null;
+        var context=link.getHelloJson().path("navigationSession");
+        var row=rows.findById(link.getRobotId()).orElse(null);Instant now=Instant.now(clock);
+        var out=wire.object().put("robotId",link.getRobotId().toString()).put("observedAt",now.toString());
+        if(row==null||!matches(row,context)||!Objects.equals(row.getProducerSessionId(),link.getProducerSessionId()))
+            return out.put("sessionId",context.path("session_id").asText()).put("state","CLOSED");
+        out.put("sessionId",row.getSessionId().toString()).put("mapId",row.getMap().getMapId().toString())
+            .put("mapAssetHash",row.getMapAssetHash()).put("expiresAt",row.getExpiresAt().toString())
+            .put("state",!row.open(now)?row.getClosedAt()!=null?"CLOSED":"EXPIRED":"OPEN");
+        out.putObject("initialization").put("mode",row.getInitializationMode()).put("revision",row.getInitializationRevision())
+            .set("pose",row.getInitialPoseJson()==null?wire.object().nullNode():row.getInitialPoseJson());
+        return out;
+    }
     public boolean peer(UUID robotId,RobotMqttSession link){var row=current(robotId);return row!=null&&link!=null
             &&Objects.equals(row.getProducerSessionId(),link.getProducerSessionId())&&matches(row,link.getHelloJson().path("navigationSession"));}
     public boolean localized(UUID robotId,RobotMqttSession link){

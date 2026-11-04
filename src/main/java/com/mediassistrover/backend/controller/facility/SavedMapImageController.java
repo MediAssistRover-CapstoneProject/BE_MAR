@@ -14,6 +14,10 @@ import java.util.UUID;
 @PreAuthorize("hasAnyRole('ADMIN','STAFF')") @Tag(name="Facility Catalog")
 public class SavedMapImageController {
     private final SavedMapImageService images;
+    @PostMapping("/{mapId}/image/sync")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary="Synchronize a verified saved map PNG to S3 without changing its geometry")
+    public com.mediassistrover.backend.mapping.MapPngStorage.Stored sync(@PathVariable UUID mapId){return images.sync(mapId);}
 
     @GetMapping(value="/{mapId}/image.png",produces=MediaType.IMAGE_PNG_VALUE)
     @Operation(summary="View the saved map as PNG",

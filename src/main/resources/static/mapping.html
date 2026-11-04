@@ -54,6 +54,7 @@
 </section>
 <section id="mappingAutonomy" class="panel"></section>
 <section id="mapNavigation" class="panel" aria-label="Đặt endpoint và dẫn đường trên map đã lưu"></section>
+<section id="robotTestWorkflow" class="panel" aria-label="Thử workflow WAIT MOVE và servo"></section>
 <section class="panel"><h2>Phát giọng nói</h2><small>Giọng thông báo được tổng hợp bằng AI.</small>
 <p>Dùng Robot ID và token ở trên. Kết thúc nhiệm vụ quét trước khi tạo nhiệm vụ phát loa riêng.</p>
 <label>Workflow phát loa<input id="speechWorkflow" placeholder="Bấm Chuẩn bị workflow để lấy ID"></label>
@@ -598,6 +599,18 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       ||![pose?.xM,pose?.yM,pose?.yawRad].every(Number.isFinite)||!inside(meta,pose.xM,pose.yM))return null;
     return {pose:{...pose,robotId:sample.robotId,mapId:sample.mapId,frameId:meta.frame_id,capturedAt:sample.capturedAt},ageMs:Math.max(0,age)};
   }
+  function currentNavigationPose(snapshot,meta,snapshotAgeMs,sample,sampleAgeMs){
+    // The UI must not wait for location-history SQL while the authenticated
+    // stream already carries a newer pose in the same localized session.
+    // This selects an observation for UI preflight only: it cannot renew the
+    // heartbeat, change READY/dispatchReady or authorize physical motion.
+    if(snapshot?.mqttConnected&&snapshot.heartbeatFresh&&snapshot.robot?.currentMapId===meta.map_id
+        &&snapshot.robot.mapAssetHash?.toLowerCase()===meta.asset_hash.toLowerCase()){
+      const live=liveNavigationPose(sample,meta,snapshot,sampleAgeMs);
+      if(live)return live.pose;
+    }
+    return freshPose(snapshot,meta,snapshotAgeMs);
+  }
   function workflowContract(detail) {
     const w = detail?.workflow;
     if (!w || !Array.isArray(detail.steps) || !Array.isArray(detail.transitions)) return null;
@@ -637,6 +650,17 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       }
     }}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
   }
+  function recoveredRequestMatches(pending,request){
+    const data=request?.requestDataJson,body=pending?.body;
+    return !!body&&request?.idempotencyKey===pending.key&&request.requestType==='NAVIGATION'
+      &&data?.map_id===body.mapId&&data.navigation_session_id===body.navigationSessionId
+      &&(!body.robotId||request.requestedRobotId===body.robotId);
+  }
+  function closedPendingSession(pending,snapshot){
+    const session=snapshot?.navigationSession;
+    return !!pending?.body?.navigationSessionId&&session?.sessionId===pending.body.navigationSessionId
+      &&['CLOSED','EXPIRED'].includes(session.state)&&!snapshot.activeJobId;
+  }
   function mount(options) {
     const host = options.element;
     host.innerHTML = `
@@ -649,6 +673,8 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       <button id="navNormalize" disabled>Tạo bản map sửa ô xám cho Nav2</button>
       <button id="navAssign" disabled>Mở phiên dùng map tạm cho robot</button>
       <button id="navCloseSession" disabled>Đóng phiên map tạm</button>
+      <button id="navRecheck">Kiểm tra lại phiên và job</button>
+      <small id="navSessionReadiness" role="status"></small>
       <small>Map và endpoint nằm trong thư viện; robot dùng map này trong phiên 2 giờ, ràng buộc với một lần chạy Pi. Đổi nơi test: đóng phiên rồi chọn map khác.</small>
       <pre id="navPiCommand">Mở phiên để lấy lệnh khởi động Pi.</pre>
       <p id="navSessionStatus" role="status">Chưa có phiên định vị.</p>
@@ -765,7 +791,8 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       throw Error('Danh sách quá lớn; chưa tải đủ để thao tác chính xác.');
     }
     function selected() { return state.endpoints.find(e => e.endpointId === $('navEndpoints').value); }
-    function pose() { return state.meta ? freshPose(state.snapshot, state.meta, performance.now() - state.receivedAt) : null; }
+    function pose() { return state.meta ? currentNavigationPose(state.snapshot,state.meta,performance.now()-state.receivedAt,
+      state.livePose?.value,performance.now()-(state.livePose?.at||0)) : null; }
     function controls() {
       const loaded = !!state.meta && $('navMapId').value.trim() === state.meta.map_id;
       const locked = state.busy || !!active();
@@ -778,6 +805,12 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       $('navAssign').disabled ||= !!open || state.meta?.navigation_reload_safe===false;
       $('navNormalize').disabled=!loaded||locked||state.meta?.navigation_reload_safe!==false;
       $('navCloseSession').disabled=locked||!open;
+      $('navRecheck').disabled=state.busy;
+      $('navSessionReadiness').textContent=state.busy?'Đang xử lý yêu cầu trên BE…':active()?
+        'Đang đối chiếu yêu cầu MOVE trước đó. Bấm Kiểm tra lại phiên và job nếu nút mở phiên vẫn khóa.':
+        !loaded?'Tải map để mở phiên.':open?'Phiên đang mở; dùng lệnh Pi bên dưới.':
+        state.meta?.navigation_reload_safe===false?'Map cần sửa ô xám trước khi mở phiên.':
+        state.map?.status!=='ACTIVE'?'Kích hoạt map trước khi mở phiên.':'Có thể mở phiên mới; phiên cũ đã đóng hoặc chưa có phiên.';
       $('navSendSeed').disabled=locked||!open||!state.seed;
       $('navGlobal').disabled=locked||!open;
       for(const id of ['navSeedMode','navSeedX','navSeedY','navSeedYaw'])$(id).disabled=!loaded||locked;
@@ -906,7 +939,7 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
         ctx.lineJoin='round';ctx.lineCap='round';ctx.setLineDash([6,3]);ctx.stroke();ctx.setLineDash([]);
       }
       $('navPlanStatus').textContent=plan
-        ?'Đường Nav2 dự kiến đã được Pi gửi và BE xác nhận trước khi robot bắt đầu MOVE. Nav2 có thể tính lại đường khi gặp vật cản; đường này chỉ là kế hoạch ban đầu.'
+        ?'Đường Nav2 ban đầu, giữ nguyên trong lượt MOVE; vị trí robot cập nhật riêng. Pi vẫn được đổi đường để né vật cản. Đường sẽ ẩn khi lượt kết thúc.'
         :'Chưa có đường Nav2 được xác nhận cho MOVE hiện tại.';
       const radius = Math.max(1.5, .07 / state.meta.resolution_m_per_pixel);
       for (const e of state.endpoints) if (inside(state.meta, e.xM, e.yM)) arrow(e.xM, e.yM, e.yawRad, e.endpointId === selected()?.endpointId ? '#7427bd' : '#157347', e.endpointCode, radius);
@@ -980,8 +1013,8 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       }catch(e){$('navZoneActive').checked=z.active;zoneDraft();throw e;}
     }
     async function loadMap() {
-      if (active() && state.meta) throw Error('Theo dõi/hủy yêu cầu hiện tại trước khi đổi map.');
       const id = $('navMapId').value.trim(); if (!UUID.test(id)) throw Error('Map ID không hợp lệ.');
+      if (active() && state.pending.body.mapId !== id) throw Error('Theo dõi/hủy yêu cầu hiện tại trước khi đổi map.');
       if(state.meta&&state.meta.map_id!==id)state.route=[];
       const generation = ++state.generation; clearTimeout(state.timer);
       state.seed=null;state.dragging=null;state.remembered=null;
@@ -1039,8 +1072,26 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       }
       controls();
     }
-    async function trackRequest() {
-      const p = state.pending; if (!p?.requestId) return;
+    let pendingLookupAt=-Infinity;
+    async function trackRequest(force=false) {
+      const p = state.pending; if (!p || p.done) return;
+      if(!p.requestId){
+        if(!force&&performance.now()-pendingLookupAt<5000)return;
+        pendingLookupAt=performance.now();
+        // Resolve a timed-out POST by its original key, using a read only API.
+        // Never replay an auto-submitted route just to discover its request ID.
+        const recovered=await api('/api/v1/service-requests/by-idempotency-key?key='+encodeURIComponent(p.key));
+        if(p!==state.pending)return;
+        if(!recovered){
+          if(closedPendingSession(p,state.snapshot)){
+            p.done=true;p.retryable=false;persist();controls();
+            say('BE không có yêu cầu này và phiên cũ đã đóng. Đã bỏ trạng thái chờ trên trình duyệt; có thể mở phiên mới.');
+          }else say('BE chưa có request cho yêu cầu trước. Có thể tiếp tục gửi cùng key; chưa tạo yêu cầu mới.');
+          return;
+        }
+        if(!recoveredRequestMatches(p,recovered))throw Error('Yêu cầu theo key khác robot/map/phiên đang theo dõi. Chưa mở khóa.');
+        p.requestId=recovered.serviceRequestId;persist();
+      }
       const [request, jobs] = await Promise.all([api('/api/v1/service-requests/' + p.requestId), pages('/api/v1/jobs?requestId=' + p.requestId)]);
       if (p !== state.pending) return;
       state.request = request;
@@ -1053,7 +1104,7 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
         if(p.body.robotId&&detail.job.robotId&&detail.job.robotId!==p.body.robotId)throw Error('Job khác robot của phiên đã chọn; kiểm tra BE trước khi tiếp tục.');
         if (TERMINAL.has(detail.job.status)) { p.done = true; p.retryable = false; persist(); }
         else if (detail.job.status === 'RECOVERY_REQUIRED') say('Job cần khôi phục. Không tạo thêm MOVE; xem errorCode và bằng chứng dừng trong chi tiết.', true);
-      } else if (['CANCELLED', 'FAILED'].includes(request.status)) { p.done = true; p.retryable = false; persist(); }
+      } else if (['CANCELLED', 'FAILED', 'COMPLETED'].includes(request.status)) { p.done = true; p.retryable = false; persist(); }
       $('navReceipt').textContent = JSON.stringify({request, job: detail?.job ?? null, steps: detail?.steps ?? []}, null, 2);
       if(p.kind==='ROUTE'){
         const rows=(detail?.steps||[]).filter(s=>/^MOVE_\d+$/.test(s.stepCodeSnapshot)).sort((a,b)=>a.stepCodeSnapshot.localeCompare(b.stepCodeSnapshot));
@@ -1076,7 +1127,7 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
           if(controller.signal.aborted||generation!==state.generation||requestedRobot!==robotId())return;
           if(event==='robot-pose'){
             if(value.robotId===requestedRobot&&(!state.livePose||value.transportSessionId!==state.livePose.value.transportSessionId||value.sequenceNo>state.livePose.value.sequenceNo)){
-              state.livePose={value,at:performance.now()};draw();
+              state.livePose={value,at:performance.now()};controls();draw();
             }
             return;
           }
@@ -1095,12 +1146,14 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
         trackRequest().catch(error=>{if(generation===state.generation)$('navReceipt').textContent='Chưa cập nhật kết quả job: '+error.message;})
           .finally(()=>{progressInFlight=false;});
       }
+      let delay=1000;
       try { if(performance.now()-streamLastAt>6000)await snapshot(); }
       catch (error) { if(generation!==state.generation)return;
         $('navRobotStatus').textContent = 'UI chưa nhận trạng thái mới; chưa kết luận mất MQTT: ' + error.message; controls();draw();
-        if (error.status === 401 || error.status === 403) return; }
+        if (error.status === 401 || error.status === 403) {stopRobotStream();delay=5000;
+          say('Token đã hết hạn hoặc không đủ quyền. Đăng nhập/dán token ADMIN mới rồi bấm Kiểm tra lại phiên và job.',true);} }
       draw();controls();
-      if (!state.closed && generation === state.generation) state.timer = setTimeout(() => poll(generation), Math.max(100,1000-(performance.now()-started)));
+      if (!state.closed && generation === state.generation) state.timer = setTimeout(() => poll(generation), Math.max(100,delay-(performance.now()-started)));
     }
     async function template() { if (!state.template) state.template = await api('/navigation-move-workflow.json'); return state.template; }
     async function requireWorkflow(id) {
@@ -1272,6 +1325,12 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
       await api('/api/v1/robots/'+robotId()+'/navigation-session/close',{method:'POST',body:{sessionId:session.sessionId}});
       await snapshot();say('Đã đóng phiên. Dừng terminal navigation; robot.zsh run bình thường vẫn dùng cấu hình quét map ban đầu.');
     });
+    $('navRecheck').onclick=()=>mutate(async()=>{
+      if(!state.meta)await loadMap();
+      await snapshot();await trackRequest(true);
+      clearTimeout(state.timer);state.timer=setTimeout(()=>poll(state.generation),1000);
+      if(!active())say('Đã đối chiếu BE. '+(['CLOSED','EXPIRED','NONE'].includes(state.snapshot?.navigationSession?.state)?'Có thể mở phiên mới.':'Xem trạng thái phiên bên trên.'));
+    });
     function updateSeed(){
       const values=['navSeedX','navSeedY','navSeedYaw'].map(id=>$(id).value.trim());
       const [x,y,yaw]=values.map(Number);state.seed=values.every(Boolean)&&inside(state.meta||{},x,y)&&Number.isFinite(yaw)&&Math.abs(yaw)<=180?{xM:x,yM:y,yawRad:yaw*Math.PI/180}:null;
@@ -1340,7 +1399,7 @@ $('speechStatus').onclick=async()=>{try{$('speechReceipt').textContent=JSON.stri
     controls();
     return {loadMap, state};
   }
-  return {geometry, pixelToMap, mapToPixel, inside, renderSize, viewTransform, freshPose, poseView, liveNavigationPose, plannedPath, workflowContract, templateContract, consumeRobotEvents, mount};
+  return {geometry, pixelToMap, mapToPixel, inside, renderSize, viewTransform, freshPose, poseView, liveNavigationPose, currentNavigationPose, plannedPath, workflowContract, templateContract, consumeRobotEvents, recoveredRequestMatches, closedPendingSession, mount};
 });
 
 </script>
@@ -1354,5 +1413,9 @@ autoMapping=MappingAutonomy.mount({
   manualStop:()=>jog.stop(),save:requestSaveMap
 });buttons();
 </script>
-<script>SavedMapNavigation.mount({element:document.getElementById('mapNavigation'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,isMappingActive:()=>mapping||jog.active,getSavedMapId:()=>document.getElementById('savedMapId').value});</script>
+<script src="/robot-test-workflow.js"></script>
+<script>
+const savedMapNavigation=SavedMapNavigation.mount({element:document.getElementById('mapNavigation'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,isMappingActive:()=>mapping||jog.active,getSavedMapId:()=>document.getElementById('savedMapId').value});
+RobotTestWorkflow.mount({element:document.getElementById('robotTestWorkflow'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,getNavigation:()=>savedMapNavigation.state,isMappingActive:()=>mapping||jog.active});
+</script>
 </html>

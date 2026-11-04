@@ -100,3 +100,27 @@ Pi 0.14.1 và BE thương lượng capability `move-start-commit-v1`. Chỉ MOVE
 Giữ chống chạy lặp khi ACK mất, rollback khi identity/params sai, TTL trước tác động vật lý và bằng chứng dừng khi hủy. Không bỏ localization/TF/odom/LiDAR hoặc xác nhận plan. Pi chỉ dùng AMCL để bootstrap phiên và tiếp tục theo dõi pose; không khởi tạo lại AMCL trước mỗi MOVE.
 
 Kiểm tra MySQL cách ly: ACK gộp và duplicate replay, sai producer rollback, dispatch servo commissioning không giả STAFF_VERIFIED đều qua. Các case trước về metadata thiếu/sai, unsolicited start, replay và legacy cũng qua. Pi có 7 kiểm tra ACK gating/cancel/TTL/outbox/pose qua. Đây là kiểm chứng giao thức; chưa có số đo chuyển động mới sau ACK gộp. Servo chưa cắm nên không phát lệnh thử servo.
+
+## HELLO timeout 15 giây (Pi 0.14.2)
+
+Log 03/11: Pi tới broker TLS thành công khoảng 603 ms, nhưng BE ghi HELLO store/process/ACK tổng 12–15 giây. Worker cũ chỉ chờ HELLO_ACK 10 giây nên tự reconnect; ACK trả muộn thuộc transport cũ bị bỏ qua. Đây là timeout của handshake ứng dụng, không phải bằng chứng DNS/TLS hỏng hoặc hai stack cùng chạy.
+
+Theo mức người vận hành chọn, `hello_timeout_sec=15` được thêm riêng vào `pi/config/mqtt.worker.json` và có default/validation trong worker_config. Transport cho HELLO đủ cửa sổ này sau khi publish; thời gian TCP/TLS trước đó không ăn vào watchdog heartbeat của giai đoạn bắt tay. Deadline HELLO không được kéo dài bởi SERVER_HEARTBEAT. Hết hạn có mã riêng HELLO_ACK_TIMEOUT.
+
+Giữ connect_timeout_sec=10, ack_timeout_sec=15, be_timeout_sec=15, vòng heartbeat và giao thức MOVE một ACK của 0.14.1. Không có thay đổi vận tốc/servo/zone/định vị. 10 kiểm tra cục bộ qua, không phát lệnh chuyển động. Mức 15 giây vẫn có thể hết hạn khi BE chậm hơn các lượt đã đo; chưa khẳng định mọi lần kết nối đều thành công.
+
+Sau lượt 05:07:32 UTC, BE ghi HELLO 1529 + 12886 + 855 = 15270 ms, vượt cửa sổ 15 giây; retry kế tiếp đã có BE MQTT session ready lúc 05:07:49 trên Pi. Người vận hành chọn tăng riêng `hello_timeout_sec` lên **20 giây**. Mặc định và cấu hình Pi cập nhật 20; các timeout kết nối, business ACK và heartbeat giữ như trên. Log BE cùng lượt không ghi reconnect/takeover client ID. Không xem việc tăng timeout là phép đo tốc độ hoặc bảo đảm mạng không bao giờ lỗi.
+
+## Vị trí trực tiếp và giữ giả thuyết định vị trong phiên
+
+Ngày 03/11, quan sát được cùng lúc UI báo READY/LOCALIZED, luồng robot-pose có tuổi khoảng 444 ms nhưng nút MOVE vẫn khóa vì latestPose từ lịch sử SQL quá cũ. UI hiện dùng mẫu robot-pose mới đúng robot/map/hash/session/revision để kiểm tra vị trí trước khi gửi yêu cầu; hết 1,5 giây hoặc sai scope thì loại. Mẫu này không sửa dispatchReady/heartbeat/READY và không thay thế kiểm tra BE/Pi trước tác động vật lý. Cả nút MOVE một điểm và tuyến dùng cùng hàm chọn mẫu.
+
+HELLO đọc danh tính toàn bộ journal bằng một projection SQL, giữ kiểm tra operationKey/job/robot và chặn trạng thái chưa giải quyết. Tránh N+1 tải Step/JobTask/Job/Robot. Sau cài, lượt HELLO 05:41:32 UTC ghi store 963 + process 2241 + ACK 770 = 3974 ms, so với các lượt trước khoảng 15–17 giây; đây là một lượt đo, không phải SLA.
+
+Pi tiếp tục tính định vị và gọi no-motion update AMCL cho map đã khởi tạo khi HTTPS tới BE tạm lỗi. Trong thời gian chưa có authorization hợp lệ vẫn phát ready=false; không gửi initialpose/global reset mới và không cho bánh chạy. Không xóa giả thuyết cục bộ chỉ vì lỗi HTTP. Thay revision/phiên và lỗi scan/TF/odom/map thật vẫn làm mất quyền chạy theo kiểm tra hiện có. Không đóng băng tọa độ robot.
+
+Kiểm tra: 15 ca JS, 4 unit HELLO và 10 lượt tích hợp MySQL cách ly qua, gồm nhiều MOVE tuần tự, terminal/unresolved journal và reconnect. Ba kiểm tra Pi bổ sung qua cho tạm dừng authorization, tiếp tục no-motion update và không bỏ qua lỗi cảm biến thật.
+
+Lượt thật đầu: job d793349a-6c0b-483d-bae5-7d76e48e5121, MOVE_01 SUCCEEDED, vị trí sai số 0,0577 m, góc sai số 0,0533 rad; MOVE_02 chưa chạy khi người vận hành xác nhận Ctrl+C stack. Job được admin đóng CANCELLED sau kiểm tra SSH không còn stack, lệnh thứ hai đã hết TTL và chưa ACK/STARTED, lệnh đầu có physicalStopConfirmed=true. Giữ physicalStopConfirmed của lệnh chưa chạy là null, lưu ADMIN_ABORTED_UNACCEPTED_OPERATION; không tạo bằng chứng Pi giả. Hai endpoint thử đã tắt. Lượt này không chứng minh hoàn thành cả tuyến.
+
+Sau đó đã cài localization_node.py lên Pi với hash 03a1a896309456d5135e212670a655f129ee3a2ca54382dd3392e8d43b65146a, backup pi/state/patch-backups/localization-continuity-20261103T054857Z. Lượt thử lại b9ccde8b-fe7b-4aa6-997a-92b4ca1dcb0d FAILED/LOCALIZATION_NOT_READY lúc 05:54:25 UTC; Pi trả physicalStopConfirmed=true. Chưa hoàn tất xác minh hai MOVE liên tục. Người vận hành yêu cầu dừng thử; đã gửi cancel nhưng API báo request đã terminal, sau đó Ctrl+C stack. Log có STOP worker/camera/localization/slam từ 05:54:40 UTC; SSH timeout nên chưa xác minh toàn bộ cây tiến trình đã thoát. Không gửi thêm MOVE. Các endpoint thử đã deactivate. Không mô tả bản sửa là đã giải quyết toàn bộ lỗi định vị hoặc độ trễ.

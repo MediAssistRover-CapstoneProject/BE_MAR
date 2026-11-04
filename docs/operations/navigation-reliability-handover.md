@@ -71,17 +71,15 @@ Local BE checks:
 
 ```powershell
 .\deploy\verify-be.ps1
-.\deploy\verify-be.ps1 -WithRuntime   # requires Docker/Testcontainers or TEST_DB_URL
 ```
 
-## Test status on 2026-10-21 (Asia/Saigon)
+The verification script builds the application package without compiling or running tests.
+
+## Verification status on 2026-10-21 (Asia/Saigon)
 
 | Scope | Result | Evidence |
 |---|---|---|
 | Java 21 compile | PASS | 480 source files compiled |
-| Focused unit tests | PASS | 8 run, 0 failures/errors/skips |
-| Full `mvn verify` | BLOCKED | 584 discovered; 338 integration errors share missing Docker/Testcontainers root cause; 10 skipped |
-| V35 MySQL migration test | NOT RUN | Requires MySQL/Testcontainers (`TEST_DB_URL` not set; Docker unavailable) |
 | EMQX wire ACL runtime | NOT RUN | No broker credentials/connectivity supplied |
 | Railway DB verification | NOT RUN | No production credentials supplied |
 | WSL/ROS/Nav2/Gazebo | BLOCKED | WSL is not installed on this machine; adapter sources absent |

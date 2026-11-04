@@ -35,6 +35,26 @@ public class JobExecutionServiceImpl implements JobExecutionService {
     private final MappingSessionRepository mappingSessions;
     private final com.mediassistrover.backend.mqtt.MqttRolloutService rollout;
     private final com.mediassistrover.backend.service.NavigationSessionService navigationSessions;
+    @Override public Job createForTest(UUID workflowId,UUID robotId,UUID mapId,UUID sessionId,JsonNode input) {
+        var policy=rollout.lockForRuntimeCreation();
+        Workflow workflow=workflowRepository.findById(workflowId).orElseThrow(()->new ResourceNotFoundException("Workflow not found"));
+        rollout.requireSchema(policy,workflow.getSchemaVersion());
+        if(workflow.getSchemaVersion()!=3 || !"ROBOT_TEST".equals(workflow.getServiceType())
+                || workflow.getStatus()!=WorkflowStatus.PUBLISHED || !workflow.isAcceptsNewJobs() || workflow.getDefinitionHash()==null)
+            throw new BusinessRuleException("Test job requires a published schema 3 ROBOT_TEST workflow");
+        var actions=stepRepository.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflowId).stream().filter(Step::isEnabled).toList();
+        if(actions.isEmpty() || actions.stream().anyMatch(s->!Set.of(StepType.MOVE,StepType.WAIT,StepType.CONTROL_HARDWARE).contains(s.getStepType())))
+            throw new BusinessRuleException("Test job accepts MOVE, WAIT and CONTROL_HARDWARE only");
+        boolean move=actions.stream().anyMatch(s->s.getStepType()==StepType.MOVE);
+        if(move){
+            if(mapId==null||sessionId==null)throw new BusinessRuleException("Test MOVE requires its map/session");
+        }
+        Robot robot=selectPinnedRobotId(robotId);
+        if(!mappingSessions.findByRobotIdAndPotentiallyOpenTrue(robotId).isEmpty())throw new BusinessRuleException("Finish mapping before a test workflow");
+        if(move)navigationSessions.pinReadyContextForLockedRoute(robotId,sessionId,mapId);
+        FacilityMap map=move?mapRepository.findById(mapId).orElseThrow(()->new ResourceNotFoundException("Map not found")):null;
+        return create(workflow,null,null,robot,map,50,merge(workflow.getDefaultInputsJson(),input),null,null);
+    }
     @Override public Job createForSpeech(UUID workflowId,UUID robotId,String text,String languageCode) {
         var policy=rollout.lockForRuntimeCreation();
         Workflow workflow=workflowRepository.findById(workflowId).orElseThrow(()->new ResourceNotFoundException("Workflow not found"));

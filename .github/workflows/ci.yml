@@ -171,7 +171,27 @@ jobs:
         run: |
           set -euo pipefail
 
-          CMD="/usr/local/bin/mar-deploy.sh ${BUCKET} ${GITHUB_SHA}"
+          CMD=$(cat <<EOF
+          bash /usr/local/bin/mar-deploy.sh ${BUCKET} ${GITHUB_SHA} || {
+            rc=\$?
+            echo "=== DEPLOY DIAGNOSTICS ==="
+            echo "--- Deployment script runtime targets ---"
+            grep -nE 'systemctl|journalctl|nohup|java|\.log|SERVICE|APP_DIR' /usr/local/bin/mar-deploy.sh || true
+            echo "--- Related systemd services ---"
+            units=\$(systemctl list-units --type=service --all --no-legend --no-pager | awk 'tolower(\$0) ~ /(mar|mediassist|backend|spring)/ {print \$1}')
+            for unit in \$units; do
+              systemctl status "\$unit" --no-pager --full || true
+              journalctl -u "\$unit" --since "15 minutes ago" --no-pager -o short-iso || true
+            done
+            echo "--- Spring Boot startup errors from recent journal ---"
+            journalctl --since "15 minutes ago" --no-pager -o short-iso \
+              | grep -Ei 'APPLICATION FAILED|spring|flyway|hibernate|caused by|exception|error|failed to start|migration|schema-validation' \
+              | tail -n 300 || true
+            exit \$rc
+          }
+          EOF
+          )
+
 
           jq -n --arg command "$CMD" \
             '{commands:[$command]}' > ssm-params.json

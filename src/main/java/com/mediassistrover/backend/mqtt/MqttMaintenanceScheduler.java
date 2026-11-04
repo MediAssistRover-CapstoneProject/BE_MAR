@@ -23,6 +23,7 @@ public class MqttMaintenanceScheduler {
     private final MqttDurablePublisher publisher;
     private final MqttWire wire;
     private final Clock clock;
+    private final com.mediassistrover.backend.service.NavigationSessionService navigation;
     @Scheduled(fixedDelay=250)
     public void durableWork() {
         if (!properties.isEnabled() || !transport.connected()) return;
@@ -39,8 +40,13 @@ public class MqttMaintenanceScheduler {
         for (var session:sessionRepository.findAll()) {
             Instant lastSeen=session.getLastHeartbeatAt()==null?session.getHelloReceivedAt():session.getLastHeartbeatAt();
             if (!session.isClosed() && !lastSeen.isAfter(Instant.now(clock).minusSeconds(15))) {sessions.expire(session.getRobotId(),session.getTransportSessionId(),Instant.now(clock).minusSeconds(15));continue;}
-            if (sessions.owned(session) && session.isHandshakeAcked()) transport.publish(MqttTopics.topic(session.getRobotId(),"event-acks"),wire.bytes(wire.object().put("messageType","SERVER_HEARTBEAT")
-                    .put("robotId",session.getRobotId().toString()).put("transportSessionId",session.getTransportSessionId().toString())),1);
+            if (sessions.owned(session) && session.isHandshakeAcked()) {
+                var message=wire.object().put("messageType","SERVER_HEARTBEAT")
+                    .put("robotId",session.getRobotId().toString()).put("transportSessionId",session.getTransportSessionId().toString());
+                var authorization=navigation.mqttAuthorization(session);
+                if(authorization!=null)message.set("navigationSession",authorization);
+                transport.publish(MqttTopics.topic(session.getRobotId(),"event-acks"),wire.bytes(message),1);
+            }
         }
     }
 }

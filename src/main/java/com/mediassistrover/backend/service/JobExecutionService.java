@@ -7,4 +7,5 @@ public interface JobExecutionService {
     Job createForSchedule(Schedule schedule,Instant fireAt,JsonNode input);
     Job createForSpeech(java.util.UUID workflowId,java.util.UUID robotId,String text,String languageCode);
     Job createForMapping(java.util.UUID workflowId,java.util.UUID robotId,java.util.UUID floorId,String mapName);
+    Job createForTest(java.util.UUID workflowId,java.util.UUID robotId,java.util.UUID mapId,java.util.UUID navigationSessionId,JsonNode input);
 }

@@ -4,9 +4,9 @@ Ngày baseline: 12/10/2026. Draft JSON Schema: **2020-12**.
 
 **Nguồn:** [giao tiếp Markdown](../01_Giao_tiep_va_toan_bo_field.md), [input/output Markdown](../02_Input_Output_11_Step_Type.md) và [quyết định Phase 0](../phase0-contract-baseline.md). Schema Pi dựng từ tài liệu, **chưa đối chiếu schema gốc/code Pi**. Runtime đóng gói 8 schema trong [resources](../../src/main/resources/contracts/mar-step-2/): common, Pi input/output, BE contract, callback và ba schema MQTT. Phase 12 kiểm manifest bằng bundled common/artifact và receipt bằng DTO HTTP; schema mapping-artifact riêng phục vụ kiểm offline. Schema 2 giữ runtime cũ; schema 3 mở subset BE và action MQTT được cấu hình. UNLOCK/AI/SPEAK còn gate; MAPPING mở qua cấu hình opt-in và capability Pi, NOTIFY đã nối lưu Alert. Xem [Phase 1–2](../phase1-2-implementation.md), [Phase 3–4](../phase3-4-implementation.md) và [Phase 5–7](../phase5-7-implementation.md).
 
-**Cập nhật Phase 8–9:** CANCEL_STEP đã nối runtime và NOTIFY schema 3 đã mở; BE NOTIFYInput thêm metadata tùy chọn `ack_policy`/`recipients`, chỉ chạy ở BE. Contract Pi không đổi. Fixture hiện 131 (88 positive/43 negative). Xem [Phase 8–9](../phase8-9-implementation.md) về scope/transaction, timeout, stop evidence và Alert ACK policy.
+**Cập nhật Phase 8–9:** CANCEL_STEP đã nối runtime và NOTIFY schema 3 đã mở; BE NOTIFYInput thêm metadata tùy chọn `ack_policy`/`recipients`, chỉ chạy ở BE. Contract Pi không đổi. Xem [Phase 8–9](../phase8-9-implementation.md) về scope/transaction, timeout, stop evidence và Alert ACK policy.
 
-`$id` dùng domain `.invalid` làm identity, không phải địa chỉ tải schema. Mọi `$ref` được resolve từ bộ file local. Không phát sinh request mạng trong script kiểm chứng.
+`$id` dùng domain `.invalid` làm identity, không phải địa chỉ tải schema. Mọi `$ref` được resolve từ bộ file local.
 
 ## Các file và cách dùng
 
@@ -39,22 +39,6 @@ Các wrapper `stepType/params/result/input/output` của thư viện **không ph
 - Event STEP_RESULT chỉ kiểm envelope/payload shape ở đây. Handler Phase 7 phải chọn Pi output schema tương ứng và kiểm ngữ nghĩa trước ACK/chuyển bước.
 - MappingSession cho phép null hoặc object rỗng/chưa đủ field theo handoff. Lifecycle quan hệ session/job/artifact phải kiểm runtime.
 
-## Kiểm chứng offline
-
-Chạy từ root repo bằng Python 3.12 (không thay dependency Java/runtime):
-
-```powershell
-python -m pip install --target target/phase0-python-deps -r docs/schemas/requirements-test.txt
-$env:PYTHONPATH = (Resolve-Path target/phase0-python-deps).Path
-python docs/schemas/verify_contracts.py
-```
-
-Dependency chỉ dành cho kiểm chứng schema. Script dùng [Draft202012Validator và FormatChecker](https://python-jsonschema.readthedocs.io/en/stable/validate/) cùng [Registry chứa tài nguyên local](https://python-jsonschema.readthedocs.io/en/stable/referencing/).
-
-Fixture ở [contract-cases.json](fixtures/contract-cases.json) dùng UUID/timestamp **minh họa, không dùng để gửi robot**. Có input/output cho 11 StepType, sub-action sensing/mapping, message MQTT và callback; có negative cases chặn cả Job, DISPATCH, `$ref`, sai hình dạng, dữ liệu cũ và xác nhận giả.
-
-Script kiểm schema bằng meta-schema, mọi local ref, duplicate key, format, coverage khớp enum StepType thực tế và fixture positive/negative; không kết nối broker/Pi hay xác nhận phần cứng thật.
-
-Phần BE mapping/upload/STOP cleanup: [bàn giao Phase 12](../phase12-implementation.md). Trạng thái IMPLEMENTED_BE_SCHEMA_3_ARTIFACT chỉ chứng minh phần BE đã có code/test, không xác nhận SLAM/upload hoặc schema gốc Pi.
+Phần BE mapping/upload/STOP cleanup: [bàn giao Phase 12](../phase12-implementation.md). Trạng thái IMPLEMENTED_BE_SCHEMA_3_ARTIFACT chỉ chứng minh phần BE đã có mã triển khai, không xác nhận SLAM/upload hoặc schema gốc Pi.
 
 Phase 13 nối output CROWD_DENSITY/RESTRICTED_ZONE với monitoring và profile model/producer tại BE, gate AI mặc định tắt. Không đổi contract Pi hoặc thêm FALL_DETECTION. REST extension vị trí người/heatmap là contract BE riêng đang chờ producer ngoài repo, xem [bàn giao Phase 13](../phase13-implementation.md).

@@ -128,6 +128,10 @@ public class MqttStepDispatchService {
             }
         }
         contracts.command(command);
+        // Prepared first publication bypasses plans.command(). Record START/SAVE
+        // lifecycle in this same commit before the Pi can emit its heartbeat.
+        // Non-mapping steps return immediately; no extra MOVE round trip.
+        mapping.publishing(step);
         commands.save(RobotCommandOutbox.builder().commandId(commandId).robotId(session.getRobotId()).jobId(job.getJobId()).jobStepId(step.getJobStepId())
                 .operationKey(step.getOperationKey()).navigationProfileHash(profileHash).aiProfileSnapshotJson(aiProfile).payloadJson(command).expiresAt(now.plusSeconds(properties.getCommandTtlSec())).state("PUBLISHING").sendAttempts(1).lastPublishAt(now).createdAt(now).build());
         // All scope, profile, rollout, robot and TTL checks above are held by
