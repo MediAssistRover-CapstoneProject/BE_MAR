@@ -34,7 +34,7 @@ Các wrapper `stepType/params/result/input/output` của thư viện **không ph
 - Kiểm timeout với duration/window/profile START, snapshot STEP_STARTED với command và output với resolved input. Ví dụ schema có thể nhận timeout 5s/duration 10s riêng rẽ; runtime phải chặn quan hệ này.
 - Với output sensing AI, cho phép fields mở rộng trong observation/metrics vì tài liệu nói worker trả nguyên dữ liệu producer. Phải kiểm version/source và giữ JSON gốc; không suy thêm mật độ/người/m²/té ngã.
 - Header/footer frame preview không được kiểm giải nén bằng JSON Schema: Phase 12 kiểm Base64, zlib, width×height, max_cells và occupancy tại MappingPreviewService. `contentEncoding` chỉ mô tả cách mã hóa.
-- CONTROL_HARDWARE output mô tả profile bàn giao ID4/1500/2400 với controller_ack/verified=false. Profile khác cần contract được xác nhận lại. Authorization STAFF_VERIFIED có shape dành sẵn, không chứng minh Pi đã kiểm quyền.
+- CONTROL_HARDWARE output mô tả profile bàn giao ID4/1500/2400. LOCK/commissioning vẫn dùng `controller_ack=false`; official UNLOCK dùng `authorization_mode=STAFF_VERIFIED`, `controller_ack=true`, và chỉ được dispatch khi HELLO quảng bá `unlockPolicy=STAFF_VERIFIED` cùng capability `secure-unlock-v1`.
 - STEP_ERROR do restart được phép thiếu result/physicalStopConfirmed; không được coi field thiếu là đã dừng. COMMAND_ACK replay result là snapshot journal khác output handler.
 - Event STEP_RESULT chỉ kiểm envelope/payload shape ở đây. Handler Phase 7 phải chọn Pi output schema tương ứng và kiểm ngữ nghĩa trước ACK/chuyển bước.
 - MappingSession cho phép null hoặc object rỗng/chưa đủ field theo handoff. Lifecycle quan hệ session/job/artifact phải kiểm runtime.

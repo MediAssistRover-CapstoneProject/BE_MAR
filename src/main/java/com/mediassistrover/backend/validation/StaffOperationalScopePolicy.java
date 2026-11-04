@@ -179,6 +179,11 @@ public class StaffOperationalScopePolicy {
         if (request == null) return false;
         if (request.getRequestedByAccount() != null
                 && Objects.equals(request.getRequestedByAccount().getAccountId(), accountId)) return true;
+        DeliveryRequest delivery = deliveryRequestRepository.findById(request.getServiceRequestId()).orElse(null);
+        if (delivery != null && (delivery.getExpectedSenderAccount() != null
+                && Objects.equals(delivery.getExpectedSenderAccount().getAccountId(), accountId)
+                || delivery.getExpectedReceiverAccount() != null
+                && Objects.equals(delivery.getExpectedReceiverAccount().getAccountId(), accountId))) return true;
         if (jobRepository.existsByServiceRequestServiceRequestIdAndAssignedStaffAccountAccountId(
                 request.getServiceRequestId(), accountId)) return true;
 

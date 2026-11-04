@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 @Component @RequiredArgsConstructor
 public class AuthenticateStepHandler implements ServerStepHandler {
     private final ObjectMapper objectMapper;
+    private final com.mediassistrover.backend.service.QrVerificationService qrVerificationService;
     @Override public boolean supports(JobStep step){return StepType.AUTHENTICATE.name().equals(step.getStepTypeSnapshot());}
-    @Override public ServerStepExecution execute(JobStep step,JsonNode inputs){ObjectNode result=objectMapper.createObjectNode().put("action","AWAIT_STAFF_VERIFICATION").put("job_step_id",step.getJobStepId().toString()).put("purpose",com.mediassistrover.backend.validation.RuntimeAuthorizationPolicy.purpose(step).name());return new ServerStepExecution(result,false);}
+    @Override public ServerStepExecution execute(JobStep step,JsonNode inputs){var challenge=qrVerificationService.ensureForStep(step);ObjectNode result=objectMapper.createObjectNode().put("action","AWAIT_STAFF_VERIFICATION").put("job_step_id",step.getJobStepId().toString()).put("challenge_id",challenge.challengeId().toString()).put("purpose",challenge.purpose().name()).put("expires_at",challenge.expiresAt().toString());return new ServerStepExecution(result,false);}
 }

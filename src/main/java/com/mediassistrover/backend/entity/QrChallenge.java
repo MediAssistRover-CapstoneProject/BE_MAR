@@ -14,6 +14,7 @@ public class QrChallenge {
     @ManyToOne(fetch=FetchType.LAZY,optional=false) @JoinColumn(name="job_id",nullable=false) private Job job;
     @OneToOne(fetch=FetchType.LAZY,optional=false) @JoinColumn(name="auth_job_step_id",nullable=false,unique=true) private JobStep authJobStep;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="used_by_account_id") private Account usedByAccount;
+    @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="expected_account_id") private Account expectedAccount;
     @Enumerated(EnumType.STRING) @Column(name="purpose",nullable=false,length=32) private AuthVerificationPurpose purpose;
     @Column(name="token_hash",nullable=false,length=64,columnDefinition="CHAR(64)",unique=true) private String tokenHash;
     @Column(name="issued_at",nullable=false) private Instant issuedAt;

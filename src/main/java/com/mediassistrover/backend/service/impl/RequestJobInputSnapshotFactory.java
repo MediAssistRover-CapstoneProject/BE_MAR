@@ -67,11 +67,16 @@ public class RequestJobInputSnapshotFactory {
         result.put("map_id", d.getMap().getMapId().toString())
                 .put("pickup_endpoint_id", d.getPickupEndpoint().getEndpointId().toString())
                 .put("target_mode", d.getTargetMode().name()).put("compartment_id", "CART_MAIN");
-        result.remove(Set.of("delivery_endpoint_id", "delivery_group_id", "sender_account_id", "receiver_account_id"));
+        result.remove(Set.of("delivery_endpoint_id", "delivery_group_id", "sender_account_id", "receiver_account_id",
+                "expected_sender_account_id", "expected_receiver_account_id"));
         if (d.getDeliveryEndpoint() != null) result.put("delivery_endpoint_id", d.getDeliveryEndpoint().getEndpointId().toString());
         if (d.getDeliveryGroup() != null) result.put("delivery_group_id", d.getDeliveryGroup().getEndpointGroupId().toString());
         if (d.getSenderAccount() != null) result.put("sender_account_id", d.getSenderAccount().getAccountId().toString());
         if (d.getReceiverAccount() != null) result.put("receiver_account_id", d.getReceiverAccount().getAccountId().toString());
+        if (d.getExpectedSenderAccount() == null || d.getExpectedReceiverAccount() == null)
+            throw new BusinessRuleException("QR delivery requires expected sender and receiver accounts");
+        result.put("expected_sender_account_id", d.getExpectedSenderAccount().getAccountId().toString());
+        result.put("expected_receiver_account_id", d.getExpectedReceiverAccount().getAccountId().toString());
         ArrayNode businessItems = result.putArray("items");
         ArrayNode details = result.putArray("delivery_items");
         for (DeliveryItem item : items.findByDeliveryRequestServiceRequestIdOrderByItemCodeAsc(request.getServiceRequestId())) {

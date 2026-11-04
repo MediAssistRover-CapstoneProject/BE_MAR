@@ -12,7 +12,8 @@ public final class DeliveryResponses {
                                String unit,boolean sensitive,String handlingInstruction,String itemNote) { }
     public record DeliveryResponse(ServiceRequestResponse request,UUID mapId,UUID pickupRoomId,UUID deliveryRoomId,
                                    UUID pickupEndpointId,UUID deliveryEndpointId,UUID deliveryGroupId,
-                                   UUID resolvedDeliveryEndpointId,UUID senderAccountId,UUID receiverAccountId,
+                                   UUID resolvedDeliveryEndpointId,UUID expectedSenderAccountId,
+                                   UUID expectedReceiverAccountId,UUID senderAccountId,UUID receiverAccountId,
                                    TargetMode targetMode,String recipientName,String recipientContact,
                                    boolean requiresConfirmation,String temperatureRequirement,Instant deliveryDeadline,
                                    Instant pickedUpAt,Instant deliveredAt,Instant pickupCompartmentConfirmedAt,

@@ -1948,8 +1948,8 @@
   },
   {
     "schema": "mqtt-pi-message.schema.json",
-    "name": "reject-hello-staff-verified-not-implemented",
-    "valid": false,
+    "name": "hello-staff-verified-secure-unlock",
+    "valid": true,
     "instance": {
       "protocolVersion": "1.0",
       "messageId": "11111111-1111-4111-8111-111111111111",
@@ -1973,7 +1973,9 @@
         ],
         "unlockPolicy": "STAFF_VERIFIED",
         "mappingEnabled": false,
-        "capabilities": [],
+        "capabilities": [
+          "secure-unlock-v1"
+        ],
         "states": [],
         "mappingSession": null
       }

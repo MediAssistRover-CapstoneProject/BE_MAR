@@ -8,6 +8,8 @@ import com.mediassistrover.backend.service.PiIntegrationService;
 import com.mediassistrover.backend.service.PiJobRuntimeService;
 import com.mediassistrover.backend.service.PiStepService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import com.mediassistrover.backend.config.OpenApiConfig;
@@ -28,6 +30,7 @@ public class PiIntegrationController {
     private final PiIntegrationService service;
     private final PiJobRuntimeService jobRuntimeService;
     private final PiStepService piStepService;
+    private final com.mediassistrover.backend.service.QrVerificationService qrVerificationService;
     @PostMapping("/heartbeat") public AckResponse heartbeat(@Valid @RequestBody PiEnvelope<HeartbeatPayload> e,@AuthenticationPrincipal DevicePrincipal p){return service.heartbeat(e,p);}
     @PostMapping("/telemetry/location") public AckResponse location(@Valid @RequestBody PiEnvelope<LocationPayload> e,@AuthenticationPrincipal DevicePrincipal p){return service.location(e,p);}
     @GetMapping("/catalog/manifest") public CatalogManifestResponse manifest(@AuthenticationPrincipal DevicePrincipal p){return service.catalogManifest(p);}
@@ -44,4 +47,9 @@ public class PiIntegrationController {
     @PostMapping("/jobs/{jobId}/steps/{stepId}/visits") public JobStepCommand createStepVisit(@PathVariable UUID jobId,@PathVariable UUID stepId,@Valid @RequestBody PiEnvelope<CreateStepVisitPayload> e,@AuthenticationPrincipal DevicePrincipal p){return jobRuntimeService.createStepVisit(jobId,stepId,e,p);}
     @PostMapping("/step-services/execute") public StepServiceExecutionResponse executeServerStep(@Valid @RequestBody PiEnvelope<StepServiceExecutePayload> e,@AuthenticationPrincipal DevicePrincipal p){return piStepService.execute(e,p);}
     @GetMapping("/job-steps/{jobStepId}/service-result") public StepServiceExecutionResponse serverStepResult(@PathVariable UUID jobStepId,@AuthenticationPrincipal DevicePrincipal p){return piStepService.result(jobStepId,p);}
+    @GetMapping("/jobs/{jobId}/qr-challenge")
+    @Operation(summary="Get the active delivery QR payload",description="Returns the current one-time QR payload only to the Device assigned to the running delivery Job. Returns 204 outside an active AUTHENTICATE Step.")
+    @ApiResponses({@ApiResponse(responseCode="200",description="Active one-time QR challenge"),
+            @ApiResponse(responseCode="204",description="No active QR challenge for the current Job step")})
+    public ResponseEntity<com.mediassistrover.backend.dto.verification.response.QrChallengeResponse> qrChallenge(@PathVariable UUID jobId,@AuthenticationPrincipal DevicePrincipal p){return qrVerificationService.activeForDevice(jobId,p).map(ResponseEntity::ok).orElseGet(()->ResponseEntity.noContent().build());}
 }
