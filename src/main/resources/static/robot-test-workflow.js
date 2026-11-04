@@ -38,27 +38,29 @@
   }
   function mount(options){
     const host=options.element;
-    host.innerHTML=`<h2>Test workflow cơ bản và servo</h2>
+    host.innerHTML=`<h2>Chạy workflow</h2>
       <p>Thêm các step theo thứ tự rồi chạy trong một job. Ví dụ: MOVE A → WAIT 5 giây → MOVE B → mở servo → chờ xác nhận → đóng servo.</p>
       <small>Dùng Robot ID và token ADMIN ở đầu trang. Kết thúc job quét trước khi thử; MOVE dùng phiên map READY đang mở, không khởi tạo lại AMCL.</small>
-      <div class="fields"><label>Compartment ID<input id="testCompartment" value="CART_MAIN" maxlength="64"></label>
-      <label>Trần tốc độ MOVE (m/s)<input id="testSpeed" type="number" min="0.05" max="0.6" step="0.05" value="0.4"></label></div>
+      <label>Trần tốc độ MOVE (m/s)<input id="testSpeed" type="number" min="0.05" max="0.6" step="0.05" value="0.4"></label>
+      <details><summary>Cấu hình servo</summary><label>Compartment ID<input id="testCompartment" value="CART_MAIN" maxlength="64"></label>
       <button id="testConfig">Kiểm tra cấu hình Pi/BE</button><small id="testConfigStatus">Servo MG996R · S6 / ROS ID 4 · mở 2400 / đóng 1500. Chưa kiểm tra cấu hình.</small>
-      <button id="testOpen">Mở servo — một job</button><button id="testClose">Đóng servo — một job</button>
-      <small>Trạng thái thành công xác nhận Pi đã phát lệnh; servo hiện không có cảm biến xác nhận cửa đã mở/đóng thực tế.</small>
+      <small>Pi xác nhận đã phát lệnh servo; hiện không có cảm biến xác nhận cửa mở/đóng thực tế.</small></details>
       <hr><label>Endpoint MOVE<select id="testEndpoint"><option value="">Tải endpoint từ map ở trên</option></select></label>
       <button id="testLoadEndpoints">Lấy endpoint từ map</button><button id="testAddMove">Thêm MOVE</button>
       <label>WAIT (giây)<input id="testWaitSeconds" type="number" min="1" max="300" step="0.1" value="5"></label>
       <button id="testAddWait">Thêm WAIT</button><button id="testAddOpen">Thêm mở servo</button><button id="testAddClose">Thêm đóng servo</button>
       <button id="testAddConfirm">Thêm chờ xác nhận lấy hàng</button><button id="testClear">Xóa danh sách</button>
-      <ol id="testSteps"></ol><button id="testPreview">Xem JSON workflow</button><button id="testRun">Chạy workflow test</button>
+      <ol id="testSteps"></ol><button id="testRun">Chạy workflow</button><p id="testReadiness" role="status">Thêm step để bắt đầu.</p>
       <p id="testStatus" class="nav-status" role="status">Chưa gửi lệnh.</p>
-      <label>Job ID test<input id="testJobId" readonly></label><button id="testRefresh">Cập nhật trạng thái job</button>
-      <button id="testConfirm" disabled>Đã lấy hàng / Tiếp tục</button><button id="testCancel" disabled>Hủy job test</button>
-      <small id="testWaiting"></small><details><summary>JSON API / workflow</summary><pre id="testJson"></pre></details>
+      <label>Job ID<input id="testJobId" readonly></label><button id="testRefresh">Cập nhật trạng thái job</button>
+      <button id="testConfirm" disabled>Đã lấy hàng / Tiếp tục</button><button id="testCancel" disabled>Hủy workflow</button>
+      <small id="testWaiting"></small><details><summary>API và JSON gửi tới BE</summary>
+      <p><code>POST /api/v1/test-workflows/run</code> · header <code>Idempotency-Key</code> mới cho mỗi lượt. Dùng token ADMIN để chạy trang kiểm thử.</p>
+      <p>Theo dõi <code>GET /api/v1/jobs/{jobId}</code> hoặc <code>/stream</code>; hủy bằng <code>POST /api/v1/jobs/{jobId}/cancel</code>. Workflow này dùng runtime thật của BE/Pi.</p>
+      <button id="testPreview">Xem workflow BE dựng từ tham số</button><pre id="testJson"></pre></details>
       <pre id="testProgress">Chưa có job.</pre>`;
     const $=id=>host.querySelector('#'+id),storage='mar-basic-test-workflow';
-    const state={steps:[],pending:null,detail:null,busy:false,closed:false,timer:null,points:[],confirmEvent:null};
+    const state={steps:[],pending:null,detail:null,busy:false,closed:false,timer:null,points:[],confirmEvent:null,pointSignature:null};
     const say=(message,error=false)=>{$('testStatus').textContent=message;$('testStatus').style.color=error?'#a51d1d':'';};
     const robot=()=>options.getRobotId().trim();
     const context=()=>{const n=options.getNavigation();return {mapId:n?.meta?.map_id,sessionId:n?.snapshot?.navigationSession?.sessionId};};
@@ -75,12 +77,35 @@
         $('testSteps').append(li);
       });
       const active=state.pending&&!state.pending.done,known=active&&state.pending.jobId,wait=waitingConfirmation(state.detail);
-      for(const id of ['testOpen','testClose','testAddMove','testAddWait','testAddOpen','testAddClose','testAddConfirm','testClear'])$(id).disabled=state.busy||!!active;
-      $('testRun').disabled=state.busy||!!known; $('testRun').textContent=active&&!known?'Gửi lại cùng yêu cầu cũ':'Chạy workflow test';
+      for(const id of ['testAddMove','testAddWait','testAddOpen','testAddClose','testAddConfirm','testClear'])$(id).disabled=state.busy||!!active;
+      $('testRun').textContent=active&&!known?'Gửi lại cùng yêu cầu cũ':'Chạy workflow';
       $('testCancel').disabled=state.busy||!known||state.detail?.job?.status==='RECOVERY_REQUIRED';
       $('testConfirm').disabled=state.busy||!wait;
       $('testJobId').value=state.pending?.jobId||'';
       $('testWaiting').textContent=wait?'Robot đang chờ tại '+wait.stepCodeSnapshot+'. Chỉ bấm xác nhận khi đã lấy hàng xong.':'';
+      refreshContext();
+    }
+    function refreshContext(){
+      const nav=options.getNavigation(),snapshot=nav?.snapshot,active=state.pending&&!state.pending.done;
+      const points=(nav?.endpoints||[]).filter(p=>p.active&&p.accessible);
+      const signature=JSON.stringify([nav?.meta?.map_id,points.map(p=>[p.endpointId,p.endpointCode,p.endpointName])]);
+      if(signature!==state.pointSignature){
+        state.pointSignature=signature;state.points=points;const selected=$('testEndpoint').value;$('testEndpoint').replaceChildren();
+        for(const p of points){const o=document.createElement('option');o.value=p.endpointId;o.textContent=p.endpointCode+' — '+p.endpointName;$('testEndpoint').append(o);}
+        if(points.some(p=>p.endpointId===selected))$('testEndpoint').value=selected;
+      }
+      const reasons=[];
+      if(!state.steps.length)reasons.push('chưa thêm step');
+      if(options.isMappingActive())reasons.push('job quét chưa kết thúc');
+      if(snapshot?.activeJobId&&snapshot.activeJobId!==state.pending?.jobId)reasons.push('robot đang có job khác');
+      if(state.steps.some(s=>s.kind==='MOVE')){
+        if(!nav?.meta||snapshot?.navigationSession?.state!=='READY')reasons.push('phiên map chưa READY');
+        if(state.steps.some(s=>s.kind==='MOVE'&&!points.some(p=>p.endpointId===s.endpointId&&p.mapId===nav?.meta?.map_id)))reasons.push('endpoint đã đổi map hoặc không còn hoạt động');
+        if(nav?.zoneAck!==true)reasons.push('Pi chưa xác nhận endpoint/zone');
+      }
+      const retry=active&&!state.pending.jobId;
+      $('testRun').disabled=state.busy||!!(active&&state.pending.jobId)||(!retry&&reasons.length>0);
+      $('testReadiness').textContent=active?'Đang theo dõi workflow hiện tại.':reasons.length?'Chưa sẵn sàng: '+reasons.join('; ')+'.':state.steps.length+' step sẵn sàng; thực hiện theo thứ tự bên trên.';
     }
     async function api(path,data,key){
       const token=options.getToken().trim().replace(/^Bearer\s+/i,'');if(!token)throw Error('Cần token ADMIN ở đầu trang.');
@@ -112,12 +137,12 @@
       try{await refresh();}catch(e){say('Chưa đọc được trạng thái: '+e.message,true);}
       if(!state.closed&&state.pending&&!state.pending.done)state.timer=setTimeout(poll,2000);
     }
-    async function send(quickAction){
+    async function send(){
       if(options.isMappingActive())throw Error('Kết thúc job quét trước khi chạy workflow test.');
       if(!state.pending||state.pending.done){
-        const b=quickAction?{action:quickAction,compartmentId:$('testCompartment').value.trim()}:payload();
+        const b=payload();
         if(!UUID.test(robot()))throw Error('Robot ID không hợp lệ.');
-        state.pending={key:crypto.randomUUID(),path:quickAction?'/api/v1/robots/'+robot()+'/servo-test':'/api/v1/test-workflows/run',body:b,robotId:robot(),done:false};state.detail=null;state.confirmEvent=null;persist();
+        state.pending={key:crypto.randomUUID(),path:'/api/v1/test-workflows/run',body:b,robotId:robot(),done:false};state.detail=null;state.confirmEvent=null;persist();
       }
       const p=state.pending;if(p.jobId)throw Error('Job đang chạy; chờ kết thúc hoặc bấm hủy.');
       say('Đang gửi workflow; yêu cầu gửi lại sẽ dùng cùng Idempotency-Key.');
@@ -136,7 +161,6 @@
       $('testConfigStatus').textContent='BE mở thử: '+(cfg.commissioningUnlockEnabled?'bật':'tắt')+' · Pi unlock: '+cfg.piUnlockPolicy+' · MQTT: '+(snapshot.mqttConnected?'đã nối':'chưa nối')+' · Robot: '+snapshot.robot.status+' · S6/ID4 · mở 2400 / đóng 1500.';
       $('testJson').textContent=JSON.stringify(cfg,null,2);
     });
-    $('testOpen').onclick=()=>mutate(()=>send('OPEN'));$('testClose').onclick=()=>mutate(()=>send('CLOSE'));
     $('testLoadEndpoints').onclick=()=>mutate(loadEndpoints);
     $('testAddMove').onclick=()=>mutate(()=>{const point=state.points.find(p=>p.endpointId===$('testEndpoint').value);if(!point)throw Error('Chọn endpoint đã lưu trước.');add({kind:'MOVE',endpointId:point.endpointId,mapId:point.mapId,label:point.endpointCode});});
     $('testAddWait').onclick=()=>mutate(()=>{const step=stepPayload({kind:'WAIT',durationSec:$('testWaitSeconds').value});add(step);});
@@ -154,7 +178,7 @@
     try{const saved=JSON.parse(sessionStorage.getItem(storage)||'null');if(saved){if(Array.isArray(saved.steps)&&saved.steps.length<=20)state.steps=saved.steps;if(saved.pending?.key&&saved.pending.robotId===robot())state.pending=saved.pending;}}catch(_){}
     window.addEventListener('pagehide',()=>{state.closed=true;clearTimeout(state.timer);});render();
     // No command on page load. Resume read-only tracking after an explicit click.
-    return {state,refresh};
+    return {state,refresh,refreshContext,isActive:()=>!!state.pending&&!state.pending.done};
   }
   return {stepPayload,body,waitingConfirmation,mount};
 });

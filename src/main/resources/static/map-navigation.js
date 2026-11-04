@@ -4,9 +4,8 @@
   else root.SavedMapNavigation = navigation;
 })(globalThis, function () {
   'use strict';
-  const DEFAULT_MAP = '73f7af66-ae21-499f-8209-57801411e9be';
+  const DEFAULT_MAP = 'e571fe71-d3ea-4aa5-a673-ffd857ac9f09';
   const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
-  const TERMINAL = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED']);
   const angle = value => Math.atan2(Math.sin(value), Math.cos(value));
   const stable = value => JSON.stringify(value, function (key, item) {
     return item && typeof item === 'object' && !Array.isArray(item)
@@ -122,31 +121,6 @@
     }
     return freshPose(snapshot,meta,snapshotAgeMs);
   }
-  function workflowContract(detail) {
-    const w = detail?.workflow;
-    if (!w || !Array.isArray(detail.steps) || !Array.isArray(detail.transitions)) return null;
-    const steps = detail.steps, code = id => steps.find(s => s.stepId === id)?.stepCode;
-    return {
-      serviceType: w.serviceType, schemaVersion: w.schemaVersion, graphVersion: w.graphVersion,
-      maxTotalVisits: w.maxTotalVisits, inputSchemaJson: w.inputSchemaJson,
-      defaultInputsJson: w.defaultInputsJson, requiredCapabilitiesJson: w.requiredCapabilitiesJson,
-      startStepCode: code(w.startStepId),
-      steps: steps.map(s => ({stepType: s.stepTypeCode, stepCode: s.stepCode, paramsJson: s.paramsJson,
-        inputMappingJson: s.inputMappingJson, timeoutSec: s.timeoutSec, maxAttempts: s.maxAttempts,
-        retryDelaySec: s.retryDelaySec, retryCodesJson: s.retryCodesJson, maxVisits: s.maxVisits})),
-      transitions: detail.transitions.map(t => ({fromStepCode: code(t.fromStepId),
-        toStepCode: t.toStepId == null ? null : code(t.toStepId), outcome: t.outcome,
-        conditionJson: t.conditionJson ?? null, priority: t.priority,
-        defaultTransition: t.defaultTransition, terminalStatus: t.terminalStatus ?? null}))
-        .sort((a, b) => a.outcome.localeCompare(b.outcome))
-    };
-  }
-  function templateContract(template) {
-    const steps = template.graph.steps.map(s => ({...s, stepId: s.stepCode, stepTypeCode: s.stepType}));
-    return workflowContract({workflow: {...template.workflow, startStepId: template.graph.startStepCode}, steps,
-      transitions: template.graph.transitions.map(t => ({...t, fromStepId: t.fromStepCode, toStepId: t.toStepCode ?? null}))});
-  }
-
   async function consumeRobotEvents(response,onSnapshot,eventName='robot-state',maxLength=1048576){
     if(!response.body)throw Error('Trình duyệt không hỗ trợ stream trạng thái.');
     const reader=response.body.getReader(),decoder=new TextDecoder();let pending='';
@@ -160,17 +134,6 @@
         if((Array.isArray(eventName)?eventName.includes(event):event===eventName)&&data)onSnapshot(JSON.parse(data),event);
       }
     }}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
-  }
-  function recoveredRequestMatches(pending,request){
-    const data=request?.requestDataJson,body=pending?.body;
-    return !!body&&request?.idempotencyKey===pending.key&&request.requestType==='NAVIGATION'
-      &&data?.map_id===body.mapId&&data.navigation_session_id===body.navigationSessionId
-      &&(!body.robotId||request.requestedRobotId===body.robotId);
-  }
-  function closedPendingSession(pending,snapshot){
-    const session=snapshot?.navigationSession;
-    return !!pending?.body?.navigationSessionId&&session?.sessionId===pending.body.navigationSessionId
-      &&['CLOSED','EXPIRED'].includes(session.state)&&!snapshot.activeJobId;
   }
   function mount(options) {
     const host = options.element;
@@ -208,7 +171,7 @@
       </div><div>
         <label>Endpoint đã lưu<select id="navEndpoints"><option value="">Chọn endpoint</option></select></label>
         <button id="navNewPoint">Đặt endpoint mới</button>
-        <small>Đặt điểm mới: bấm trên vùng sàn đã quét, kéo rồi thả để chọn hướng. Chọn endpoint trong danh sách để sửa hoặc chạy.</small>
+        <small>Đặt điểm mới: bấm trên vùng sàn đã quét, kéo rồi thả để chọn hướng. Chọn endpoint trong danh sách để sửa; thêm MOVE ở phần workflow để chạy.</small>
         <label>Mã endpoint<input id="navPointCode" maxlength="64" placeholder="DEMO_POINT_A"></label>
         <label>Tên endpoint<input id="navPointName" maxlength="160" placeholder="Điểm trước cửa phòng"></label>
         <label>Loại endpoint<select id="navPointType"><option value="WAYPOINT">Waypoint — điểm đến</option><option value="PARK">Parking — vị trí đỗ / khởi tạo</option><option value="CHARGER">Manual Charger — vị trí sạc thủ công</option><option value="STAGING" hidden>Staging — điểm chờ cũ</option></select></label>
@@ -222,7 +185,7 @@
         <button id="navParkingSeed" disabled>Dùng parking làm vị trí khởi tạo</button>
       </div></div>
       <h3>Zone trên map</h3>
-      <p>Vẽ đa giác bằng cách bấm từng đỉnh trên map. Restricted zone cấm robot đi vào; Speed limit zone giới hạn vận tốc tiến/lùi của MOVE.</p>
+      <p>Vẽ đa giác bằng cách bấm từng đỉnh trên map. Restricted zone cấm toàn bộ thân/thùng đi vào; Speed limit zone giới hạn vận tốc tịnh tiến của MOVE, kể cả khi dịch ngang thoát góc.</p>
       <div class="nav-inline"><label>Zone đã lưu<select id="navZones"><option value="">Chọn zone</option></select></label><button id="navNewZone">Zone mới</button><button id="navReloadZones">Tải lại zone</button></div>
       <label class="nav-render-option"><input id="navZoneMode" type="checkbox"> Bấm map để vẽ zone (tạm ngừng đặt endpoint)</label>
       <div class="fields"><label>Mã zone<input id="navZoneCode" maxlength="64"></label><label>Tên zone<input id="navZoneName" maxlength="160"></label>
@@ -234,48 +197,17 @@
       <small id="navZoneStatus">Tải map để cấu hình zone. Rule được Pi đồng bộ khi rảnh, trước MOVE tiếp theo.</small>
       <small id="navZoneSync">Chưa có xác nhận cấu hình từ Pi.</small>
       <details><summary>JSON zone để dùng Swagger</summary><pre id="navZoneSwagger">Chưa chọn zone.</pre></details>
-      <h3>Chạy workflow MOVE</h3>
-      <label>Workflow NAVIGATION một step MOVE<input id="navWorkflowId" readonly></label>
-      <button id="navPrepare">Chuẩn bị workflow MOVE</button>
-      <small>Workflow mẫu đặt trần 0,6 m/s; tốc độ thực theo zone, vật cản và Pi. MOVE không lùi/đi ngang. Bản Pi POSITION_ONLY tới vị trí thì dừng, không ép góc cuối.</small>
-      <button id="navRefresh">Kiểm tra vị trí và trạng thái</button>
-      <button id="navMove" disabled>Đi tới endpoint bằng robot của phiên</button>
-      <p id="navMoveReadiness" role="status"></p>
-      <button id="navCancel" disabled>Hủy yêu cầu dẫn đường</button>
-      <h4>Tuyến nhiều endpoint — một workflow/job</h4>
-      <small>Chọn endpoint đã lưu ở trên rồi thêm vào tuyến theo thứ tự. Có thể thêm lại một điểm để quay về. BE tự tạo workflow; không cần chuẩn bị workflow một điểm.</small>
-      <button id="navRouteAdd" disabled>Thêm endpoint đang chọn</button>
-      <button id="navRouteClear" disabled>Xóa danh sách tuyến</button>
-      <ol id="navRouteList"></ol>
-      <label>Trần tốc độ tuyến (m/s)<input id="navRouteSpeed" type="number" min="0.05" max="0.6" step="0.05" value="0.6"></label>
-      <button id="navRouteRun" disabled>Chạy toàn bộ tuyến</button>
-      <p id="navRouteReadiness" role="status"></p>
-      <p id="navRouteProgress" role="status">Chưa gửi tuyến.</p>
-      <small>Robot tới và xác nhận từng endpoint rồi chuyển bước trong cùng phiên. Đường trên map là path Nav2 của chặng đang chạy, không nối thẳng giả qua các vùng cấm.</small>
-      <small>MOVE được gắn đúng robot, map và phiên định vị. Vị trí hoặc hướng endpoint thay đổi cần lưu trước; vị trí robot luôn lấy từ Pi.</small>
+      <button id="navRefresh">Cập nhật vị trí robot</button>
+      <small>Chọn và lưu endpoint/zone tại đây, rồi thêm MOVE vào workflow bên dưới. Có thể lặp lại endpoint để robot quay về.</small>
       <p id="navAction" class="nav-status" role="status">Tải map để bắt đầu.</p>
-      <details><summary>Request, job và kết quả step MOVE</summary><pre id="navReceipt">Chưa tạo yêu cầu.</pre></details>
       <details><summary>JSON endpoint để dùng Swagger</summary><pre id="navSwagger">Chọn vị trí trên map để lấy JSON.</pre></details>`;
     const $ = id => host.querySelector('#' + id), canvas = $('navCanvas'), ctx = canvas.getContext('2d');
     const state = {meta: null, map: null, image: null, imageUrl: null, endpoints: [], draft: null, editing: null,
       snapshot: null, receivedAt: 0, robotId: '', busy: false, generation: 0, timer: null, closed: false,
-      workflow: null, template: null, pending: null, job: null, request: null, dragging: null,seed:null,
-      zones:[],zoneEditing:null,zonePoints:[],zoneSyncAt:0,zoneAck:null,route:[]};
+      dragging: null,seed:null,
+      zones:[],zoneEditing:null,zonePoints:[],zoneSyncAt:0,zoneAck:null};
     const say = (message, error = false) => { $('navAction').textContent = message; $('navAction').classList.toggle('nav-error', error); };
-    const active = () => state.pending && !state.pending.done;
-    function persist() {
-      try { if (state.pending) sessionStorage.setItem('mar-navigation-request', JSON.stringify(state.pending));
-        else sessionStorage.removeItem('mar-navigation-request'); } catch (_) { /* In-memory retry remains available. */ }
-    }
-    try {
-      const saved = JSON.parse(sessionStorage.getItem('mar-navigation-request') || 'null');
-      if (saved && UUID.test(saved.body?.mapId || '') && saved.key && !saved.done) {
-        saved.kind ||= Array.isArray(saved.body.endpointIds)?'ROUTE':'SINGLE';
-        state.pending = saved; $('navMapId').value = saved.body.mapId;
-        if(saved.kind==='ROUTE'){state.route=[...saved.body.endpointIds];$('navRouteSpeed').value=saved.body.maxSpeedMps;}
-        say('Có yêu cầu đang theo dõi. Tải map để kiểm tra; nút tiếp tục dùng lại Idempotency-Key cũ.');
-      }
-    } catch (_) { /* Ignore corrupt UI state. */ }
+    const active = () => !!state.snapshot?.activeJobId || !!options.isWorkflowActive?.();
     function robotId() {
       const selectedId=options.getRobotId().trim(),id=state.robotId||selectedId;
       if(selectedId!==id&&!active())throw Error('Robot ID đã đổi; tải lại map để theo dõi đúng robot.');
@@ -318,7 +250,7 @@
       $('navCloseSession').disabled=locked||!open;
       $('navRecheck').disabled=state.busy;
       $('navSessionReadiness').textContent=state.busy?'Đang xử lý yêu cầu trên BE…':active()?
-        'Đang đối chiếu yêu cầu MOVE trước đó. Bấm Kiểm tra lại phiên và job nếu nút mở phiên vẫn khóa.':
+        'Robot đang có workflow/job. Theo dõi hoặc hủy ở phần Chạy workflow bên dưới.':
         !loaded?'Tải map để mở phiên.':open?'Phiên đang mở; dùng lệnh Pi bên dưới.':
         state.meta?.navigation_reload_safe===false?'Map cần sửa ô xám trước khi mở phiên.':
         state.map?.status!=='ACTIVE'?'Kích hoạt map trước khi mở phiên.':'Có thể mở phiên mới; phiên cũ đã đóng hoặc chưa có phiên.';
@@ -331,56 +263,7 @@
       $('navZoneSpeed').disabled=!loaded||locked||$('navZoneType').value!=='SPEED';
       $('navToggleZone').disabled=!loaded||locked||!state.zoneEditing;
       $('navParkingSeed').disabled=!loaded||locked||selected()?.endpointType!=='PARK'||!$('navAtParking').checked;
-      $('navPrepare').disabled = locked;
-      const reasons=[];
-      if(state.busy)reasons.push('đang xử lý yêu cầu');
-      if(!loaded)reasons.push('chưa tải đúng map');
-      if(active()) { if(state.pending.kind==='ROUTE'||!state.pending.retryable)reasons.push('đang theo dõi yêu cầu MOVE hiện tại'); }
-      else {
-        if(!selected())reasons.push('chưa chọn endpoint đã lưu');
-        if(!state.workflow)reasons.push('chưa chuẩn bị workflow MOVE');
-        if(session?.state!=='READY')reasons.push('phiên định vị chưa READY');
-        if(!pose())reasons.push('chưa có vị trí mới đúng map');
-        if(state.zones.some(z=>z.active)&&state.zoneAck!==true)reasons.push('Pi chưa xác nhận profile endpoint/zone mới');
-      }
-      $('navMove').disabled = reasons.length>0;
-      $('navMoveReadiness').textContent=reasons.length?'MOVE chưa sẵn sàng: '+reasons.join('; ')+'.':'Sẵn sàng gửi MOVE tới endpoint đã chọn.';
-      $('navMove').textContent = active() && state.pending.retryable ? 'Tiếp tục yêu cầu vừa gửi' : 'Đi tới endpoint bằng robot của phiên';
-      $('navCancel').disabled = state.busy || !active() || !state.pending.requestId;
-      $('navRouteAdd').disabled=!loaded||locked||!selected()||state.route.length>=20;
-      $('navRouteClear').disabled=locked||!state.route.length;
-      $('navRouteSpeed').disabled=locked;
-      for(const button of $('navRouteList').querySelectorAll('button'))button.disabled=locked;
-      const routeReasons=[];
-      if(state.busy)routeReasons.push('đang xử lý');
-      if(!loaded)routeReasons.push('chưa tải map');
-      if(active()){
-        if(state.pending.kind!=='ROUTE'||!state.pending.retryable)routeReasons.push('đang theo dõi job hiện tại');
-      }else{
-        if(!state.route.length)routeReasons.push('chưa thêm endpoint');
-        if(state.route.some(id=>!state.endpoints.some(e=>e.endpointId===id&&e.active&&e.accessible)))routeReasons.push('có endpoint không còn hợp lệ');
-        if(session?.state!=='READY'||!pose())routeReasons.push('chưa định vị READY');
-        if(state.snapshot?.robot?.status!=='IDLE'||!state.snapshot?.dispatchReady)routeReasons.push('robot chưa rảnh/sẵn sàng');
-        if(state.zoneAck!==true)routeReasons.push('Pi chưa ACK profile endpoint/zone hiện tại');
-        const speed=Number($('navRouteSpeed').value);if(!Number.isFinite(speed)||speed<.05||speed>.6)routeReasons.push('tốc độ phải 0,05–0,6 m/s');
-      }
-      $('navRouteRun').disabled=routeReasons.length>0;
-      $('navRouteRun').textContent=active()&&state.pending.kind==='ROUTE'&&state.pending.retryable?'Tiếp tục gửi tuyến cũ':'Chạy toàn bộ tuyến';
-      $('navRouteReadiness').textContent=routeReasons.length?'Tuyến chưa sẵn sàng: '+routeReasons.join('; ')+'.':state.route.length+' điểm sẵn sàng, theo thứ tự bên trên.';
-    }
-    function renderRoute(){
-      $('navRouteList').replaceChildren();
-      state.route.forEach((id,index)=>{
-        const point=state.endpoints.find(e=>e.endpointId===id),li=document.createElement('li');
-        const label=document.createElement('span');label.textContent=(point?point.endpointCode+' — '+point.endpointName:id)+' ';li.append(label);
-        for(const [text,change] of [['↑',-1],['↓',1],['Bỏ',0]]){
-          const button=document.createElement('button');button.type='button';button.textContent=text;
-          button.setAttribute('aria-label',text+' điểm '+(index+1));
-          button.onclick=()=>{if(state.busy||active())return;if(change===0)state.route.splice(index,1);else{const next=index+change;if(next<0||next>=state.route.length)return;[state.route[index],state.route[next]]=[state.route[next],state.route[index]];}renderRoute();controls();};
-          li.append(button);
-        }
-        $('navRouteList').append(li);
-      });
+      options.onContextChange?.(state);
     }
     async function mutate(operation) {
       if (state.busy) return;
@@ -525,8 +408,7 @@
     }
     async function loadMap() {
       const id = $('navMapId').value.trim(); if (!UUID.test(id)) throw Error('Map ID không hợp lệ.');
-      if (active() && state.pending.body.mapId !== id) throw Error('Theo dõi/hủy yêu cầu hiện tại trước khi đổi map.');
-      if(state.meta&&state.meta.map_id!==id)state.route=[];
+      if(active() && state.meta && state.meta.map_id!==id)throw Error('Chờ workflow kết thúc hoặc hủy trước khi đổi map.');
       const generation = ++state.generation; clearTimeout(state.timer);
       state.seed=null;state.dragging=null;state.remembered=null;
       for(const field of ['navSeedX','navSeedY'])$(field).value='';
@@ -548,12 +430,8 @@
       canvas.style.width = 'min(100%, ' + Math.max(180, 650 * meta.width_px / meta.height_px) + 'px)'; canvas.hidden = false;
       $('navMapInfo').textContent = `${map.mapName} · ${map.status} · ${meta.width_px} × ${meta.height_px} ô · ${(meta.resolution_m_per_pixel * 100).toFixed(1)} cm/ô · frame ${meta.frame_id}`;
       clearZone();$('navZoneMode').checked=false;await zones();await endpoints();
-      if (state.pending?.body.mapId === id) {
-        $('navEndpoints').value = state.pending.body.destinationEndpointId||state.pending.body.endpointIds?.[0];
-        if (selected()) $('navEndpoints').onchange();
-      }
       say('Đã tải map thật. Chọn endpoint đã lưu hoặc bấm/kéo để đặt điểm mới.');
-      renderRoute();controls(); draw(); poll(generation);
+      controls(); draw(); poll(generation);
     }
     async function snapshot() {
       const generation=state.generation,requestedRobot=robotId(),started=performance.now();
@@ -583,47 +461,6 @@
       }
       controls();
     }
-    let pendingLookupAt=-Infinity;
-    async function trackRequest(force=false) {
-      const p = state.pending; if (!p || p.done) return;
-      if(!p.requestId){
-        if(!force&&performance.now()-pendingLookupAt<5000)return;
-        pendingLookupAt=performance.now();
-        // Resolve a timed-out POST by its original key, using a read only API.
-        // Never replay an auto-submitted route just to discover its request ID.
-        const recovered=await api('/api/v1/service-requests/by-idempotency-key?key='+encodeURIComponent(p.key));
-        if(p!==state.pending)return;
-        if(!recovered){
-          if(closedPendingSession(p,state.snapshot)){
-            p.done=true;p.retryable=false;persist();controls();
-            say('BE không có yêu cầu này và phiên cũ đã đóng. Đã bỏ trạng thái chờ trên trình duyệt; có thể mở phiên mới.');
-          }else say('BE chưa có request cho yêu cầu trước. Có thể tiếp tục gửi cùng key; chưa tạo yêu cầu mới.');
-          return;
-        }
-        if(!recoveredRequestMatches(p,recovered))throw Error('Yêu cầu theo key khác robot/map/phiên đang theo dõi. Chưa mở khóa.');
-        p.requestId=recovered.serviceRequestId;persist();
-      }
-      const [request, jobs] = await Promise.all([api('/api/v1/service-requests/' + p.requestId), pages('/api/v1/jobs?requestId=' + p.requestId)]);
-      if (p !== state.pending) return;
-      state.request = request;
-      if (jobs.some(j => j.serviceRequestId !== p.requestId)) throw Error('BE trả job khác request đang theo dõi.');
-      const job = jobs[0]; let detail = null;
-      if (job) {
-        detail = await api('/api/v1/jobs/' + job.jobId); state.job = detail.job;
-        if (detail.job.serviceRequestId !== p.requestId) throw Error('Chi tiết job khác request đang theo dõi.');
-        if (detail.job.robotId) state.robotId = detail.job.robotId;
-        if(p.body.robotId&&detail.job.robotId&&detail.job.robotId!==p.body.robotId)throw Error('Job khác robot của phiên đã chọn; kiểm tra BE trước khi tiếp tục.');
-        if (TERMINAL.has(detail.job.status)) { p.done = true; p.retryable = false; persist(); }
-        else if (detail.job.status === 'RECOVERY_REQUIRED') say('Job cần khôi phục. Không tạo thêm MOVE; xem errorCode và bằng chứng dừng trong chi tiết.', true);
-      } else if (['CANCELLED', 'FAILED', 'COMPLETED'].includes(request.status)) { p.done = true; p.retryable = false; persist(); }
-      $('navReceipt').textContent = JSON.stringify({request, job: detail?.job ?? null, steps: detail?.steps ?? []}, null, 2);
-      if(p.kind==='ROUTE'){
-        const rows=(detail?.steps||[]).filter(s=>/^MOVE_\d+$/.test(s.stepCodeSnapshot)).sort((a,b)=>a.stepCodeSnapshot.localeCompare(b.stepCodeSnapshot));
-        $('navRouteProgress').textContent=rows.length?rows.map(s=>{const i=Number(s.stepCodeSnapshot.slice(5))-1,e=state.endpoints.find(e=>e.endpointId===p.body.endpointIds[i]);return (i+1)+'. '+(e?.endpointCode||'endpoint')+': '+s.status;}).join(' → '):'Đã gửi tuyến; chờ BE tạo/dispatch job.';
-      }
-      if (p.done) say('Yêu cầu ' + p.requestId + ' · Job ' + (detail?.job.status ?? request.status) + (detail?.job.errorCode ? ' · ' + detail.job.errorCode : ''));
-      controls();
-    }
     let streamController=null,streamGeneration=-1,streamLastAt=-Infinity,streamRetryAt=0;
     function stopRobotStream(){streamController?.abort();streamController=null;streamGeneration=-1;streamLastAt=-Infinity;}
     function ensureRobotStream(generation){
@@ -647,16 +484,9 @@
       }catch(error){/* REST fallback below remains active; stream failure is not robot disconnection. */}
       finally{if(streamController===controller){streamController=null;streamRetryAt=performance.now()+5000;}}})();
     }
-    let progressInFlight=false;
     async function poll(generation) {
       if (state.closed || generation !== state.generation || !state.meta) return;
       const started=performance.now();ensureRobotStream(generation);
-      // Job detail is audit/progress, never a prerequisite for rendering the next pose.
-      if(!progressInFlight&&state.pending&&!state.pending.done){
-        progressInFlight=true;
-        trackRequest().catch(error=>{if(generation===state.generation)$('navReceipt').textContent='Chưa cập nhật kết quả job: '+error.message;})
-          .finally(()=>{progressInFlight=false;});
-      }
       let delay=1000;
       try { if(performance.now()-streamLastAt>6000)await snapshot(); }
       catch (error) { if(generation!==state.generation)return;
@@ -666,120 +496,6 @@
       draw();controls();
       if (!state.closed && generation === state.generation) state.timer = setTimeout(() => poll(generation), Math.max(100,delay-(performance.now()-started)));
     }
-    async function template() { if (!state.template) state.template = await api('/navigation-move-workflow.json'); return state.template; }
-    async function requireWorkflow(id) {
-      if (!UUID.test(id || '')) throw Error('Chuẩn bị workflow MOVE trước.');
-      const detail = await api('/api/v1/admin/workflows/' + id), expected = templateContract(await template());
-      if (stable(workflowContract(detail)) !== stable(expected) || detail.workflow.status !== 'PUBLISHED' || !detail.workflow.acceptsNewJobs) throw Error('Workflow phải đã publish, nhận job mới và đúng hợp đồng một step MOVE của trang này.');
-      state.workflow = detail; $('navWorkflowId').value = id; return detail;
-    }
-    async function prepareWorkflow() {
-      const definition = await template(), code = definition.workflow.workflowCode;
-      const candidates = (await pages('/api/v1/admin/workflows')).filter(w => w.workflowCode === code).sort((a, b) => b.versionNo - a.versionNo);
-      const expected = stable(templateContract(definition)); let detail = null;
-      for (const candidate of candidates) {
-        const item = await api('/api/v1/admin/workflows/' + candidate.workflowId);
-        if (stable(workflowContract(item)) === expected && (['DRAFT', 'VALIDATED'].includes(item.workflow.status) || item.workflow.status === 'PUBLISHED' && item.workflow.acceptsNewJobs)) { detail = item; break; }
-      }
-      if (!detail) {
-        const body = JSON.parse(JSON.stringify(definition)); body.workflow.versionNo = Math.max(0, ...candidates.map(w => w.versionNo)) + 1;
-        detail = await api('/api/v1/admin/workflows/graph', {method: 'POST', body});
-      }
-      const id = detail.workflow.workflowId;
-      if (['DRAFT', 'VALIDATED'].includes(detail.workflow.status)) {
-        await api('/api/v1/admin/workflows/' + id + '/validate', {method: 'POST', body: {}});
-        await api('/api/v1/admin/workflows/' + id + '/publish', {method: 'POST', body: {}});
-      }
-      await requireWorkflow(id); say('Workflow MOVE đã sẵn sàng: ' + id + '. Chưa tạo job hay di chuyển robot.');
-    }
-    async function move() {
-      if(active()&&state.pending.kind==='ROUTE')throw Error('Tiếp tục hoặc hủy tuyến đang theo dõi trước.');
-      if (options.isMappingActive()) throw Error('Kết thúc phiên quét trước khi chạy navigation.');
-      let pending = state.pending;
-      if (!pending || pending.done) {
-        const id = mapId(), endpoint = selected();
-        if (!endpoint?.active || !endpoint.accessible) throw Error('Chọn endpoint đã lưu, active và accessible.');
-        if (state.editing) {
-          const draft = endpointBody();
-          if (Math.hypot(draft.xM - endpoint.xM, draft.yM - endpoint.yM) > 1e-8 || Math.abs(angle(draft.yawRad - endpoint.yawRad)) > 1e-8) {
-            throw Error('Lưu thay đổi vị trí/hướng endpoint trước khi chạy MOVE.');
-          }
-        }
-        // Refetch catalog and pose so stale browser state cannot authorize a MOVE.
-        const [map, point, detail, current] = await Promise.all([
-          api('/api/v1/maps/' + id), api('/api/v1/endpoints/' + endpoint.endpointId),
-          requireWorkflow($('navWorkflowId').value), snapshot()]);
-        if (map.status !== 'ACTIVE' || map.assetHash?.toLowerCase() !== state.meta.asset_hash.toLowerCase()) throw Error('Map phải ACTIVE và đúng phiên bản đang hiển thị.');
-        if (point.mapId !== id || !point.active || !point.accessible || !inside(state.meta, point.xM, point.yM)) throw Error('Endpoint đã đổi map/trạng thái hoặc nằm ngoài map.');
-        if (stable([point.xM, point.yM, point.yawRad]) !== stable([endpoint.xM, endpoint.yM, endpoint.yawRad])) throw Error('Endpoint đã thay đổi. Tải lại map/endpoint trước khi chạy.');
-        if (current.robot.status !== 'IDLE' || !current.dispatchReady || !pose()) throw Error('Robot chưa IDLE/sẵn sàng hoặc chưa có pose định vị mới đúng map và hash.');
-        const session=current.navigationSession;
-        if(session?.state!=='READY'||session.mapId!==id)throw Error('Phiên map chưa xác minh vị trí.');
-        pending = {kind:'SINGLE',key: crypto.randomUUID(), body: {mapId: id, workflowId: detail.workflow.workflowId,robotId:robotId(),navigationSessionId:session.sessionId,
-          destinationEndpointId: point.endpointId, targetMode: 'ENDPOINT', navigationMode: 'STANDARD',
-          passengerCount: 1, priority: 50, note: 'Đi tới endpoint từ bản đồ đã lưu', data: {}}, retryable: true, done: false};
-        state.pending = pending; persist();
-      }
-      try {
-        if (!pending.requestId) {
-          const created = await api('/api/v1/navigation-requests', {method: 'POST', body: pending.body, headers: {'Idempotency-Key': pending.key}});
-          if (!UUID.test(created.request?.serviceRequestId || '')) throw Error('BE chưa trả serviceRequestId. Giữ nguyên yêu cầu để thử lại.');
-          pending.requestId = created.request.serviceRequestId; persist();
-        }
-        const request = await api('/api/v1/service-requests/' + pending.requestId);
-        if (request.status === 'DRAFT') await api('/api/v1/service-requests/' + pending.requestId + '/submit', {method: 'POST', body: {}});
-        pending.retryable = false; persist();
-        say('Đã gửi yêu cầu ' + pending.requestId + '. BE phân công robot và dispatch step MOVE; đang chờ phản hồi Pi.');
-        await trackRequest(); await snapshot();
-      } catch (error) { pending.retryable = true; persist(); throw error; }
-    }
-
-    async function runRoute(){
-      if(options.isMappingActive())throw Error('Kết thúc phiên quét trước khi chạy tuyến.');
-      const routeStarted=performance.now();
-      say('Đang kiểm tra các điểm và trạng thái robot…');
-      let pending=state.pending;
-      if(active()&&pending.kind!=='ROUTE')throw Error('Theo dõi/hủy job hiện tại trước.');
-      if(!pending||pending.done){
-        const id=mapId(),ids=[...state.route],speed=Number($('navRouteSpeed').value);
-        if(!ids.length||ids.length>20)throw Error('Tuyến cần 1–20 endpoint.');
-        if(!Number.isFinite(speed)||speed<.05||speed>.6)throw Error('Tốc độ tuyến phải 0,05–0,6 m/s.');
-        const [map,routePoints,current]=await Promise.all([
-          api('/api/v1/maps/'+id),
-          Promise.all([...new Set(ids)].map(endpointId=>api('/api/v1/endpoints/'+endpointId))),snapshot()]);
-        if(map.status!=='ACTIVE'||map.assetHash?.toLowerCase()!==state.meta.asset_hash.toLowerCase())throw Error('Map đã đổi; tải lại map.');
-        for(const point of routePoints){
-          const saved=state.endpoints.find(e=>e.endpointId===point.endpointId);
-          if(!saved||point.mapId!==id||!point.active||!point.accessible||!inside(state.meta,point.xM,point.yM))throw Error('Endpoint trong tuyến không hợp lệ.');
-          if(stable([point.xM,point.yM,point.yawRad])!==stable([saved.xM,saved.yM,saved.yawRad]))throw Error('Endpoint đã đổi; tải lại map/endpoint.');
-        }
-        const session=current.navigationSession;
-        if(current.robot.status!=='IDLE'||!current.dispatchReady||!pose()||session?.state!=='READY'||session.mapId!==id||state.zoneAck!==true)throw Error('Robot/map/profile chưa sẵn sàng cho tuyến.');
-        pending={kind:'ROUTE',key:crypto.randomUUID(),body:{robotId:robotId(),mapId:id,navigationSessionId:session.sessionId,endpointIds:ids,maxSpeedMps:speed,submit:true,note:'Tuyến nhiều endpoint từ trang map'},retryable:true,done:false};
-        state.pending=pending;persist();
-      }
-      try{
-        if(!pending.requestId){
-          say('Đang chuẩn bị tuyến trên BE; robot chưa nhận lệnh chạy.');
-          const result=await api('/api/v1/navigation-routes',{method:'POST',body:pending.body,headers:{'Idempotency-Key':pending.key}});
-          if(!UUID.test(result.request?.serviceRequestId||''))throw Error('BE chưa trả request ID; dùng nút tiếp tục để gửi lại cùng key.');
-          pending.requestId=result.request.serviceRequestId;pending.workflowId=result.workflowId;persist();
-        }
-        pending.retryable=false;persist();say('Đã gửi tuyến '+pending.body.endpointIds.length+' điểm sau '+((performance.now()-routeStarted)/1000).toFixed(1)+' giây. Đang chờ Pi nhận bước MOVE. Request '+pending.requestId+'.');
-        await trackRequest();await snapshot();
-      }catch(error){
-        // A definitive validation/auth conflict created no route. Release the
-        // editor so it can be corrected. Network/5xx retries keep the same key.
-        if(!pending.requestId&&error.status>=400&&error.status<500&&error.status!==408&&error.status!==429){pending.done=true;pending.retryable=false;}
-        else pending.retryable=true;
-        persist();throw error;
-      }
-    }
-    $('navRouteAdd').onclick=()=>{if(state.busy||active())return;const e=selected();if(!e?.active||!e.accessible||state.route.length>=20)return;state.route.push(e.endpointId);renderRoute();controls();};
-    $('navRouteClear').onclick=()=>{if(state.busy||active())return;state.route=[];renderRoute();controls();};
-    $('navRouteSpeed').oninput=controls;
-    $('navRouteRun').onclick=()=>mutate(runRoute);
-
     $('navLoad').onclick = () => mutate(loadMap);
     $('navUseSaved').onclick = () => mutate(async () => { const id = options.getSavedMapId(); if (!UUID.test(id)) throw Error('Xem map đã lưu của job ở trên trước.'); $('navMapId').value = id; await loadMap(); });
     $('navNewPoint').onclick = clearPoint;
@@ -838,7 +554,7 @@
     });
     $('navRecheck').onclick=()=>mutate(async()=>{
       if(!state.meta)await loadMap();
-      await snapshot();await trackRequest(true);
+      await snapshot();
       clearTimeout(state.timer);state.timer=setTimeout(()=>poll(state.generation),1000);
       if(!active())say('Đã đối chiếu BE. '+(['CLOSED','EXPIRED','NONE'].includes(state.snapshot?.navigationSession?.state)?'Có thể mở phiên mới.':'Xem trạng thái phiên bên trên.'));
     });
@@ -855,17 +571,8 @@
     }
     $('navSendSeed').onclick=()=>mutate(()=>initialize('SEED'));
     $('navGlobal').onclick=()=>mutate(()=>initialize('GLOBAL'));
-    $('navPrepare').onclick = () => mutate(prepareWorkflow);
-    $('navMove').onclick = () => mutate(move);
-    $('navCancel').onclick = () => mutate(async () => {
-      if (!state.pending?.requestId || state.pending.done) throw Error('Chưa có yêu cầu đang chạy để hủy.');
-      await api('/api/v1/service-requests/' + state.pending.requestId + '/cancel', {method: 'POST', body: {reason: 'Người vận hành hủy dẫn đường từ trang map'}});
-      state.pending.retryable = false; persist();
-      say('BE đã nhận yêu cầu hủy. Chờ job/Pi xác nhận dừng; không coi HTTP thành công là robot đã dừng.');
-      await trackRequest();
-    });
     $('navRefresh').onclick = () => mutate(async () => {
-      mapId(); await trackRequest(); await snapshot();
+      mapId(); await snapshot();
       clearTimeout(state.timer); state.timer = setTimeout(() => poll(state.generation), 1000);
       say(pose() ? 'Đã nhận vị trí mới đúng map.' : 'Chưa có pose hợp lệ trên map đã chọn; xem trạng thái robot.');
     });
@@ -908,7 +615,7 @@
     const expiryTimer = setInterval(()=>{controls();draw();}, 250);
     window.addEventListener('pagehide', () => { stopRobotStream();state.closed = true; state.generation++; clearTimeout(state.timer); clearInterval(expiryTimer); if (state.imageUrl) URL.revokeObjectURL(state.imageUrl); });
     controls();
-    return {loadMap, state};
+    return {loadMap, state, refresh:snapshot};
   }
-  return {geometry, pixelToMap, mapToPixel, inside, renderSize, viewTransform, freshPose, poseView, liveNavigationPose, currentNavigationPose, plannedPath, workflowContract, templateContract, consumeRobotEvents, recoveredRequestMatches, closedPendingSession, mount};
+  return {geometry, pixelToMap, mapToPixel, inside, renderSize, viewTransform, freshPose, poseView, liveNavigationPose, currentNavigationPose, plannedPath, consumeRobotEvents, mount};
 });
