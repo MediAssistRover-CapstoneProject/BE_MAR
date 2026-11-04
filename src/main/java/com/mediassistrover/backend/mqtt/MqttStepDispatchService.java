@@ -39,8 +39,11 @@ public class MqttStepDispatchService {
                 || !properties.getEnabledStepTypes().contains(step.getStepType().name()))
             throw new BusinessRuleException("Step "+step.getStepCode()+" awaits configured MQTT dispatch; keep workflow DRAFT");
         ObjectNode params=((ObjectNode)step.getParamsJson()).deepCopy();params.setAll((ObjectNode)step.getInputMappingJson());
+        boolean secureUnlock=step.getStepType()==StepType.CONTROL_HARDWARE
+                && Set.of("UNLOCK_COMPARTMENT","UNLOCK").contains(params.path("action").asText())
+                && "STAFF_VERIFIED".equals(params.path("authorization").path("mode").asText());
         if (step.getStepType()==StepType.CONTROL_HARDWARE && !Set.of("LOCK_COMPARTMENT","LOCK").contains(params.path("action").asText())
-                && !(properties.isAllowCommissioningUnlock() && HardwareCommissioningWorkflow.unlockWithoutGrant(step)))
+                && !secureUnlock && !(properties.isAllowCommissioningUnlock() && HardwareCommissioningWorkflow.unlockWithoutGrant(step)))
             throw new BusinessRuleException("Official UNLOCK awaits Pi STAFF_VERIFIED enforcement and a confirmed HELLO/output contract; keep workflow DRAFT");
         if (step.getStepType()==StepType.EXECUTE_SENSING && "MAPPING".equals(params.path("sensing_type").asText()))mapping.requireSupported(step);
         if(step.getStepType()==StepType.EXECUTE_SENSING && com.mediassistrover.backend.ai.AiSensingService.TYPES.contains(params.path("sensing_type").asText()))ai.requireEnabled();
@@ -81,6 +84,9 @@ public class MqttStepDispatchService {
         if (!registry.fresh(session)) return;
         if(commissioning && !"COMMISSIONING_ONLY".equals(session.getHelloJson().path("unlockPolicy").asText()))
             throw new BusinessRuleException("Commissioning UNLOCK must be enabled on both BE and Pi");
+        if(unlock && !commissioning && (!"STAFF_VERIFIED".equals(session.getHelloJson().path("unlockPolicy").asText())
+                || !hasCapability(session.getHelloJson(),"secure-unlock-v1")))
+            throw new BusinessRuleException("Official UNLOCK requires Pi STAFF_VERIFIED and secure-unlock-v1");
         if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step) && !session.getHelloJson().path("mappingEnabled").asBoolean())
             throw new BusinessRuleException("Pi does not enable mapping");
         if (session.getHelloJson().path("simulation").asBoolean() && !properties.isAllowSimulation()) throw new BusinessRuleException("Simulation dispatch is disabled");
@@ -134,5 +140,10 @@ public class MqttStepDispatchService {
         // cloud reads in a second transaction. Replays/retries still use plans.command.
         updates.publishEvent(new MqttDurablePublisher.CommandQueued(commandId,
             new MqttPublicationPlans.Publication(commandId,session.getRobotId(),session.getTransportSessionId(),command.deepCopy())));
+    }
+
+    private boolean hasCapability(com.fasterxml.jackson.databind.JsonNode hello,String expected) {
+        for(var capability:hello.path("capabilities")) if(expected.equals(capability.asText())) return true;
+        return false;
     }
 }

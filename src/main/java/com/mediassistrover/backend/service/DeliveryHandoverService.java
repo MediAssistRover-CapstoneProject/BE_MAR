@@ -43,7 +43,7 @@ public class DeliveryHandoverService {
         boolean sender=authentication.getPurpose()==AuthVerificationPurpose.DELIVERY_SENDER;
         if(!binding.getRobot().getRobotId().equals(job.getRobot().getRobotId()) || !binding.getOperationKey().equals(binding.getJobStep().getOperationKey()))
             fail("Delivery operation binding no longer matches robot/operation");
-        if(actor.getRole()!=Role.ADMIN && !authentication.getActorAccount().getAccountId().equals(actor.getAccountId()))
+        if(actor.getRole()!=Role.STAFF || !authentication.getActorAccount().getAccountId().equals(actor.getAccountId()))
             throw new AccessDeniedException("Delivery stage belongs to the verified staff account");
         if(cargo && !(sender?"LOAD":"UNLOAD").equals(current.getResolvedInputsJson().path("action").asText())
                 || prompt.endsWith("_SENDER") && !sender || prompt.endsWith("_RECEIVER") && sender)

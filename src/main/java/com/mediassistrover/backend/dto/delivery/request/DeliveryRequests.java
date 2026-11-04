@@ -16,6 +16,7 @@ public final class DeliveryRequests {
                        @Size(max=4000) String handlingInstruction,@Size(max=4000) String itemNote) { }
     public record Create(@NotNull UUID mapId,UUID pickupRoomId,UUID deliveryRoomId,
                          @NotNull UUID pickupEndpointId,UUID deliveryEndpointId,UUID deliveryGroupId,
+                         @NotNull UUID expectedSenderAccountId,@NotNull UUID expectedReceiverAccountId,
                          @NotNull TargetMode targetMode,@NotBlank @Size(max=160) String recipientName,
                          @Size(max=100) String recipientContact,@AssertTrue boolean requiresConfirmation,
                          @Size(max=4000) String temperatureRequirement,@Future Instant deliveryDeadline,

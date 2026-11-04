@@ -34,6 +34,8 @@ public class AuthVerificationServiceImpl implements AuthVerificationService {
         Job job=jobRepository.lockById(jobId).orElseThrow(()->new ResourceNotFoundException("Job not found: "+jobId));staffScope.requireJobAccess(job,actor);JobStep step=stepRepository.findById(r.authJobStepId()).orElseThrow(()->new ResourceNotFoundException("JobStep not found: "+r.authJobStepId()));
         if(!step.getJobTask().getJob().getJobId().equals(jobId))throw new BusinessRuleException("Authentication Step does not belong to Job");if(step.getStep().getStepType()!=StepType.AUTHENTICATE)throw new BusinessRuleException("JobStep is not AUTHENTICATE");
         if(r.method()!=AuthVerificationMethod.STAFF_CONFIRMATION)throw new BusinessRuleException("QR_CODE requires proof verification; not supported by this endpoint");
+        if(job.getSchemaVersion()==3 && job.getServiceRequest()!=null && job.getServiceRequest().getRequestType()==ServiceRequestType.DELIVERY)
+            throw new BusinessRuleException("Schema 3 delivery AUTHENTICATE requires QR proof verification");
         if(r.purpose()!=RuntimeAuthorizationPolicy.purpose(step))throw new BusinessRuleException("Authentication purpose does not match Step configuration");
         if(r.validForSeconds()<30||r.validForSeconds()>900)throw new BusinessRuleException("Verification validity must be 30-900 seconds");
         if(step.getStep().getParamsJson().has("method")&&!r.method().name().equals(step.getStep().getParamsJson().path("method").asText()))throw new BusinessRuleException("Authentication method does not match Step configuration");

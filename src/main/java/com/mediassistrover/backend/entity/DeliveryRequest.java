@@ -18,6 +18,8 @@ public class DeliveryRequest {
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="delivery_endpoint_id") private Endpoint deliveryEndpoint;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="delivery_group_id") private EndpointGroup deliveryGroup;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="resolved_delivery_endpoint_id") private Endpoint resolvedDeliveryEndpoint;
+    @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="expected_sender_account_id") private Account expectedSenderAccount;
+    @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="expected_receiver_account_id") private Account expectedReceiverAccount;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="sender_account_id") private Account senderAccount;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="receiver_account_id") private Account receiverAccount;
     @Enumerated(EnumType.STRING) @Column(name="target_mode",nullable=false,length=16) private TargetMode targetMode;

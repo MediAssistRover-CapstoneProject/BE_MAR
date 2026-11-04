@@ -90,7 +90,7 @@ public class OperationAuthorizationService {
                 || !permission.equals(verification.getRequiredPermission()) || verification.getRevokedAt()!=null
                 || !verification.getValidUntil().isAfter(now)) fail("Verification is expired, revoked, incomplete or outside this Job/purpose");
         Account actor=verification.getActorAccount();
-        if(actor.getStatus()!=AccountStatus.ACTIVE || actor.isMustChangePassword() || !Set.of(Role.ADMIN,Role.STAFF).contains(actor.getRole())
+        if(actor.getStatus()!=AccountStatus.ACTIVE || actor.isMustChangePassword() || actor.getRole()!=Role.STAFF
                 || verification.getActorTokenVersion()==null || verification.getActorTokenVersion()!=actor.getTokenVersion())
             fail("Verification actor is no longer authorized");
         // A newer authentication visit invalidates an earlier stage grant, even if its expiry has not elapsed.
