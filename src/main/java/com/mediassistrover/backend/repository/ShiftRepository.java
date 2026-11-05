@@ -26,6 +26,9 @@ public interface ShiftRepository extends JpaRepository<Shift, UUID> {
     Page<Shift> search(@Param("staffId") UUID staffId, @Param("roomId") UUID roomId,
                        @Param("status") ShiftStatus status, Pageable pageable);
 
+    @Query("select s from Shift s where (:staffId is null or s.staffProfile.staffProfileId = :staffId) and (:roomId is null or s.room.roomId = :roomId) and s.status <> com.mediassistrover.backend.enums.ShiftStatus.CANCELLED")
+    Page<Shift> searchNotCancelled(@Param("staffId") UUID staffId, @Param("roomId") UUID roomId, Pageable pageable);
+
     @Query("select s from Shift s where s.staffProfile.account.accountId = :accountId " +
             "and (:status is null or s.status = :status)")
     Page<Shift> findOwn(@Param("accountId") UUID accountId, @Param("status") ShiftStatus status, Pageable pageable);

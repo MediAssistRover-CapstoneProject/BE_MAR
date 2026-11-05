@@ -1,6 +1,7 @@
 package com.mediassistrover.backend.controller.shift;
 
 import com.mediassistrover.backend.dto.common.PageResponse;
+import com.mediassistrover.backend.dto.common.DeletionContracts.*;
 import com.mediassistrover.backend.dto.shift.request.ShiftRequests.*;
 import com.mediassistrover.backend.dto.shift.response.ShiftResponses.*;
 import com.mediassistrover.backend.enums.ShiftStatus;
@@ -32,6 +33,7 @@ import java.util.UUID;
 @Tag(name = "Admin Staff Shifts", description = "Staff assignment and child time-slot management")
 public class AdminShiftController {
     private final ShiftService service;
+    private final com.mediassistrover.backend.service.DeletionPolicy deletionPolicy;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -45,14 +47,15 @@ public class AdminShiftController {
     public PageResponse<ShiftResponse> list(@RequestParam(required = false) UUID staffProfileId,
                                             @RequestParam(required = false) UUID roomId,
                                             @RequestParam(required = false) ShiftStatus status,
+                                            @RequestParam(defaultValue="false") boolean includeDeleted,
                                             @RequestParam(defaultValue = "0") @Min(0) int page,
                                             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
-        return PageResponse.from(service.list(staffProfileId, roomId, status,
+        return PageResponse.from(service.list(staffProfileId, roomId, status, includeDeleted,
                 PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "startsAt"))));
     }
 
     @GetMapping("/{shiftId}")
-    public ShiftResponse get(@PathVariable UUID shiftId) { return service.get(shiftId); }
+    public ShiftResponse get(@PathVariable UUID shiftId,@RequestParam(defaultValue="false")boolean includeDeleted) { return service.get(shiftId,includeDeleted); }
 
     @PutMapping("/{shiftId}")
     public ShiftResponse update(@PathVariable UUID shiftId, @Valid @RequestBody Update body,
@@ -67,12 +70,13 @@ public class AdminShiftController {
     }
 
     @DeleteMapping("/{shiftId}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    @Operation(summary = "Delete an unstarted PLANNED Shift; active/history shifts are retained")
-    public void delete(@PathVariable UUID shiftId, @AuthenticationPrincipal AccountPrincipal actor,
-                       HttpServletRequest request) {
-        service.delete(shiftId, actor.accountId(), RequestMetadataFactory.from(request));
+    @Operation(summary = "Soft-delete an unstarted PLANNED Shift")
+    public ShiftResponse delete(@PathVariable UUID shiftId,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request) {
+        return service.delete(shiftId,body.reason(), actor.accountId(), RequestMetadataFactory.from(request));
     }
+    @PostMapping("/{shiftId}/restore") public ShiftResponse restore(@PathVariable UUID shiftId,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.restore(shiftId,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));}
+    @GetMapping("/{shiftId}/deletion-impact") public DeletionImpactResponse impact(@PathVariable UUID shiftId){return service.deletionImpact(shiftId);}
+    @DeleteMapping("/{shiftId}/force") public HardDeleteResponse force(@PathVariable UUID shiftId,@RequestHeader("X-Confirm-Hard-Delete")Boolean confirmed,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){deletionPolicy.requireHardDeleteConfirmation(confirmed);return service.forceDelete(shiftId,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));}
 
     @PostMapping("/{shiftId}/slots")
     @ResponseStatus(HttpStatus.CREATED)
@@ -96,9 +100,10 @@ public class AdminShiftController {
     }
 
     @DeleteMapping("/{shiftId}/slots/{slotId}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void deleteSlot(@PathVariable UUID shiftId, @PathVariable UUID slotId,
-                           @AuthenticationPrincipal AccountPrincipal actor, HttpServletRequest request) {
-        service.deleteSlot(shiftId, slotId, actor.accountId(), RequestMetadataFactory.from(request));
+    public SlotResponse deleteSlot(@PathVariable UUID shiftId,@PathVariable UUID slotId,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request) {
+        return service.deleteSlot(shiftId,slotId,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));
     }
+    @PostMapping("/{shiftId}/slots/{slotId}/restore") public SlotResponse restoreSlot(@PathVariable UUID shiftId,@PathVariable UUID slotId,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.restoreSlot(shiftId,slotId,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));}
+    @GetMapping("/{shiftId}/slots/{slotId}/deletion-impact") public DeletionImpactResponse slotImpact(@PathVariable UUID shiftId,@PathVariable UUID slotId){return service.slotDeletionImpact(shiftId,slotId);}
+    @DeleteMapping("/{shiftId}/slots/{slotId}/force") public HardDeleteResponse forceSlot(@PathVariable UUID shiftId,@PathVariable UUID slotId,@RequestHeader("X-Confirm-Hard-Delete")Boolean confirmed,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){deletionPolicy.requireHardDeleteConfirmation(confirmed);return service.forceDeleteSlot(shiftId,slotId,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));}
 }

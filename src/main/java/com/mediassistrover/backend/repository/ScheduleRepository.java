@@ -10,8 +10,10 @@ import java.util.*;
 public interface ScheduleRepository extends JpaRepository<Schedule,UUID> {
     boolean existsByScheduleCodeIgnoreCase(String code);
     Page<Schedule> findByStatus(ScheduleStatus status,Pageable pageable);
+    Page<Schedule> findByStatusNot(ScheduleStatus status,Pageable pageable);
     Page<Schedule> findByCreatedByAccountAccountId(UUID accountId,Pageable pageable);
     Page<Schedule> findByCreatedByAccountAccountIdAndStatus(UUID accountId,ScheduleStatus status,Pageable pageable);
+    Page<Schedule> findByCreatedByAccountAccountIdAndStatusNot(UUID accountId,ScheduleStatus status,Pageable pageable);
     @Query("select count(s)>0 from Schedule s where s.status=com.mediassistrover.backend.enums.ScheduleStatus.ACTIVE " +
             "and s.robot.robotId=:robotId and (:excludeId is null or s.scheduleId<>:excludeId) " +
             "and (:endsAt is null or s.startsAt<:endsAt) and (s.endsAt is null or s.endsAt>:startsAt)")

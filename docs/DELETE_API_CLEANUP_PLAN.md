@@ -47,6 +47,11 @@
   - Thêm `DELETE /api/v1/robots/{id}`, `POST /{id}/restore`, `GET /{id}/deletion-impact`, `DELETE /{id}/force`.
   - Robot `BUSY` hoặc `STARTING` không thể retire; hard-delete bị chặn nếu còn bất kỳ FK nào, gồm history/runtime/operational records.
   - List/Get ẩn `RETIRED` mặc định và hỗ trợ `includeDeleted=true`.
+- [x] Hoàn thiện Schedule, Shift và Slot:
+  - Schedule `RETIRED` có DELETE/restore về `PAUSED`, reason, includeDeleted, impact và force-delete.
+  - DELETE Shift hiện chuyển `PLANNED` thành `CANCELLED`; restore chỉ khi Shift chưa bắt đầu.
+  - DELETE Slot hiện chuyển thành `CLOSED`; restore chỉ khi Slot/Shift chưa bắt đầu.
+  - Thêm impact/force-delete cho Shift và Slot. Force-delete Shift chỉ xóa Slot con; mọi FK vận hành khác là blocker.
 - [x] `mvn -DskipTests compile` thành công sau thay đổi Facility.
 - [x] `git diff --check` thành công sau thay đổi Facility.
 
@@ -55,7 +60,7 @@
 - [ ] Chưa kiểm tra Swagger thủ công trên database phát triển.
 - [ ] Admin Account controller hiện mới có lock/unlock/reset-password; chưa có bộ lifecycle endpoint riêng cho account không phải Staff.
 - [ ] Chưa triển khai lifecycle riêng cho endpoint-group membership (hiện đã có deactivate bằng `DELETE`, chưa có restore/force/impact độc lập do đây là association).
-- [ ] Chưa triển khai Schedule/Shift/Slot, AI profile/Media/SystemSetting và nhóm vận hành.
+- [ ] Chưa triển khai AI profile/Media/SystemSetting và nhóm vận hành.
 
 ### Bước tiếp theo cho lần làm sau
 
