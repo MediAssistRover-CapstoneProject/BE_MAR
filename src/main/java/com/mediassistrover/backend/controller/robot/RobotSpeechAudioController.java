@@ -24,7 +24,7 @@ public class RobotSpeechAudioController {
     @Operation(summary="Inspect STT/TTS model configuration; no provider requests or robot jobs")
     public Map<String,Object> status(){return Map.of("stt",transcription.configuration(),"tts",speech.configuration());}
     @PostMapping(value="/transcribe",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
-    @Operation(summary="Transcribe a short PCM16 mono 16 kHz WAV; no RAG, workflow or motion commands")
+    @Operation(summary="Transcribe a short PCM16 mono 16 kHz WAV; languageCode vi, en or auto; no workflow or motion commands")
     public ResponseEntity<?> transcribe(@RequestPart("file") MultipartFile file,
             @RequestParam(defaultValue="vi") String languageCode)throws IOException {
         if(file.getSize()>OpenAiSttService.MAX_BYTES)throw new com.mediassistrover.backend.exception.FileTooLargeException("STT recording exceeds 1 MB");

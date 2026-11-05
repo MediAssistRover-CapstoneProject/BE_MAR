@@ -6,6 +6,9 @@ import com.mediassistrover.backend.dto.pi.response.PiResponses.AckResponse;
 import com.mediassistrover.backend.dto.voice.request.VoiceRequests.*;
 import com.mediassistrover.backend.security.DevicePrincipal;
 import com.mediassistrover.backend.service.VoiceService;
+import com.mediassistrover.backend.service.VoiceNavigationService;
+import com.mediassistrover.backend.util.RequestMetadataFactory;
+import jakarta.servlet.http.HttpServletRequest;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -28,9 +31,24 @@ import org.springframework.web.multipart.MultipartFile;
 @RequiredArgsConstructor
 @PreAuthorize("hasRole('DEVICE')")
 @SecurityRequirement(name = OpenApiConfig.DEVICE_BEARER_SCHEME)
-@Tag(name = "Server-Pi Voice", description = "Voice event contract; Backend does not perform speech recognition or intent AI")
+@Tag(name = "Server-Pi Voice", description = "Voice text history and confirmed endpoint navigation; audio STT/TTS uses /api/v1/pi/speech")
 public class PiVoiceController {
     private final VoiceService service;
+    private final VoiceNavigationService navigation;
+
+    @GetMapping("/navigation-destinations")
+    @Operation(summary="List active accessible endpoint names in this device's current map session; no public visibility or room link required")
+    public com.fasterxml.jackson.databind.node.ObjectNode destinations(@AuthenticationPrincipal DevicePrincipal device){
+        return navigation.destinations(device);
+    }
+
+    @PostMapping("/navigation-requests")
+    @Operation(summary="Submit a confirmed voice destination as a real NAVIGATION request/job; MOVE succeeds before arrival SPEAK")
+    public com.mediassistrover.backend.dto.request.response.ServiceRequestResponses.DeviceRequestDetailResponse navigate(
+            @RequestHeader("Idempotency-Key") String key,@Valid @RequestBody VoiceNavigationService.Create body,
+            @AuthenticationPrincipal DevicePrincipal device,HttpServletRequest request){
+        return navigation.create(body,key,device,RequestMetadataFactory.from(request));
+    }
 
     @PostMapping("/interactions")
     @Operation(summary = "Start an idempotent voice interaction")

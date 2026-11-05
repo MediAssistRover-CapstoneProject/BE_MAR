@@ -1,0 +1,174 @@
+{
+  "workflow": {
+    "workflowCode": "WF_VOICE_ENDPOINT_V1",
+    "versionNo": 1,
+    "workflowName": "Voice: di toi endpoint roi thong bao",
+    "serviceType": "NAVIGATION",
+    "description": "Trusted parameterized MOVE then arrival SPEAK. Endpoint/map come from BE; no arrival announcement on MOVE failure.",
+    "inputSchemaJson": {
+      "type": "object",
+      "properties": {
+        "map_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "target_mode": {
+          "type": "string",
+          "const": "ENDPOINT"
+        },
+        "endpoint_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "max_speed_mps": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 0.3
+        },
+        "arrival_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "required": [
+        "map_id",
+        "target_mode",
+        "endpoint_id",
+        "max_speed_mps",
+        "arrival_text"
+      ],
+      "additionalProperties": true
+    },
+    "inputUiJson": {},
+    "defaultInputsJson": {},
+    "outputMappingJson": {
+      "move_result": {
+        "$ref": "/outputs/MOVE_TO_ENDPOINT"
+      },
+      "arrival_speech": {
+        "$ref": "/outputs/ANNOUNCE_ARRIVAL"
+      }
+    },
+    "requiredCapabilitiesJson": [
+      "MOVE"
+    ],
+    "maxDurationSec": 300,
+    "maxTotalVisits": 2,
+    "graphVersion": 3,
+    "schemaVersion": 3
+  },
+  "graph": {
+    "startStepCode": "MOVE_TO_ENDPOINT",
+    "tasks": [
+      {
+        "taskCode": "NAVIGATE",
+        "taskName": "Đi tới điểm đích",
+        "sequenceNo": 1,
+        "configJson": {}
+      }
+    ],
+    "steps": [
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "MOVE",
+        "stepCode": "MOVE_TO_ENDPOINT",
+        "stepName": "Đi tới vị trí endpoint",
+        "sequenceNo": 1,
+        "paramsJson": {
+          "mode": "NORMAL",
+          "max_speed_mps": 0.2
+        },
+        "inputMappingJson": {
+          "map_id": {
+            "$ref": "/inputs/map_id"
+          },
+          "endpoint_id": {
+            "$ref": "/inputs/endpoint_id"
+          },
+          "max_speed_mps": {
+            "$ref": "/inputs/max_speed_mps"
+          }
+        },
+        "timeoutSec": 180,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "INTERACT",
+        "stepCode": "ANNOUNCE_ARRIVAL",
+        "stepName": "Thong bao da toi noi",
+        "sequenceNo": 2,
+        "description": "",
+        "paramsJson": {
+          "prompt_key": "VOICE_ARRIVAL",
+          "action": "SPEAK"
+        },
+        "inputMappingJson": {
+          "data": {
+            "text": {
+              "$ref": "/inputs/arrival_text"
+            },
+            "language_code": "vi",
+            "speed_wpm": 150,
+            "volume": 70
+          }
+        },
+        "timeoutSec": 90,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      }
+    ],
+    "transitions": [
+      {
+        "fromStepCode": "MOVE_TO_ENDPOINT",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": true,
+        "toStepCode": "ANNOUNCE_ARRIVAL"
+      },
+      {
+        "fromStepCode": "MOVE_TO_ENDPOINT",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "MOVE_TO_ENDPOINT",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "RECOVERY_REQUIRED"
+      },
+      {
+        "fromStepCode": "ANNOUNCE_ARRIVAL",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "SUCCEEDED"
+      },
+      {
+        "fromStepCode": "ANNOUNCE_ARRIVAL",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "ANNOUNCE_ARRIVAL",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      }
+    ]
+  }
+}

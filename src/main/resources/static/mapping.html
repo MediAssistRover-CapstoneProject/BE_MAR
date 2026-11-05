@@ -53,6 +53,12 @@
 </section>
 <section id="mappingAutonomy" class="panel"></section>
 <section id="mapNavigation" class="panel" aria-label="Đặt endpoint và dẫn đường trên map đã lưu"></section>
+<section class="panel" aria-label="Cấu hình dẫn đường bằng giọng nói">
+<h2>Dẫn robot tới endpoint bằng giọng nói</h2>
+<button id="prepareVoiceNavigation">Chuẩn bị workflow voice MOVE → báo đã tới nơi</button>
+<label>Workflow NAVIGATION cho voice<input id="voiceNavigationWorkflow" readonly placeholder="Chuẩn bị một lần; dùng lại với endpoint của map đang mở"></label>
+<small>Mở phiên map, chạy navigation trên Pi và chờ READY. Trong terminal Pi khác chạy voice_audio.py chat --start-now --once. Nói “dẫn tôi tới điểm b”, rồi “xác nhận”. BE tạo một job MOVE → SPEAK; không báo đã tới nơi khi MOVE thất bại.</small>
+</section>
 <section id="robotTestWorkflow" class="panel" aria-label="Chạy workflow robot"></section>
 
 <details class="panel"><summary>Trạng thái nhiệm vụ</summary><pre id="state"></pre></details>
@@ -326,6 +332,7 @@ async function prepareWorkflow(file,code,field){
   await api('/api/v1/admin/workflows/'+id+'/publish',{});
 }
 $('prepareMapping').onclick=async()=>{const b=$('prepareMapping');b.disabled=true;try{await prepareWorkflow('mapping-workflow.json','WF_MAPPING','workflow');notice('Workflow quét và lưu đã sẵn sàng.')}catch(e){notice(e.message)}finally{b.disabled=false}};
+$('prepareVoiceNavigation').onclick=async()=>{const b=$('prepareVoiceNavigation');b.disabled=true;try{await prepareWorkflow('voice-navigation-workflow.json','WF_VOICE_ENDPOINT_V1','voiceNavigationWorkflow');notice('Workflow voice đã sẵn sàng: MOVE thành công rồi robot mới báo đã tới nơi.')}catch(e){notice(e.message)}finally{b.disabled=false}};
 </script>
 <script src="/map-navigation.js?v=20261105-delete-endpoint"></script>
 <script>

@@ -45,7 +45,7 @@ public class OpenAiSttService {
     public Configuration configuration(){return new Configuration(enabled,!key.isBlank(),model,20);}
 
     public Result transcribe(byte[] wav,String language) {
-        if(!Set.of("vi","en").contains(language))throw new BusinessRuleException("STT_LANGUAGE_UNSUPPORTED");
+        if(!Set.of("vi","en","auto").contains(language))throw new BusinessRuleException("STT_LANGUAGE_UNSUPPORTED");
         long duration=validateWav(wav),started=System.nanoTime();
         if(!enabled)return failed(503,"STT_DISABLED",duration,started);
         if(key.isBlank())return failed(503,"STT_API_KEY_MISSING",duration,started);
@@ -58,8 +58,9 @@ public class OpenAiSttService {
             // models accept `languages`. A bounded prompt works with both.
             field(body,boundary,"prompt",language.equals("vi")?
                 "Vietnamese hospital conversation. Preserve spoken room names and numbers.":
-                "English hospital conversation. Preserve spoken room names and numbers.");
-            if(model.equals("whisper-1"))field(body,boundary,"language",language);
+                language.equals("en")?"English hospital conversation. Preserve spoken room names and numbers.":
+                "Vietnamese and English hospital conversation, including mixed language. Transcribe spoken words without translating; preserve destination names and letters.");
+            if(model.equals("whisper-1")&&!language.equals("auto"))field(body,boundary,"language",language);
             body.write(("--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\"capture.wav\"\r\nContent-Type: audio/wav\r\n\r\n").getBytes(StandardCharsets.UTF_8));
             body.write(wav);body.write(("\r\n--"+boundary+"--\r\n").getBytes(StandardCharsets.US_ASCII));
             var request=HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(45))
