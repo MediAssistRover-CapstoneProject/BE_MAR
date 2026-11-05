@@ -23,4 +23,5 @@ public interface FacilityMapRepository extends JpaRepository<FacilityMap, UUID> 
     List<FacilityMap> findAllByFloorAndStatusForUpdate(@Param("floorId") UUID floorId,
                                                        @Param("status") MapStatus status);
     Page<FacilityMap> findByStatus(MapStatus status, Pageable pageable);
+    Page<FacilityMap> findByStatusNot(MapStatus status, Pageable pageable);
 }

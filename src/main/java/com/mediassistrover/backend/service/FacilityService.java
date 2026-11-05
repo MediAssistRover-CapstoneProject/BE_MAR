@@ -20,41 +20,54 @@ public interface FacilityService {
 
     FloorResponse createFloor(FloorRequest request, UUID actorId, RequestMetadata metadata);
     FloorResponse updateFloor(UUID id, FloorRequest request, UUID actorId, RequestMetadata metadata);
-    FloorResponse setFloorActive(UUID id, boolean active, UUID actorId, RequestMetadata metadata);
-    Page<FloorResponse> listFloors(Pageable pageable);
-    FloorResponse getFloor(UUID id);
+    FloorResponse setFloorActive(UUID id,boolean active,String reason,UUID actorId,RequestMetadata metadata);
+    Page<FloorResponse> listFloors(boolean includeDeleted,Pageable pageable);
+    FloorResponse getFloor(UUID id,boolean includeDeleted);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse floorDeletionImpact(UUID id);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDeleteFloor(UUID id,String reason,UUID actorId,RequestMetadata metadata);
 
     MapResponse createMap(MapRequest request, UUID actorId, RequestMetadata metadata);
     MapResponse updateMap(UUID id, MapRequest request, UUID actorId, RequestMetadata metadata);
     MapResponse activateMap(UUID id, UUID actorId, RequestMetadata metadata);
-    MapResponse archiveMap(UUID id, UUID actorId, RequestMetadata metadata);
+    MapResponse archiveMap(UUID id, String reason, UUID actorId, RequestMetadata metadata);
+    MapResponse restoreMap(UUID id, String reason, UUID actorId, RequestMetadata metadata);
     MapArtifactResponse getMapArtifact(UUID id);
-    Page<MapResponse> listMaps(Pageable pageable);
-    MapResponse getMap(UUID id);
+    Page<MapResponse> listMaps(boolean includeDeleted, Pageable pageable);
+    MapResponse getMap(UUID id, boolean includeDeleted);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse mapDeletionImpact(UUID id);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDeleteMap(UUID id, String reason, UUID actorId, RequestMetadata metadata);
 
     ZoneResponse createZone(ZoneRequest request, UUID actorId, RequestMetadata metadata);
     ZoneResponse updateZone(UUID id, ZoneRequest request, UUID actorId, RequestMetadata metadata);
-    ZoneResponse setZoneActive(UUID id, boolean active, UUID actorId, RequestMetadata metadata);
-    Page<ZoneResponse> listZones(Pageable pageable);
-    ZoneResponse getZone(UUID id);
+    ZoneResponse setZoneActive(UUID id, boolean active, String reason, UUID actorId, RequestMetadata metadata);
+    Page<ZoneResponse> listZones(boolean includeDeleted, Pageable pageable);
+    ZoneResponse getZone(UUID id, boolean includeDeleted);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse zoneDeletionImpact(UUID id);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDeleteZone(UUID id, String reason, UUID actorId, RequestMetadata metadata);
 
     RoomResponse createRoom(RoomRequest request, UUID actorId, RequestMetadata metadata);
     RoomResponse updateRoom(UUID id, RoomRequest request, UUID actorId, RequestMetadata metadata);
-    RoomResponse setRoomActive(UUID id, boolean active, UUID actorId, RequestMetadata metadata);
-    Page<RoomResponse> listRooms(Pageable pageable);
-    RoomResponse getRoom(UUID id);
+    RoomResponse setRoomActive(UUID id, boolean active, String reason, UUID actorId, RequestMetadata metadata);
+    Page<RoomResponse> listRooms(boolean includeDeleted, Pageable pageable);
+    RoomResponse getRoom(UUID id, boolean includeDeleted);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse roomDeletionImpact(UUID id);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDeleteRoom(UUID id, String reason, UUID actorId, RequestMetadata metadata);
 
     EndpointResponse createEndpoint(EndpointRequest request, UUID actorId, RequestMetadata metadata);
     EndpointResponse updateEndpoint(UUID id, EndpointRequest request, UUID actorId, RequestMetadata metadata);
-    EndpointResponse setEndpointActive(UUID id, boolean active, UUID actorId, RequestMetadata metadata);
-    Page<EndpointResponse> listEndpoints(Pageable pageable);
-    EndpointResponse getEndpoint(UUID id);
+    EndpointResponse setEndpointActive(UUID id, boolean active, String reason, UUID actorId, RequestMetadata metadata);
+    Page<EndpointResponse> listEndpoints(boolean includeDeleted, Pageable pageable);
+    EndpointResponse getEndpoint(UUID id, boolean includeDeleted);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse endpointDeletionImpact(UUID id);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDeleteEndpoint(UUID id, String reason, UUID actorId, RequestMetadata metadata);
 
     EndpointGroupResponse createEndpointGroup(EndpointGroupRequest request, UUID actorId, RequestMetadata metadata);
     EndpointGroupResponse updateEndpointGroup(UUID id, EndpointGroupRequest request, UUID actorId, RequestMetadata metadata);
-    EndpointGroupResponse setEndpointGroupActive(UUID id, boolean active, UUID actorId, RequestMetadata metadata);
-    Page<EndpointGroupResponse> listEndpointGroups(Pageable pageable);
-    EndpointGroupResponse getEndpointGroup(UUID id);
+    EndpointGroupResponse setEndpointGroupActive(UUID id, boolean active, String reason, UUID actorId, RequestMetadata metadata);
+    Page<EndpointGroupResponse> listEndpointGroups(boolean includeDeleted, Pageable pageable);
+    EndpointGroupResponse getEndpointGroup(UUID id, boolean includeDeleted);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse endpointGroupDeletionImpact(UUID id);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDeleteEndpointGroup(UUID id, String reason, UUID actorId, RequestMetadata metadata);
 
     EndpointGroupMemberResponse createEndpointGroupMember(EndpointGroupMemberRequest request, UUID actorId, RequestMetadata metadata);
     EndpointGroupMemberResponse updateEndpointGroupMember(UUID groupId, UUID endpointId, EndpointGroupMemberRequest request, UUID actorId, RequestMetadata metadata);

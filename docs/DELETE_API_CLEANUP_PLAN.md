@@ -5,7 +5,7 @@
 **Cập nhật gần nhất:** 06/11/2026
 
 **Nhánh:** `main`
-**Trạng thái:** checkpoint Giai đoạn 1 đã commit local tại `5c5cfc8`; chưa push theo yêu cầu chỉ push khi hoàn thành toàn bộ.
+**Trạng thái:** Giai đoạn Facility đã hoàn thiện trong working tree, chờ commit local; các commit trước vẫn chưa push theo yêu cầu chỉ push khi hoàn thành toàn bộ.
 
 ### Đã hoàn thành trong lượt hiện tại
 
@@ -36,21 +36,28 @@
   - Có `deletion-impact` và `/force`, bắt buộc reason/confirmation theo chuẩn chung.
   - Hospital hard-delete xóa Article sở hữu nhưng chặn nếu còn Floor.
   - Article không có dependent table nên được hard-delete độc lập.
-- [x] `mvn -q -DskipTests compile` thành công sau các thay đổi trên.
-- [x] `mvn -q -DskipTests package` và `git diff --check` thành công.
+- [x] Hoàn thiện Facility (Hospital, Floor, Map, Zone, Room, Endpoint, EndpointGroup):
+  - Soft-delete/restore và `reason` cho toàn bộ resource cấu hình; Map dùng `ARCHIVED` và restore về `INACTIVE`, các resource còn lại dùng `active=false/true`.
+  - List/Get ẩn resource soft-deleted mặc định và có `includeDeleted=true` cho ADMIN.
+  - Thêm `GET /{resource}/{id}/deletion-impact` và `DELETE /{resource}/{id}/force` cho Floor, Map, Zone, Room, Endpoint, EndpointGroup.
+  - Force-delete luôn yêu cầu `X-Confirm-Hard-Delete: true`, khóa record và chặn khi còn FK nghiệp vụ; chỉ tự xóa MapBinaryAsset/MapArtifact hoặc EndpointGroupMember thuộc aggregate.
+  - Audit ghi reason, trạng thái trước/sau và thống kê record xóa cứng.
+- [x] `mvn -DskipTests compile` thành công sau thay đổi Facility.
+- [x] `git diff --check` thành công sau thay đổi Facility.
 
 ### Đang làm dở
 
 - [ ] Chưa kiểm tra Swagger thủ công trên database phát triển.
 - [ ] Admin Account controller hiện mới có lock/unlock/reset-password; chưa có bộ lifecycle endpoint riêng cho account không phải Staff.
-- [ ] Chưa triển khai nhóm Facility: Floor, Map, Zone, Room, Endpoint, EndpointGroup và membership.
+- [ ] Chưa triển khai lifecycle riêng cho endpoint-group membership (hiện đã có deactivate bằng `DELETE`, chưa có restore/force/impact độc lập do đây là association).
+- [ ] Chưa triển khai Robot, Schedule/Shift/Slot, AI profile/Media/SystemSetting và nhóm vận hành.
 
 ### Bước tiếp theo cho lần làm sau
 
-1. Kiểm tra Swagger và gọi thủ công các endpoint Workflow/Staff mới trên database phát triển.
-2. Rà diff lần cuối rồi commit/push checkpoint Giai đoạn 1.
-3. Bổ sung lifecycle API riêng cho account không phải Staff nếu sản phẩm cho phép quản lý các role đó.
-4. Chuyển sang nhóm Facility.
+1. Rà diff Facility, commit local; tuyệt đối chưa push.
+2. Bổ sung lifecycle API riêng cho account không phải Staff nếu sản phẩm cho phép quản lý các role đó.
+3. Chuyển sang Robot, Schedule/Shift/Slot, AI profile/Media/SystemSetting.
+4. Sau khi hoàn tất mọi nhóm, kiểm tra Swagger thủ công trên database phát triển và push một lần theo yêu cầu.
 
 ## 1. Mục tiêu và phạm vi
 

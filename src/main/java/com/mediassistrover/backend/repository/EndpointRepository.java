@@ -14,6 +14,7 @@ import java.util.List;
 public interface EndpointRepository extends JpaRepository<Endpoint, UUID> {
     boolean existsByMapMapIdAndEndpointCodeIgnoreCase(UUID mapId, String endpointCode);
     Page<Endpoint> findByActiveTrueAndPublicVisibleTrue(Pageable pageable);
+    Page<Endpoint> findByActiveTrue(Pageable pageable);
     List<Endpoint> findByMapMapIdOrderByEndpointCodeAsc(UUID mapId);
     List<Endpoint> findByZoneZoneId(UUID zoneId);
     @Query("""

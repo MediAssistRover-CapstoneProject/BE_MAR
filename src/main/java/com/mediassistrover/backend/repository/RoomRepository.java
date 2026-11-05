@@ -12,6 +12,7 @@ import java.util.UUID;
 public interface RoomRepository extends JpaRepository<Room, UUID> {
     boolean existsByRoomCodeIgnoreCase(String roomCode);
     Page<Room> findByActiveTrueAndPublicVisibleTrue(Pageable pageable);
+    Page<Room> findByActiveTrue(Pageable pageable);
     @Query("""
             select r from Room r where r.active = true and r.publicVisible = true
               and (:floorId is null or r.floor.floorId = :floorId)

@@ -11,6 +11,7 @@ import java.util.UUID;
 
 public interface EndpointGroupRepository extends JpaRepository<EndpointGroup, UUID> {
     boolean existsByMapMapIdAndGroupCodeIgnoreCase(UUID mapId, String groupCode);
+    Page<EndpointGroup> findByActiveTrue(Pageable pageable);
     @Query("""
             select g from EndpointGroup g where g.active = true
               and (:mapId is null or g.map.mapId = :mapId)
