@@ -92,7 +92,7 @@
 
 - [ ] Chưa kiểm tra Swagger thủ công trên database phát triển.
 - [ ] Admin Account controller hiện mới có lock/unlock/reset-password; chưa có bộ lifecycle endpoint riêng cho account không phải Staff.
-- [ ] Chưa triển khai lifecycle riêng cho endpoint-group membership (hiện đã có deactivate bằng `DELETE`, chưa có restore/force/impact độc lập do đây là association).
+- [x] Hoàn thiện EndpointGroupMember: soft-delete `active=false`, restore, deletion-impact và force-delete membership với confirmation header.
 - [ ] Chưa hoàn thiện hard-delete ServiceRequest, Job, Alert/Incident, VoiceInteraction và retention.
 
 ### Bước tiếp theo cho lần làm sau

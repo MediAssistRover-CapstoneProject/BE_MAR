@@ -71,7 +71,10 @@ public interface FacilityService {
 
     EndpointGroupMemberResponse createEndpointGroupMember(EndpointGroupMemberRequest request, UUID actorId, RequestMetadata metadata);
     EndpointGroupMemberResponse updateEndpointGroupMember(UUID groupId, UUID endpointId, EndpointGroupMemberRequest request, UUID actorId, RequestMetadata metadata);
-    void removeEndpointGroupMember(UUID groupId, UUID endpointId, UUID actorId, RequestMetadata metadata);
+    EndpointGroupMemberResponse removeEndpointGroupMember(UUID groupId, UUID endpointId,String reason, UUID actorId, RequestMetadata metadata);
+    EndpointGroupMemberResponse restoreEndpointGroupMember(UUID groupId,UUID endpointId,String reason,UUID actorId,RequestMetadata metadata);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse endpointGroupMemberDeletionImpact(UUID groupId,UUID endpointId);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDeleteEndpointGroupMember(UUID groupId,UUID endpointId,String reason,UUID actorId,RequestMetadata metadata);
     Page<EndpointGroupMemberResponse> listEndpointGroupMembers(Pageable pageable);
 
     Page<HospitalInformationResponse> listPublicHospitalInformation(Pageable pageable);
