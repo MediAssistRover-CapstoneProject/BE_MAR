@@ -48,4 +48,7 @@ public class VoiceInteraction {
 
     @Column(name = "audio_uri", columnDefinition = "TEXT")
     private String audioUri;
+
+    @Column(name = "archived_at")
+    private Instant archivedAt;
 }

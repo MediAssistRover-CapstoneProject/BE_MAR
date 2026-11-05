@@ -11,7 +11,10 @@ import java.util.UUID;
 public interface SystemSettingService {
     SystemSettingResponse create(Create request, UUID actorId, RequestMetadata metadata);
     SystemSettingResponse update(UUID id, Update request, UUID actorId, RequestMetadata metadata);
-    SystemSettingResponse get(UUID id);
-    Page<SystemSettingResponse> list(String category, Pageable pageable);
-    void delete(UUID id, UUID actorId, RequestMetadata metadata);
+    SystemSettingResponse get(UUID id, boolean includeDeleted);
+    Page<SystemSettingResponse> list(String category, boolean includeDeleted, Pageable pageable);
+    SystemSettingResponse delete(UUID id,String reason, UUID actorId, RequestMetadata metadata);
+    SystemSettingResponse restore(UUID id,String reason, UUID actorId, RequestMetadata metadata);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,UUID actorId,RequestMetadata metadata);
 }

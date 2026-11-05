@@ -33,5 +33,6 @@ public class EmergencyIncident {
     @Column(name="closed_at") private Instant closedAt;
     @Column(name="resolution_note",columnDefinition="TEXT") private String resolutionNote;
     @JdbcTypeCode(SqlTypes.JSON) @Column(name="resolution_evidence_json",columnDefinition="JSON") private JsonNode resolutionEvidenceJson;
+    @Column(name="archived_at") private Instant archivedAt;
     @Version @Column(name="row_version",nullable=false) private long rowVersion;
 }

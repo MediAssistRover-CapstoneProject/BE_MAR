@@ -3,6 +3,7 @@ package com.mediassistrover.backend.service.impl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.mediassistrover.backend.dto.facility.request.FacilityRequests.HospitalInformationArticleRequest;
 import com.mediassistrover.backend.dto.facility.response.FacilityResponses.HospitalInformationArticleResponse;
+import com.mediassistrover.backend.dto.common.DeletionContracts.*;
 import com.mediassistrover.backend.entity.*;
 import com.mediassistrover.backend.enums.HospitalInformationStatus;
 import com.mediassistrover.backend.exception.*;
@@ -86,27 +87,30 @@ public class HospitalInformationArticleServiceImpl implements HospitalInformatio
     }
 
     @Override @Transactional
-    public HospitalInformationArticleResponse retire(UUID hospitalId, UUID articleId,
-                                                     UUID actorId, RequestMetadata metadata) {
+    public HospitalInformationArticleResponse retire(UUID hospitalId,UUID articleId,String reason,UUID actorId,RequestMetadata metadata) {
         HospitalInformationArticle article = article(hospitalId, articleId);
         Account actor = account(actorId);
+        HospitalInformationStatus before=article.getStatus();
         article.setStatus(HospitalInformationStatus.RETIRED);
         article.setUpdatedBy(actor);
         auditService.record(actor, "HOSPITAL_ARTICLE_RETIRED", "HospitalInformationArticle",
-                articleId, null, Map.of(), metadata);
+                articleId,Map.of("status",before.name()),Map.of("status","RETIRED","reason",reason),metadata);
         return mapper.toResponse(article);
     }
+    @Override @Transactional public HospitalInformationArticleResponse restore(UUID hospitalId,UUID articleId,String reason,UUID actorId,RequestMetadata metadata){HospitalInformationArticle article=article(hospitalId,articleId);if(article.getStatus()!=HospitalInformationStatus.RETIRED)throw new BusinessRuleException("Only RETIRED article can be restored");Account actor=account(actorId);article.setStatus(HospitalInformationStatus.DRAFT);article.setUpdatedBy(actor);auditService.record(actor,"HOSPITAL_ARTICLE_RESTORED","HospitalInformationArticle",articleId,Map.of("status","RETIRED"),Map.of("status","DRAFT","reason",reason),metadata);return mapper.toResponse(article);}
 
-    @Override public HospitalInformationArticleResponse get(UUID hospitalId, UUID articleId) {
-        return mapper.toResponse(article(hospitalId, articleId));
+    @Override public HospitalInformationArticleResponse get(UUID hospitalId,UUID articleId,boolean includeDeleted) {
+        HospitalInformationArticle article=article(hospitalId,articleId);if(!includeDeleted&&article.getStatus()==HospitalInformationStatus.RETIRED)throw new ResourceNotFoundException("HospitalInformationArticle not found: "+articleId);return mapper.toResponse(article);
     }
 
     @Override public Page<HospitalInformationArticleResponse> list(UUID hospitalId,
                                                                   HospitalInformationStatus status,
-                                                                  Pageable pageable) {
+                                                                  boolean includeDeleted,Pageable pageable) {
         hospital(hospitalId);
-        return articleRepository.search(hospitalId, status, pageable).map(mapper::toResponse);
+        return articleRepository.search(hospitalId,status,includeDeleted,pageable).map(mapper::toResponse);
     }
+    @Override public DeletionImpactResponse deletionImpact(UUID hospitalId,UUID articleId){article(hospitalId,articleId);return new DeletionImpactResponse(articleId,"HospitalInformationArticle",true,java.util.List.of(),Map.of());}
+    @Override @Transactional public HardDeleteResponse forceDelete(UUID hospitalId,UUID articleId,String reason,UUID actorId,RequestMetadata metadata){HospitalInformationArticle article=article(hospitalId,articleId);Account actor=account(actorId);articleRepository.delete(article);articleRepository.flush();auditService.record(actor,"HOSPITAL_ARTICLE_FORCE_DELETED","HospitalInformationArticle",articleId,null,Map.of("reason",reason),metadata);return new HardDeleteResponse(articleId,"HospitalInformationArticle",Map.of("articles",1L));}
 
     private void validate(HospitalInformationArticleRequest request) {
         if (request.effectiveFrom() != null && request.effectiveUntil() != null

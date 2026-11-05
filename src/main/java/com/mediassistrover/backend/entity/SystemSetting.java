@@ -62,6 +62,9 @@ public class SystemSetting {
     @Column(name = "is_public", nullable = false)
     private boolean publicSetting;
 
+    @Column(name = "is_active", nullable = false)
+    private boolean active;
+
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 }

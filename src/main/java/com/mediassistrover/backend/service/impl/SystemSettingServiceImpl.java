@@ -43,7 +43,7 @@ public class SystemSettingServiceImpl implements SystemSettingService {
         SystemSetting setting = repository.save(SystemSetting.builder()
                 .settingKey(request.settingKey()).settingValue(request.settingValue()).dataType(request.dataType())
                 .category(request.category().trim().toUpperCase()).description(request.description())
-                .publicSetting(request.publicSetting()).updatedBy(actor).updatedAt(Instant.now(clock)).build());
+                .publicSetting(request.publicSetting()).active(true).updatedBy(actor).updatedAt(Instant.now(clock)).build());
         auditService.record(actor, "SYSTEM_SETTING_CREATED", "SystemSetting", setting.getSystemSettingId(),
                 null, auditData(setting), metadata);
         return toResponse(setting);
@@ -67,23 +67,26 @@ public class SystemSettingServiceImpl implements SystemSettingService {
         return toResponse(setting);
     }
 
-    @Override public SystemSettingResponse get(UUID id) { return toResponse(setting(id)); }
+    @Override public SystemSettingResponse get(UUID id,boolean includeDeleted) {SystemSetting s=setting(id);if(!includeDeleted&&!s.isActive())throw new ResourceNotFoundException("SystemSetting not found: "+id);return toResponse(s);}
 
     @Override
-    public Page<SystemSettingResponse> list(String category, Pageable pageable) {
-        return (category == null || category.isBlank() ? repository.findAll(pageable)
-                : repository.findByCategoryIgnoreCase(category.trim(), pageable)).map(this::toResponse);
+    public Page<SystemSettingResponse> list(String category,boolean includeDeleted, Pageable pageable) {
+        return (category == null || category.isBlank() ? (includeDeleted?repository.findAll(pageable):repository.findByActiveTrue(pageable))
+                : (includeDeleted?repository.findByCategoryIgnoreCase(category.trim(),pageable):repository.findByCategoryIgnoreCaseAndActiveTrue(category.trim(), pageable))).map(this::toResponse);
     }
 
     @Override
     @Transactional
-    public void delete(UUID id, UUID actorId, RequestMetadata metadata) {
+    public SystemSettingResponse delete(UUID id,String reason, UUID actorId, RequestMetadata metadata) {
         SystemSetting setting = setting(id);
         Account actor = account(actorId);
         Map<String, Object> before = auditData(setting);
-        repository.delete(setting);
-        auditService.record(actor, "SYSTEM_SETTING_DELETED", "SystemSetting", id, before, null, metadata);
+        setting.setActive(false);setting.setUpdatedBy(actor);setting.setUpdatedAt(Instant.now(clock));
+        auditService.record(actor, "SYSTEM_SETTING_RETIRED", "SystemSetting", id, before, Map.of("active",false,"reason",reason), metadata);return toResponse(setting);
     }
+    @Override @Transactional public SystemSettingResponse restore(UUID id,String reason,UUID actorId,RequestMetadata metadata){SystemSetting s=setting(id);if(s.isActive())throw new BusinessRuleException("SystemSetting is already active");Account actor=account(actorId);s.setActive(true);s.setUpdatedBy(actor);s.setUpdatedAt(Instant.now(clock));auditService.record(actor,"SYSTEM_SETTING_RESTORED","SystemSetting",id,Map.of("active",false),Map.of("active",true,"reason",reason),metadata);return toResponse(s);}
+    @Override public com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id){setting(id);return new com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse(id,"SystemSetting",true,java.util.List.of(),Map.of());}
+    @Override @Transactional public com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,UUID actorId,RequestMetadata metadata){SystemSetting s=setting(id);Account actor=account(actorId);repository.delete(s);var result=new com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse(id,"SystemSetting",Map.of("SystemSetting",1L));auditService.record(actor,"SYSTEM_SETTING_FORCE_DELETED","SystemSetting",id,auditData(s),Map.of("reason",reason),metadata);return result;}
 
     private void validateValue(SystemSettingDataType type, Map<String, Object> value) {
         Object scalar = value.get("value");
@@ -109,7 +112,7 @@ public class SystemSettingServiceImpl implements SystemSettingService {
     }
     private SystemSettingResponse toResponse(SystemSetting setting) {
         return new SystemSettingResponse(setting.getSystemSettingId(), setting.getSettingKey(), setting.getSettingValue(),
-                setting.getDataType(), setting.getCategory(), setting.getDescription(), setting.isPublicSetting(),
+                setting.getDataType(), setting.getCategory(), setting.getDescription(), setting.isPublicSetting(),setting.isActive(),
                 setting.getUpdatedBy() == null ? null : setting.getUpdatedBy().getAccountId(), setting.getUpdatedAt());
     }
 }

@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 public interface HospitalInformationRepository extends JpaRepository<HospitalInformation, UUID> {
+    Page<HospitalInformation> findByStatusNot(HospitalInformationStatus status,Pageable pageable);
     @Query("""
             select h from HospitalInformation h
             where h.status = :status and h.publicVisible = true

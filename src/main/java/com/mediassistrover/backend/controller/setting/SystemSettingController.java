@@ -1,6 +1,7 @@
 package com.mediassistrover.backend.controller.setting;
 
 import com.mediassistrover.backend.dto.common.PageResponse;
+import com.mediassistrover.backend.dto.common.DeletionContracts.*;
 import com.mediassistrover.backend.dto.setting.request.SystemSettingRequests.Create;
 import com.mediassistrover.backend.dto.setting.request.SystemSettingRequests.Update;
 import com.mediassistrover.backend.dto.setting.response.SystemSettingResponse;
@@ -32,6 +33,7 @@ import java.util.UUID;
 @Tag(name = "Admin System Settings", description = "Runtime business configuration; changes are audited")
 public class SystemSettingController {
     private final SystemSettingService service;
+    private final com.mediassistrover.backend.service.DeletionPolicy deletionPolicy;
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -42,15 +44,15 @@ public class SystemSettingController {
     }
 
     @GetMapping
-    public PageResponse<SystemSettingResponse> list(@RequestParam(required = false) String category,
+    public PageResponse<SystemSettingResponse> list(@RequestParam(required = false) String category,@RequestParam(defaultValue="false")boolean includeDeleted,
                                                      @RequestParam(defaultValue = "0") @Min(0) int page,
                                                      @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
-        return PageResponse.from(service.list(category,
+        return PageResponse.from(service.list(category,includeDeleted,
                 PageRequest.of(page, size, Sort.by("category").and(Sort.by("settingKey")))));
     }
 
     @GetMapping("/{id}")
-    public SystemSettingResponse get(@PathVariable UUID id) { return service.get(id); }
+    public SystemSettingResponse get(@PathVariable UUID id,@RequestParam(defaultValue="false")boolean includeDeleted) { return service.get(id,includeDeleted); }
 
     @PutMapping("/{id}")
     public SystemSettingResponse update(@PathVariable UUID id, @Valid @RequestBody Update body,
@@ -60,10 +62,11 @@ public class SystemSettingController {
     }
 
     @DeleteMapping("/{id}")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
     @Operation(summary = "Remove an override; application property becomes the fallback")
-    public void delete(@PathVariable UUID id, @AuthenticationPrincipal AccountPrincipal actor,
-                       HttpServletRequest request) {
-        service.delete(id, actor.accountId(), RequestMetadataFactory.from(request));
+    public SystemSettingResponse delete(@PathVariable UUID id,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request) {
+        return service.delete(id,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));
     }
+    @PostMapping("/{id}/restore") public SystemSettingResponse restore(@PathVariable UUID id,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.restore(id,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));}
+    @GetMapping("/{id}/deletion-impact") public DeletionImpactResponse impact(@PathVariable UUID id){return service.deletionImpact(id);}
+    @DeleteMapping("/{id}/force") public HardDeleteResponse force(@PathVariable UUID id,@RequestHeader("X-Confirm-Hard-Delete")Boolean confirmed,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){deletionPolicy.requireHardDeleteConfirmation(confirmed);return service.forceDelete(id,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));}
 }

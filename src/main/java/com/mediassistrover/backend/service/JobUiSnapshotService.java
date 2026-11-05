@@ -26,6 +26,6 @@ public class JobUiSnapshotService {
                 || (actor.tokenExpiresAt()!=null && !actor.tokenExpiresAt().isAfter(now))
                 || (actor.jti()!=null && revoked.existsByJti(actor.jti())))
             throw new AccessDeniedException("Session is no longer valid");
-        return jobs.get(jobId,actor); // Rechecks assignment/ownership for each pushed update.
+        return jobs.get(jobId,false,actor); // Rechecks assignment/ownership for each pushed update.
     }
 }

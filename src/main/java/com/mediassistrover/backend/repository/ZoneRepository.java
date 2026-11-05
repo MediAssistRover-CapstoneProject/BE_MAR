@@ -14,6 +14,7 @@ public interface ZoneRepository extends JpaRepository<Zone, UUID> {
     java.util.List<Zone> findByMapMapIdOrderByZoneCodeAsc(UUID mapId);
     boolean existsByMapMapIdAndZoneCodeIgnoreCase(UUID mapId, String zoneCode);
     Page<Zone> findByActiveTrueAndPublicVisibleTrue(Pageable pageable);
+    Page<Zone> findByActiveTrue(Pageable pageable);
     @Query("""
             select z from Zone z where z.active = true and z.publicVisible = true
               and (:mapId is null or z.map.mapId = :mapId)

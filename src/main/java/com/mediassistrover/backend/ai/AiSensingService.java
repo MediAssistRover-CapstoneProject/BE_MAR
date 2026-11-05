@@ -30,6 +30,7 @@ public class AiSensingService {
     private final DetectionEventRepository detections;
     private final MqttWire wire;
     private final Clock clock;
+    private final com.mediassistrover.backend.service.AuditService auditService;
     public record Configure(@NotNull UUID zoneId,@NotBlank @Pattern(regexp="CROWD_DENSITY|RESTRICTED_ZONE") String sensingType,
             @NotBlank @Size(max=100) String modelVersion,@NotBlank @Size(max=255) String producerRef,
             boolean enabled,boolean personPositionsEnabled,@NotBlank @Size(max=1000) String commissioningNote) { }
@@ -51,6 +52,10 @@ public class AiSensingService {
         profile.setMapAssetHash(zone.getMap().getAssetHash());profile.setFrameId(zone.getMap().getFrameId());profile.setCommissioningNote(input.commissioningNote());profile.setConfiguredBy(actor.accountId());profile.setConfiguredAt(Instant.now(clock));
         profiles.saveAndFlush(profile);return snapshot(profile,zone);
     }
+    @Transactional public JsonNode retire(UUID profileId,String reason,AccountPrincipal actor){Account account=admin(actor);AiSensingProfile p=profile(profileId);p.setEnabled(false);auditService.record(account,"AI_SENSING_PROFILE_RETIRED","AiSensingProfile",profileId,null,Map.of("enabled",false,"reason",reason),null);return snapshot(p,zone(p.getZoneId()));}
+    @Transactional public JsonNode restore(UUID profileId,String reason,AccountPrincipal actor){Account account=admin(actor);AiSensingProfile p=profile(profileId);Zone z=zone(p.getZoneId());requireCatalog(robot(p.getRobotId()),z,p.getSensingType());p.setEnabled(true);auditService.record(account,"AI_SENSING_PROFILE_RESTORED","AiSensingProfile",profileId,null,Map.of("enabled",true,"reason",reason),null);return snapshot(p,z);}
+    public com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID profileId,AccountPrincipal actor){admin(actor);profile(profileId);return new com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse(profileId,"AiSensingProfile",true,List.of(),Map.of());}
+    @Transactional public com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID profileId,String reason,AccountPrincipal actor){Account account=admin(actor);profile(profileId);profiles.deleteById(profileId);var result=new com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse(profileId,"AiSensingProfile",Map.of("AiSensingProfile",1L));auditService.record(account,"AI_SENSING_PROFILE_FORCE_DELETED","AiSensingProfile",profileId,null,Map.of("reason",reason),null);return result;}
     public void requireEnabled() {if(!properties.isSensingEnabled())fail("AI sensing awaits configured producer/model commissioning; keep workflow DRAFT");}
     public ObjectNode bind(JobStep step) {
         requireEnabled();Job job=step.getJobTask().getJob();JsonNode input=step.getResolvedInputsJson();
@@ -146,4 +151,8 @@ public class AiSensingService {
         if("RESTRICTED_ZONE".equals(type) && zone.getZoneType()!=ZoneType.KEEP_OUT)fail("RESTRICTED_ZONE requires a KEEP_OUT zone");
     }
     private static void fail(String message){throw new BusinessRuleException(message);}
+    private Account admin(AccountPrincipal actor){Account account=accounts.findById(actor.accountId()).orElseThrow();if(actor.role()!=Role.ADMIN||account.getRole()!=Role.ADMIN||account.getStatus()!=AccountStatus.ACTIVE||account.getTokenVersion()!=actor.tokenVersion())throw new org.springframework.security.access.AccessDeniedException("Current ADMIN session required");return account;}
+    private AiSensingProfile profile(UUID id){return profiles.findById(id).orElseThrow(()->new ResourceNotFoundException("AI sensing profile not found: "+id));}
+    private Robot robot(UUID id){return robots.findById(id).orElseThrow(()->new ResourceNotFoundException("Robot not found: "+id));}
+    private Zone zone(UUID id){return zones.findById(id).orElseThrow(()->new ResourceNotFoundException("Zone not found: "+id));}
 }

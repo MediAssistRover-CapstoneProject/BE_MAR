@@ -11,4 +11,8 @@ public interface AdminAccountService {
     AccountResponse lock(UUID accountId, AccountPrincipal actor, RequestMetadata metadata);
     AccountResponse unlock(UUID accountId, AccountPrincipal actor, RequestMetadata metadata);
     void resetPassword(UUID accountId, String newPassword, AccountPrincipal actor, RequestMetadata metadata);
+    AccountResponse deactivate(UUID accountId,String reason,AccountPrincipal actor,RequestMetadata metadata);
+    AccountResponse restore(UUID accountId,String reason,AccountPrincipal actor,RequestMetadata metadata);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID accountId,AccountPrincipal actor);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID accountId,String reason,AccountPrincipal actor,RequestMetadata metadata);
 }

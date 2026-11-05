@@ -29,6 +29,7 @@ public class ShiftServiceImpl implements ShiftService {
     private final AccountRepository accountRepository;
     private final ShiftMapper mapper;
     private final AuditService auditService;
+    private final ShiftHardDeleteService hardDelete;
 
     @Override
     @Transactional
@@ -101,11 +102,11 @@ public class ShiftServiceImpl implements ShiftService {
         return mapper.toResponse(shift);
     }
 
-    @Override public ShiftResponse get(UUID shiftId) { return mapper.toResponse(shift(shiftId)); }
+    @Override public ShiftResponse get(UUID shiftId,boolean includeDeleted) {Shift s=shift(shiftId);if(!includeDeleted&&s.getStatus()==ShiftStatus.CANCELLED)throw new ResourceNotFoundException("Shift not found: "+shiftId);return mapper.toResponse(s);}
 
     @Override
-    public Page<ShiftResponse> list(UUID staffProfileId, UUID roomId, ShiftStatus status, Pageable pageable) {
-        return shiftRepository.search(staffProfileId, roomId, status, pageable).map(mapper::toResponse);
+    public Page<ShiftResponse> list(UUID staffProfileId, UUID roomId, ShiftStatus status,boolean includeDeleted, Pageable pageable) {
+        return (status==null&&!includeDeleted?shiftRepository.searchNotCancelled(staffProfileId,roomId,pageable):shiftRepository.search(staffProfileId, roomId, status, pageable)).map(mapper::toResponse);
     }
 
     @Override
@@ -124,14 +125,18 @@ public class ShiftServiceImpl implements ShiftService {
 
     @Override
     @Transactional
-    public void delete(UUID shiftId, UUID actorId, RequestMetadata metadata) {
+    public ShiftResponse delete(UUID shiftId,String reason, UUID actorId, RequestMetadata metadata) {
         Shift shift = shift(shiftId);
         requirePlanned(shift);
         Account actor = account(actorId);
         Map<String, Object> before = auditData(shift);
-        shiftRepository.delete(shift);
-        auditService.record(actor, "SHIFT_DELETED", "Shift", shiftId, before, null, metadata);
+        shift.setStatus(ShiftStatus.CANCELLED);
+        auditService.record(actor, "SHIFT_CANCELLED", "Shift", shiftId, before, Map.of("status","CANCELLED","reason",reason), metadata);
+        return mapper.toResponse(shift);
     }
+    @Override @Transactional public ShiftResponse restore(UUID shiftId,String reason,UUID actorId,RequestMetadata metadata){Shift shift=shift(shiftId);if(shift.getStatus()!=ShiftStatus.CANCELLED||!Instant.now().isBefore(shift.getStartsAt()))throw new BusinessRuleException("Only unstarted CANCELLED Shift can be restored");shift.setStatus(ShiftStatus.PLANNED);auditService.record(account(actorId),"SHIFT_RESTORED","Shift",shiftId,Map.of("status","CANCELLED"),Map.of("status","PLANNED","reason",reason),metadata);return mapper.toResponse(shift);}
+    @Override public com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id){shift(id);return hardDelete.impact("Shift","shift_id",id);}
+    @Override @Transactional public com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,UUID actorId,RequestMetadata metadata){var result=hardDelete.delete("Shift","shift_id",id);auditService.record(account(actorId),"SHIFT_FORCE_DELETED","Shift",id,null,Map.of("reason",reason,"deleted",result.deleted()),metadata);return result;}
 
     @Override
     @Transactional
@@ -186,14 +191,18 @@ public class ShiftServiceImpl implements ShiftService {
 
     @Override
     @Transactional
-    public void deleteSlot(UUID shiftId, UUID slotId, UUID actorId, RequestMetadata metadata) {
+    public SlotResponse deleteSlot(UUID shiftId, UUID slotId,String reason, UUID actorId, RequestMetadata metadata) {
         Shift shift = shift(shiftId);
         requirePlanned(shift);
         Slot slot = slot(shiftId, slotId);
         Map<String, Object> before = slotAuditData(slot);
-        slotRepository.delete(slot);
-        auditService.record(account(actorId), "SLOT_DELETED", "Slot", slotId, before, null, metadata);
+        slot.setStatus(SlotStatus.CLOSED);
+        auditService.record(account(actorId), "SLOT_CLOSED", "Slot", slotId, before, Map.of("status","CLOSED","reason",reason), metadata);
+        return mapper.toResponse(slot);
     }
+    @Override @Transactional public SlotResponse restoreSlot(UUID shiftId,UUID slotId,String reason,UUID actorId,RequestMetadata metadata){Shift shift=shift(shiftId);requirePlanned(shift);Slot slot=slot(shiftId,slotId);if(slot.getStatus()!=SlotStatus.CLOSED||!Instant.now().isBefore(slot.getStartsAt()))throw new BusinessRuleException("Only unstarted CLOSED Slot can be restored");slot.setStatus(SlotStatus.AVAILABLE);auditService.record(account(actorId),"SLOT_RESTORED","Slot",slotId,Map.of("status","CLOSED"),Map.of("status","AVAILABLE","reason",reason),metadata);return mapper.toResponse(slot);}
+    @Override public com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse slotDeletionImpact(UUID shiftId,UUID slotId){slot(shiftId,slotId);return hardDelete.impact("Slot","slot_id",slotId);}
+    @Override @Transactional public com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDeleteSlot(UUID shiftId,UUID slotId,String reason,UUID actorId,RequestMetadata metadata){slot(shiftId,slotId);var result=hardDelete.delete("Slot","slot_id",slotId);auditService.record(account(actorId),"SLOT_FORCE_DELETED","Slot",slotId,null,Map.of("reason",reason,"deleted",result.deleted()),metadata);return result;}
 
     private void validateShiftPeriod(Instant startsAt, Instant endsAt) {
         if (!startsAt.isBefore(endsAt)) throw new BusinessRuleException("Shift startsAt must be before endsAt");

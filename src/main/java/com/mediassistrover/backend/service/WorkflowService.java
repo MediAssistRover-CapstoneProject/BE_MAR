@@ -13,7 +13,8 @@ public interface WorkflowService {
     WorkflowResponse create(WorkflowUpsertRequest request,UUID actorId,RequestMetadata metadata);
     WorkflowResponse update(UUID id,WorkflowUpsertRequest request,UUID actorId,RequestMetadata metadata);
     WorkflowDetailResponse get(UUID id);
-    Page<WorkflowResponse> list(WorkflowStatus status,Pageable pageable);
+    WorkflowDetailResponse get(UUID id,boolean includeDeleted);
+    Page<WorkflowResponse> list(WorkflowStatus status,boolean includeDeleted,Pageable pageable);
     List<WorkflowDetailResponse> published();
     Page<PublishedWorkflowSummaryResponse> published(String serviceType,Pageable pageable);
     WorkflowDetailResponse published(UUID id);
@@ -29,8 +30,10 @@ public interface WorkflowService {
     WorkflowResponse setStartStep(UUID workflowId,UUID stepId,UUID actorId,RequestMetadata metadata);
     WorkflowValidationResponse validate(UUID id,UUID actorId,RequestMetadata metadata);
     WorkflowResponse publish(UUID id,UUID actorId,RequestMetadata metadata);
-    WorkflowResponse archive(UUID id,UUID actorId,RequestMetadata metadata);
+    WorkflowResponse archive(UUID id,String reason,UUID actorId,RequestMetadata metadata);
+    WorkflowResponse restore(UUID id,String reason,UUID actorId,RequestMetadata metadata);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id);
     WorkflowDetailResponse cloneVersion(UUID id,String name,UUID actorId,RequestMetadata metadata);
-    void deleteDraft(UUID id,UUID actorId,RequestMetadata metadata);
-    WorkflowHardDeleteResponse forceDelete(UUID id,UUID actorId,RequestMetadata metadata);
+    WorkflowResponse softDelete(UUID id,String reason,UUID actorId,RequestMetadata metadata);
+    WorkflowHardDeleteResponse forceDelete(UUID id,String reason,UUID actorId,RequestMetadata metadata);
 }

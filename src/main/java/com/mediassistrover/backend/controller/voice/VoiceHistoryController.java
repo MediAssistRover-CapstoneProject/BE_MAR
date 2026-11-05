@@ -1,6 +1,7 @@
 package com.mediassistrover.backend.controller.voice;
 
 import com.mediassistrover.backend.dto.common.PageResponse;
+import com.mediassistrover.backend.dto.common.DeletionContracts.*;
 import com.mediassistrover.backend.dto.voice.response.VoiceResponses.CommandResponse;
 import com.mediassistrover.backend.dto.voice.response.VoiceResponses.CommandMetadataResponse;
 import com.mediassistrover.backend.dto.voice.response.VoiceResponses.InteractionResponse;
@@ -31,6 +32,7 @@ import java.util.UUID;
 @Tag(name = "Voice History", description = "Read-only voice interaction and command history")
 public class VoiceHistoryController {
     private final VoiceService service;
+    private final com.mediassistrover.backend.service.DeletionPolicy deletionPolicy;
 
     @GetMapping("/interactions")
     public PageResponse<InteractionMetadataResponse> interactions(
@@ -38,17 +40,19 @@ public class VoiceHistoryController {
             @RequestParam(required = false) VoiceInteractionStatus status,
             @RequestParam(required = false) Instant from,
             @RequestParam(required = false) Instant to,
+            @RequestParam(defaultValue="false") boolean includeDeleted,
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size,
             @AuthenticationPrincipal AccountPrincipal principal) {
-        return PageResponse.from(service.listInteractions(robotId, status, from, to, principal,
+        return PageResponse.from(service.listInteractions(robotId, status, from, to,includeDeleted, principal,
                 PageRequest.of(page, size, Sort.by(Sort.Direction.DESC, "startedAt"))));
     }
 
     @GetMapping("/interactions/{id}")
     public InteractionResponse interaction(@PathVariable UUID id,
+                                           @RequestParam(defaultValue="false")boolean includeDeleted,
                                            @AuthenticationPrincipal AccountPrincipal principal) {
-        return service.getInteraction(id, principal);
+        return service.getInteraction(id,includeDeleted, principal);
     }
 
     @GetMapping("/commands")
@@ -69,4 +73,7 @@ public class VoiceHistoryController {
                                    @AuthenticationPrincipal AccountPrincipal principal) {
         return service.getCommand(id, principal);
     }
+    @DeleteMapping("/interactions/{id}") @PreAuthorize("hasRole('ADMIN')") public InteractionResponse archive(@PathVariable UUID id,@jakarta.validation.Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal principal){return service.archive(id,body.reason(),principal);}
+    @GetMapping("/interactions/{id}/deletion-impact") @PreAuthorize("hasRole('ADMIN')") public DeletionImpactResponse impact(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal principal){return service.deletionImpact(id,principal);}
+    @DeleteMapping("/interactions/{id}/force") @PreAuthorize("hasRole('ADMIN')") public HardDeleteResponse force(@PathVariable UUID id,@RequestHeader("X-Confirm-Hard-Delete")Boolean confirmed,@jakarta.validation.Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal principal){deletionPolicy.requireHardDeleteConfirmation(confirmed);return service.forceDelete(id,body.reason(),principal);}
 }

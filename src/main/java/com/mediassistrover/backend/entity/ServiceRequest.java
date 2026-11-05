@@ -31,6 +31,7 @@ public class ServiceRequest {
     @Column(name="scheduled_at") private Instant scheduledAt;
     @Column(name="cancelled_at") private Instant cancelledAt;
     @Column(name="completed_at") private Instant completedAt;
+    @Column(name="archived_at") private Instant archivedAt;
     @Version @Column(name="row_version",nullable=false) private long rowVersion;
     @LastModifiedDate @Column(name="updated_at",nullable=false) private Instant updatedAt;
 }

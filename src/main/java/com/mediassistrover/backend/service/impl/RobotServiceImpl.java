@@ -38,6 +38,7 @@ public class RobotServiceImpl implements RobotService {
     private final Clock clock;
     private final StaffOperationalScopePolicy staffScope;
     private final org.springframework.context.ApplicationEventPublisher applicationEvents;
+    private final RobotHardDeleteService robotDelete;
     private final SecureRandom secureRandom=new SecureRandom();
 
     @Override @Transactional public RobotResponse create(RobotCreateRequest r,UUID actorId,RequestMetadata md){
@@ -50,8 +51,12 @@ public class RobotServiceImpl implements RobotService {
     @Override @Transactional public RobotResponse update(UUID id,RobotUpdateRequest r,UUID actorId,RequestMetadata md){Robot robot=robot(id);
         if(r.serialNumber()!=null&&!Objects.equals(robot.getSerialNumber(),r.serialNumber())&&robotRepository.existsBySerialNumber(r.serialNumber()))throw new ConflictException("Serial number already exists");
         mapper.update(r,robot);robot.setCurrentMap(map(r.currentMapId()));audit(account(actorId),"ROBOT_UPDATED",id,md);return mapper.toResponse(robot);}
-    @Override public RobotResponse get(UUID id){return mapper.toResponse(robot(id));}
-    @Override public Page<RobotResponse> list(RobotStatus status,Pageable p){return(status==null?robotRepository.findAll(p):robotRepository.findByStatus(status,p)).map(mapper::toResponse);}
+    @Override public RobotResponse get(UUID id,boolean includeDeleted){Robot r=robot(id);if(!includeDeleted&&r.getStatus()==RobotStatus.RETIRED)throw new ResourceNotFoundException("Robot not found: "+id);return mapper.toResponse(r);}
+    @Override public Page<RobotResponse> list(RobotStatus status,boolean includeDeleted,Pageable p){return(status==null?(includeDeleted?robotRepository.findAll(p):robotRepository.findByStatusNot(RobotStatus.RETIRED,p)):robotRepository.findByStatus(status,p)).map(mapper::toResponse);}
+    @Override @Transactional public RobotResponse retire(UUID id,String reason,UUID actorId,RequestMetadata md){Robot r=robot(id);if(Set.of(RobotStatus.BUSY,RobotStatus.STARTING).contains(r.getStatus()))throw new BusinessRuleException("Active robot cannot be retired");RobotStatus before=r.getStatus();transition(r,RobotStatus.RETIRED,reason,null,UUID.randomUUID());auditService.record(account(actorId),"ROBOT_RETIRED","Robot",id,Map.of("status",before.name()),Map.of("status","RETIRED","reason",reason),md);return mapper.toResponse(r);}
+    @Override @Transactional public RobotResponse restore(UUID id,String reason,UUID actorId,RequestMetadata md){Robot r=robot(id);if(r.getStatus()!=RobotStatus.RETIRED)throw new BusinessRuleException("Only RETIRED robot can be restored");transition(r,RobotStatus.OFFLINE,reason,null,UUID.randomUUID());auditService.record(account(actorId),"ROBOT_RESTORED","Robot",id,Map.of("status","RETIRED"),Map.of("status","OFFLINE","reason",reason),md);return mapper.toResponse(r);}
+    @Override public com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id){return robotDelete.impact(id);}
+    @Override @Transactional public com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,UUID actorId,RequestMetadata md){var result=robotDelete.delete(id);auditService.record(account(actorId),"ROBOT_FORCE_DELETED","Robot",id,null,Map.of("reason",reason,"deleted",result.deleted()),md);return result;}
     @Override @Transactional public DeviceSecretResponse provisionSecret(UUID id,UUID actorId,RequestMetadata md){Robot robot=robot(id);if(robot.getDeviceSecretHash()!=null)throw new ConflictException("Robot already has a provisioned device secret; use rotate-secret");return issueSecret(robot,"ROBOT_DEVICE_SECRET_PROVISIONED",actorId,md);}
     @Override @Transactional public DeviceSecretResponse rotateSecret(UUID id,UUID actorId,RequestMetadata md){Robot robot=robot(id);robot.setDeviceTokenVersion(robot.getDeviceTokenVersion()+1);return issueSecret(robot,"ROBOT_DEVICE_SECRET_ROTATED",actorId,md);}
     @Override @Transactional public RobotResponse maintenance(UUID id,String reason,UUID actorId,RequestMetadata md){Robot robot=robot(id);if(!Set.of(RobotStatus.IDLE,RobotStatus.BUSY).contains(robot.getStatus()))throw new BusinessRuleException("Only IDLE or BUSY robots can enter maintenance");transition(robot,RobotStatus.MAINTENANCE,reason,null,UUID.randomUUID());audit(account(actorId),"ROBOT_MAINTENANCE",id,md);return mapper.toResponse(robot);}

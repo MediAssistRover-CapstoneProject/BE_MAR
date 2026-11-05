@@ -13,4 +13,5 @@ public interface AlertRecipientRepository extends JpaRepository<AlertRecipient,U
     long countByAlertAlertIdAndAcknowledgedAtIsNotNull(UUID alertId);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from AlertRecipient r where r.alert.alertId=:alertId and r.account.accountId=:accountId") Optional<AlertRecipient> lockRecipient(@Param("alertId") UUID alertId,@Param("accountId") UUID accountId);
     long countByAlertAlertIdAndDeliveryStatus(UUID alertId,com.mediassistrover.backend.enums.AlertDeliveryStatus status);
+    long deleteByAlertAlertId(UUID alertId);
 }
