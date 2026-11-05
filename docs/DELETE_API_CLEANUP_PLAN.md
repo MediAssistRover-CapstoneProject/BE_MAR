@@ -43,7 +43,7 @@
   - Force-delete luôn yêu cầu `X-Confirm-Hard-Delete: true`, khóa record và chặn khi còn FK nghiệp vụ; chỉ tự xóa MapBinaryAsset/MapArtifact hoặc EndpointGroupMember thuộc aggregate.
   - Audit ghi reason, trạng thái trước/sau và thống kê record xóa cứng.
 - [x] Hoàn thiện Robot:
-  - Thêm trạng thái soft-delete `RETIRED` bằng migration `V44`; restore luôn về `OFFLINE`.
+  - Thêm trạng thái soft-delete `RETIRED` bằng migration `V45`; restore luôn về `OFFLINE`.
   - Thêm `DELETE /api/v1/robots/{id}`, `POST /{id}/restore`, `GET /{id}/deletion-impact`, `DELETE /{id}/force`.
   - Robot `BUSY` hoặc `STARTING` không thể retire; hard-delete bị chặn nếu còn bất kỳ FK nào, gồm history/runtime/operational records.
   - List/Get ẩn `RETIRED` mặc định và hỗ trợ `includeDeleted=true`.
@@ -56,34 +56,34 @@
   - `DELETE /api/v1/admin/monitoring/robots/ai-profiles/{profileId}` đặt `enabled=false`; restore phải qua kiểm tra catalog đang hoạt động.
   - Có deletion-impact và force-delete, xác thực ADMIN session và confirmation header.
 - [x] Hoàn thiện SystemSetting:
-  - Migration `V45` bổ sung `is_active`; runtime chỉ đọc override active, nên soft-delete quay về property fallback.
+  - Migration `V46` bổ sung `is_active`; runtime chỉ đọc override active, nên soft-delete quay về property fallback.
   - Có DELETE/restore/deletion-impact/force-delete, reason và confirmation header; list/get ẩn setting inactive mặc định.
 - [x] Hoàn thiện MediaAsset:
-  - Migration `V46` bổ sung `is_active`; DELETE chỉ retire catalog, restore không tạo S3 object mới.
+  - Migration `V47` bổ sung `is_active`; DELETE chỉ retire catalog, restore không tạo S3 object mới.
   - `/force` kiểm tra toàn bộ reference hiện có trước khi xóa catalog và S3 object; có deletion-impact và confirmation header.
 - [x] Hoàn thiện ServiceRequest:
-  - Migration `V47` thêm `archived_at`; DELETE chỉ archive request terminal (`COMPLETED`, `FAILED`, `CANCELLED`), không hỗ trợ restore.
+  - Migration `V48` thêm `archived_at`; DELETE chỉ archive request terminal (`COMPLETED`, `FAILED`, `CANCELLED`), không hỗ trợ restore.
   - List/Get ẩn request archived mặc định; ADMIN dùng `includeDeleted=true`.
   - Đã thêm deletion-impact chặn khi còn Job chưa terminal.
   - Có `/force`: chặn Job active, Alert và VoiceCommand; dọn Job terminal bằng Job hard-delete trước khi xóa subtype và parent.
 - [x] Hoàn thiện Job:
-  - Migration `V48` thêm `archived_at`; DELETE archive chỉ áp dụng `SUCCEEDED`, `FAILED`, `CANCELLED` và không hỗ trợ restore.
+  - Migration `V49` thêm `archived_at`; DELETE archive chỉ áp dụng `SUCCEEDED`, `FAILED`, `CANCELLED` và không hỗ trợ restore.
   - List/Get ẩn Job archived mặc định; có `deletion-impact` chặn mọi Job chưa terminal.
   - Có `/force`: khóa Job terminal, dọn JobTask/JobStep/JobEvent/MQTT/orchestration/QR-auth/AI runtime, MappingSession/MapArtifact và toàn bộ navigation selection theo thứ tự FK; unlink telemetry để retention giữ trách nhiệm dọn lịch sử.
   - Chặn khi còn recovery Job hoặc Alert; các aggregate độc lập phải được xử lý trước.
 - [x] Hoàn thiện Alert:
-  - Migration `V49` thêm `archived_at`; DELETE chỉ archive Alert `CLOSED`, không hỗ trợ restore.
+  - Migration `V50` thêm `archived_at`; DELETE chỉ archive Alert `CLOSED`, không hỗ trợ restore.
   - List/Get ẩn Alert archive mặc định; ADMIN có `includeDeleted=true`.
   - Có deletion-impact và `/force`; chỉ Alert `CLOSED` được xóa, AlertRecipient con được xóa trong cùng transaction.
 - [x] Hoàn thiện EmergencyIncident:
-  - Migration `V50` thêm `archived_at`; DELETE chỉ archive `CLOSED` hoặc `FALSE_ALARM`, không hỗ trợ restore.
+  - Migration `V51` thêm `archived_at`; DELETE chỉ archive `CLOSED` hoặc `FALSE_ALARM`, không hỗ trợ restore.
   - List/Get ẩn archived Incident mặc định; ADMIN có `includeDeleted=true`.
   - Có deletion-impact và `/force`; chỉ xóa Incident terminal, Alert `CLOSED`/AlertRecipient con. ServiceRequest liên quan là blocker để không tạo tham chiếu mồ côi.
 - [x] Giai đoạn retention đã có sẵn và phù hợp kế hoạch:
   - Scheduler/admin endpoint hỗ trợ dry-run, archive-before-delete, batch, dependency predicate và audit.
   - Không có CRUD delete theo ID cho AuditLog, history, telemetry, JobEvent hay runtime receipts.
 - [x] Hoàn thiện VoiceInteraction:
-  - Migration `V51` thêm `archived_at`; DELETE chỉ archive interaction không còn `ACTIVE`, không hỗ trợ restore.
+  - Migration `V52` thêm `archived_at`; DELETE chỉ archive interaction không còn `ACTIVE`, không hỗ trợ restore.
   - List/Get ẩn interaction archived mặc định; ADMIN có `includeDeleted=true`.
   - Có deletion-impact và `/force`; force-delete chỉ xóa VoiceCommand con rồi xóa interaction, yêu cầu confirmation header.
 - [x] `mvn -DskipTests compile` thành công sau toàn bộ thay đổi.
@@ -300,7 +300,7 @@ Không xây service SQL động dùng chung cho toàn database. Mỗi aggregate 
 
 ### 6.4 Robot
 
-Triển khai hiện tại dùng trạng thái `RobotStatus.RETIRED` (migration `V44`) để biểu diễn robot đã retire:
+Triển khai hiện tại dùng trạng thái `RobotStatus.RETIRED` (migration `V45`) để biểu diễn robot đã retire:
 
 - Soft-delete: `RETIRED`, thu hồi device secret và ngừng nhận Job mới.
 - Restore: `ACTIVE`, không tự cấp device secret mới.
