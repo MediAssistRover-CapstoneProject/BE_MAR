@@ -24,6 +24,7 @@ public interface RobotRepository extends JpaRepository<Robot, UUID> {
     boolean existsByRobotCodeIgnoreCase(String robotCode);
     boolean existsBySerialNumber(String serialNumber);
     Page<Robot> findByStatus(RobotStatus status, Pageable pageable);
+    Page<Robot> findByStatusNot(RobotStatus status, Pageable pageable);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     List<Robot> findByStatusNotAndLastHeartbeatAtLessThanEqual(RobotStatus status, Instant threshold);
     @Lock(LockModeType.PESSIMISTIC_WRITE)

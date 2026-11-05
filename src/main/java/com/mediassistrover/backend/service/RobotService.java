@@ -13,8 +13,12 @@ import com.mediassistrover.backend.security.AccountPrincipal;
 public interface RobotService {
     RobotResponse create(RobotCreateRequest request,UUID actorId,RequestMetadata metadata);
     RobotResponse update(UUID id,RobotUpdateRequest request,UUID actorId,RequestMetadata metadata);
-    RobotResponse get(UUID id);
-    Page<RobotResponse> list(RobotStatus status,Pageable pageable);
+    RobotResponse get(UUID id, boolean includeDeleted);
+    Page<RobotResponse> list(RobotStatus status, boolean includeDeleted, Pageable pageable);
+    RobotResponse retire(UUID id, String reason, UUID actorId, RequestMetadata metadata);
+    RobotResponse restore(UUID id, String reason, UUID actorId, RequestMetadata metadata);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id, String reason, UUID actorId, RequestMetadata metadata);
     DeviceSecretResponse provisionSecret(UUID id,UUID actorId,RequestMetadata metadata);
     DeviceSecretResponse rotateSecret(UUID id,UUID actorId,RequestMetadata metadata);
     RobotResponse maintenance(UUID id,String reason,UUID actorId,RequestMetadata metadata);
