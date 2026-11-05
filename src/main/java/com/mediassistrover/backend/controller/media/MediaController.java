@@ -4,6 +4,8 @@ import com.mediassistrover.backend.config.OpenApiConfig;
 import com.mediassistrover.backend.dto.media.response.MediaObjectResponse;
 import com.mediassistrover.backend.dto.media.response.MediaListResponse;
 import com.mediassistrover.backend.service.MediaService;
+import com.mediassistrover.backend.security.AccountPrincipal;
+import com.mediassistrover.backend.util.RequestMetadataFactory;
 import com.mediassistrover.backend.dto.common.DeletionContracts.*;
 import io.swagger.v3.oas.annotations.*;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -15,6 +17,8 @@ import org.springframework.http.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import jakarta.servlet.http.HttpServletRequest;
 
 @RestController @RequestMapping("/api/v1/media") @RequiredArgsConstructor
 @PreAuthorize("hasAnyRole('ADMIN','STAFF')") @SecurityRequirement(name=OpenApiConfig.USER_BEARER_SCHEME)
@@ -30,8 +34,8 @@ public class MediaController {
     @GetMapping("/url") @Operation(summary="Resolve a fixed public URL for an existing media object")
     public MediaObjectResponse url(@RequestParam String objectKey){return service.get(objectKey);}
     @DeleteMapping @PreAuthorize("hasRole('ADMIN')") @Operation(summary="Soft-delete an image or video from the media catalog")
-    public MediaObjectResponse delete(@RequestParam String objectKey,@Valid @RequestBody LifecycleActionRequest body){return service.delete(objectKey,body.reason());}
-    @PostMapping("/restore") @PreAuthorize("hasRole('ADMIN')") public MediaObjectResponse restore(@RequestParam String objectKey,@Valid @RequestBody LifecycleActionRequest body){return service.restore(objectKey,body.reason());}
+    public MediaObjectResponse delete(@RequestParam String objectKey,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.delete(objectKey,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));}
+    @PostMapping("/restore") @PreAuthorize("hasRole('ADMIN')") public MediaObjectResponse restore(@RequestParam String objectKey,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.restore(objectKey,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));}
     @GetMapping("/deletion-impact") @PreAuthorize("hasRole('ADMIN')") public DeletionImpactResponse impact(@RequestParam String objectKey){return service.deletionImpact(objectKey);}
-    @DeleteMapping("/force") @PreAuthorize("hasRole('ADMIN')") public HardDeleteResponse force(@RequestParam String objectKey,@RequestHeader("X-Confirm-Hard-Delete")Boolean confirmed,@Valid @RequestBody LifecycleActionRequest body){deletionPolicy.requireHardDeleteConfirmation(confirmed);return service.forceDelete(objectKey,body.reason());}
+    @DeleteMapping("/force") @PreAuthorize("hasRole('ADMIN')") public HardDeleteResponse force(@RequestParam String objectKey,@RequestHeader("X-Confirm-Hard-Delete")Boolean confirmed,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){deletionPolicy.requireHardDeleteConfirmation(confirmed);return service.forceDelete(objectKey,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));}
 }

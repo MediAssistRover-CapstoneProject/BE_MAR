@@ -37,6 +37,7 @@ public class AdminAccountServiceImpl implements AdminAccountService {
     private final RefreshTokenService refreshTokenService;
     private final AuditService auditService;
     private final Clock clock;
+    private final AccountHardDeleteService hardDelete;
 
     @Override
     @Transactional
@@ -92,6 +93,10 @@ public class AdminAccountServiceImpl implements AdminAccountService {
         refreshTokenService.revokeAll(account, RevocationReason.ADMIN_RESET);
         auditService.record(actor, "PASSWORD_RESET_BY_ADMIN", "Account", accountId, null, null, metadata);
     }
+    @Override @Transactional public AccountResponse deactivate(UUID id,String reason,AccountPrincipal actorPrincipal,RequestMetadata md){Account actor=require(actorPrincipal.accountId());Account target=require(id);nonStaffTarget(actor,target);AccountStatus before=target.getStatus();target.setStatus(AccountStatus.INACTIVE);target.setTokenVersion(target.getTokenVersion()+1);refreshTokenService.revokeAll(target,RevocationReason.ACCOUNT_LOCKED);auditService.record(actor,"ACCOUNT_DEACTIVATED","Account",id,Map.of("status",before.name()),Map.of("status","INACTIVE","reason",reason),md);return accountMapper.toResponse(target);}
+    @Override @Transactional public AccountResponse restore(UUID id,String reason,AccountPrincipal actorPrincipal,RequestMetadata md){Account actor=require(actorPrincipal.accountId());Account target=require(id);nonStaffTarget(actor,target);if(target.getStatus()!=AccountStatus.INACTIVE)throw new ConflictException("Only INACTIVE Account can be restored");target.setStatus(AccountStatus.ACTIVE);auditService.record(actor,"ACCOUNT_RESTORED","Account",id,Map.of("status","INACTIVE"),Map.of("status","ACTIVE","reason",reason),md);return accountMapper.toResponse(target);}
+    @Override public com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id,AccountPrincipal actorPrincipal){Account actor=require(actorPrincipal.accountId());Account target=require(id);nonStaffTarget(actor,target);return hardDelete.impact(id);}
+    @Override @Transactional public com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,AccountPrincipal actorPrincipal,RequestMetadata md){Account actor=require(actorPrincipal.accountId());Account target=require(id);nonStaffTarget(actor,target);var result=hardDelete.delete(id);auditService.record(actor,"ACCOUNT_FORCE_DELETED","Account",id,null,Map.of("reason",reason,"deleted",result.deleted()),md);return result;}
 
     private void auditStatus(Account actor, Account account, String action, AccountStatus before,
                              RequestMetadata metadata) {
@@ -103,4 +108,5 @@ public class AdminAccountServiceImpl implements AdminAccountService {
         return accountRepository.findById(accountId)
                 .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy Account"));
     }
+    private void nonStaffTarget(Account actor,Account target){if(actor.getAccountId().equals(target.getAccountId()))throw new BusinessRuleException("Admin cannot delete own account");if(target.getRole()==Role.STAFF)throw new BusinessRuleException("Use Admin Staff lifecycle for STAFF account");}
 }

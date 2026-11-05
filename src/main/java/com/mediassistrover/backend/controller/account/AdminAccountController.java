@@ -3,6 +3,7 @@ package com.mediassistrover.backend.controller.account;
 import com.mediassistrover.backend.dto.account.request.ResetPasswordRequest;
 import com.mediassistrover.backend.dto.account.response.AccountResponse;
 import com.mediassistrover.backend.dto.common.PageResponse;
+import com.mediassistrover.backend.dto.common.DeletionContracts.*;
 import com.mediassistrover.backend.security.AccountPrincipal;
 import com.mediassistrover.backend.service.AdminAccountService;
 import com.mediassistrover.backend.util.RequestMetadataFactory;
@@ -20,6 +21,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -38,6 +40,7 @@ import java.util.UUID;
 public class AdminAccountController {
 
     private final AdminAccountService service;
+    private final com.mediassistrover.backend.service.DeletionPolicy deletionPolicy;
 
     @PostMapping("/{accountId}/lock")
     @Operation(summary = "Khóa Account và thu hồi toàn bộ phiên")
@@ -64,4 +67,8 @@ public class AdminAccountController {
         service.resetPassword(accountId, body.newPassword(), actor, RequestMetadataFactory.from(request));
         return ResponseEntity.noContent().build();
     }
+    @DeleteMapping("/{accountId}") AccountResponse deactivate(@PathVariable UUID accountId,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.deactivate(accountId,body.reason(),actor,RequestMetadataFactory.from(request));}
+    @PostMapping("/{accountId}/restore") AccountResponse restore(@PathVariable UUID accountId,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.restore(accountId,body.reason(),actor,RequestMetadataFactory.from(request));}
+    @GetMapping("/{accountId}/deletion-impact") DeletionImpactResponse impact(@PathVariable UUID accountId,@AuthenticationPrincipal AccountPrincipal actor){return service.deletionImpact(accountId,actor);}
+    @DeleteMapping("/{accountId}/force") HardDeleteResponse force(@PathVariable UUID accountId,@org.springframework.web.bind.annotation.RequestHeader("X-Confirm-Hard-Delete")Boolean confirmed,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){deletionPolicy.requireHardDeleteConfirmation(confirmed);return service.forceDelete(accountId,body.reason(),actor,RequestMetadataFactory.from(request));}
 }
