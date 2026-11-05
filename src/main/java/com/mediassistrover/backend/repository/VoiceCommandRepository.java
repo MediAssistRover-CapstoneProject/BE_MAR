@@ -16,6 +16,7 @@ public interface VoiceCommandRepository extends JpaRepository<VoiceCommand, UUID
     boolean existsByVoiceInteractionVoiceInteractionIdAndSequenceNo(UUID interactionId, int sequenceNo);
     boolean existsByVoiceInteractionVoiceInteractionIdAndStatus(UUID interactionId, VoiceCommandStatus status);
     List<VoiceCommand> findByVoiceInteractionVoiceInteractionIdOrderBySequenceNoAsc(UUID interactionId);
+    long deleteByVoiceInteractionVoiceInteractionId(UUID interactionId);
 
     @Query("select c from VoiceCommand c where (:interactionId is null or c.voiceInteraction.voiceInteractionId=:interactionId) " +
             "and (:status is null or c.status=:status) and (:from is null or c.receivedAt>=:from) " +

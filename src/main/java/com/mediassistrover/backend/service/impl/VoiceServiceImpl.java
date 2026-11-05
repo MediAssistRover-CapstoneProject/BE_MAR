@@ -18,6 +18,7 @@ import com.mediassistrover.backend.validation.StaffOperationalScopePolicy;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +26,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.Objects;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.io.InputStream;
@@ -208,9 +211,10 @@ public class VoiceServiceImpl implements VoiceService {
     }
 
     @Override
-    public InteractionResponse getInteraction(UUID id, AccountPrincipal principal) {
+    public InteractionResponse getInteraction(UUID id,boolean includeDeleted, AccountPrincipal principal) {
         staffScope.requireCurrentStaffOrAdmin(principal);
         VoiceInteraction entity = interaction(id);
+        if(!includeDeleted&&entity.getArchivedAt()!=null)throw new ResourceNotFoundException("VoiceInteraction not found: "+id);
         InteractionResponse response = mapper.toResponse(entity);
         if (principal.role() == Role.ADMIN || interactionRawDataAvailable(entity, principal)) {
             return response;
@@ -222,13 +226,16 @@ public class VoiceServiceImpl implements VoiceService {
 
     @Override
     public Page<InteractionMetadataResponse> listInteractions(UUID robotId, VoiceInteractionStatus status,
-                                                               Instant from, Instant to,
+                                                               Instant from, Instant to,boolean includeDeleted,
                                                                AccountPrincipal principal, Pageable pageable) {
         staffScope.requireCurrentStaffOrAdmin(principal);
+        if(includeDeleted&&principal.role()!=Role.ADMIN)throw new AccessDeniedException("includeDeleted requires ADMIN");
         validateWindow(from, to);
-        return interactionRepository.search(robotId, status, from, to, pageable)
-                .map(entity -> interactionMetadata(entity, principal));
+        Page<VoiceInteraction> page=interactionRepository.search(robotId,status,from,to,includeDeleted?pageable:Pageable.unpaged(pageable.getSort()));List<VoiceInteraction> rows=page.getContent().stream().filter(v->includeDeleted||v.getArchivedAt()==null).toList();int start=(int)Math.min(pageable.getOffset(),rows.size());int end=Math.min(start+pageable.getPageSize(),rows.size());return new PageImpl<>(rows.subList(start,end).stream().map(entity->interactionMetadata(entity,principal)).toList(),pageable,rows.size());
     }
+    @Override @Transactional public InteractionResponse archive(UUID id,String reason,AccountPrincipal principal){staffScope.requireCurrentStaffOrAdmin(principal);if(principal.role()!=Role.ADMIN)throw new AccessDeniedException("Only ADMIN can archive voice interactions");VoiceInteraction v=interaction(id);if(v.getStatus()==VoiceInteractionStatus.ACTIVE)throw new BusinessRuleException("ACTIVE VoiceInteraction cannot be archived");v.setArchivedAt(Instant.now(clock));return mapper.toResponse(v);}
+    @Override public com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id,AccountPrincipal principal){staffScope.requireCurrentStaffOrAdmin(principal);if(principal.role()!=Role.ADMIN)throw new AccessDeniedException("Only ADMIN can inspect voice deletion impact");VoiceInteraction v=interaction(id);long commands=commandRepository.findByVoiceInteractionVoiceInteractionIdOrderBySequenceNoAsc(id).size();boolean can=v.getStatus()!=VoiceInteractionStatus.ACTIVE;return new com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse(id,"VoiceInteraction",can,can?List.of():List.of("VoiceInteraction is ACTIVE"),Map.of("voiceCommands",commands));}
+    @Override @Transactional public com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,AccountPrincipal principal){staffScope.requireCurrentStaffOrAdmin(principal);if(principal.role()!=Role.ADMIN)throw new AccessDeniedException("Only ADMIN can hard-delete voice interactions");var impact=deletionImpact(id,principal);if(!impact.canHardDelete())throw new BusinessRuleException(String.join(", ",impact.blockers()));long commands=commandRepository.deleteByVoiceInteractionVoiceInteractionId(id);interactionRepository.delete(interaction(id));return new com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse(id,"VoiceInteraction",Map.of("VoiceInteraction",1L,"VoiceCommand",commands));}
 
     @Override
     public CommandResponse getCommand(UUID id, AccountPrincipal principal) {

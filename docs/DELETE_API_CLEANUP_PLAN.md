@@ -78,6 +78,10 @@
   - Migration `V50` thêm `archived_at`; DELETE chỉ archive `CLOSED` hoặc `FALSE_ALARM`, không hỗ trợ restore.
   - List/Get ẩn archived Incident mặc định; ADMIN có `includeDeleted=true`.
   - Hard-delete Incident và AlertRecipient theo thứ tự FK vẫn chưa hoàn thiện.
+- [x] Hoàn thiện VoiceInteraction:
+  - Migration `V51` thêm `archived_at`; DELETE chỉ archive interaction không còn `ACTIVE`, không hỗ trợ restore.
+  - List/Get ẩn interaction archived mặc định; ADMIN có `includeDeleted=true`.
+  - Có deletion-impact và `/force`; force-delete chỉ xóa VoiceCommand con rồi xóa interaction, yêu cầu confirmation header.
 - [x] `mvn -DskipTests compile` thành công sau thay đổi Facility.
 - [x] `git diff --check` thành công sau thay đổi Facility.
 

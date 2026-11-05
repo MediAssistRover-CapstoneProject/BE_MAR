@@ -22,10 +22,13 @@ public interface VoiceService {
     MediaObjectResponse uploadInteractionAudio(UUID interactionId, MultipartFile file, DevicePrincipal principal);
     AckResponse recordCommand(PiEnvelope<CommandPayload> envelope, DevicePrincipal principal);
     AckResponse recordCommandResult(UUID commandId, PiEnvelope<CommandResultPayload> envelope, DevicePrincipal principal);
-    InteractionResponse getInteraction(UUID id, AccountPrincipal principal);
+    InteractionResponse getInteraction(UUID id, boolean includeDeleted, AccountPrincipal principal);
     Page<InteractionMetadataResponse> listInteractions(UUID robotId, VoiceInteractionStatus status, Instant from,
-                                                        Instant to, AccountPrincipal principal, Pageable pageable);
+                                                        Instant to, boolean includeDeleted, AccountPrincipal principal, Pageable pageable);
     CommandResponse getCommand(UUID id, AccountPrincipal principal);
     Page<CommandMetadataResponse> listCommands(UUID interactionId, VoiceCommandStatus status, Instant from,
                                                 Instant to, AccountPrincipal principal, Pageable pageable);
+    InteractionResponse archive(UUID id,String reason,AccountPrincipal principal);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id,AccountPrincipal principal);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,AccountPrincipal principal);
 }
