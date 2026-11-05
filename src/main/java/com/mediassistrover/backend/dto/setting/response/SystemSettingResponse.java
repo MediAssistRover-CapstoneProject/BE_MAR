@@ -14,6 +14,7 @@ public record SystemSettingResponse(
         String category,
         String description,
         boolean publicSetting,
+        boolean active,
         UUID updatedByAccountId,
         Instant updatedAt
 ) { }

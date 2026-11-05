@@ -18,7 +18,7 @@ public class RuntimeSettingServiceImpl implements RuntimeSettingService {
 
     @Override
     public long getLong(String key, long fallback, long minimum, long maximum) {
-        return repository.findBySettingKey(key).map(SystemSetting::getSettingValue)
+        return repository.findBySettingKeyAndActiveTrue(key).map(SystemSetting::getSettingValue)
                 .map(value -> value.get("value"))
                 .filter(Number.class::isInstance)
                 .map(Number.class::cast)
@@ -32,7 +32,7 @@ public class RuntimeSettingServiceImpl implements RuntimeSettingService {
 
     @Override
     public boolean getBoolean(String key, boolean fallback) {
-        return repository.findBySettingKey(key).map(SystemSetting::getSettingValue)
+        return repository.findBySettingKeyAndActiveTrue(key).map(SystemSetting::getSettingValue)
                 .map(value -> value.get("value"))
                 .filter(Boolean.class::isInstance)
                 .map(Boolean.class::cast)
@@ -41,7 +41,7 @@ public class RuntimeSettingServiceImpl implements RuntimeSettingService {
 
     @Override
     public String getString(String key, String fallback) {
-        return repository.findBySettingKey(key).map(SystemSetting::getSettingValue)
+        return repository.findBySettingKeyAndActiveTrue(key).map(SystemSetting::getSettingValue)
                 .map(value -> value.get("value"))
                 .filter(String.class::isInstance)
                 .map(String.class::cast)
