@@ -47,7 +47,7 @@ public class MqttStepDispatchService {
             throw new BusinessRuleException("Official UNLOCK awaits Pi STAFF_VERIFIED enforcement and a confirmed HELLO/output contract; keep workflow DRAFT");
         if (step.getStepType()==StepType.EXECUTE_SENSING && "MAPPING".equals(params.path("sensing_type").asText()))mapping.requireSupported(step);
         if(step.getStepType()==StepType.EXECUTE_SENSING && com.mediassistrover.backend.ai.AiSensingService.TYPES.contains(params.path("sensing_type").asText()))ai.requireEnabled();
-        if (step.getStepType()==StepType.EXECUTE_SENSING && !Set.of("ROBOT_HEALTH","SIDE_CLEARANCE","MAPPING","CROWD_DENSITY","RESTRICTED_ZONE").contains(params.path("sensing_type").asText()))
+        if (step.getStepType()==StepType.EXECUTE_SENSING && !Set.of("ROBOT_HEALTH","SIDE_CLEARANCE","MAPPING","CROWD_DENSITY","RESTRICTED_ZONE","VOICE_CAPTURE","AUDIO_LOOPBACK").contains(params.path("sensing_type").asText()))
             throw new BusinessRuleException("Sensing action is outside the integrated Pi contract; keep workflow DRAFT");
         if (step.getStepType()==StepType.INTERACT && (!"SPEAK".equals(params.path("action").asText()) || step.getInputMappingJson().has("action")))
             throw new BusinessRuleException("Only fixed INTERACT/SPEAK is executed by Pi");

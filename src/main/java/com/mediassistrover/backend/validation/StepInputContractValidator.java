@@ -1060,7 +1060,7 @@ public class StepInputContractValidator {
                         "action",
                         "mapping_session_id",
                         "artifact_id",
-                        "preview_rate_hz"
+                        "preview_rate_hz", "duration_sec", "language_code", "volume"
                 )
         );
 
@@ -1074,7 +1074,7 @@ public class StepInputContractValidator {
                         "SIDE_CLEARANCE",
                         "CROWD_DENSITY",
                         "RESTRICTED_ZONE",
-                        "MAPPING"
+                        "MAPPING", "VOICE_CAPTURE", "AUDIO_LOOPBACK"
                 )
                         : Set.of(
                         "ROBOT_HEALTH",
@@ -1140,7 +1140,22 @@ public class StepInputContractValidator {
                 template
         )) {
 
-            if ("MAPPING".equals(type)) {
+            if ("AUDIO_LOOPBACK".equals(type)) {
+                fields(s,n,Set.of("sensing_type","duration_sec","volume"));
+                number(s,n,"duration_sec",1,15,false,required,template);
+                number(s,n,"volume",0,100,false,required,template);
+                for(String field:Set.of("duration_sec","volume"))
+                    if(literal(n.get(field),template)&&!n.get(field).isIntegralNumber())fail(s,field,"requires an integer");
+                if(s.getTimeoutSec()<35)fail(s,"timeoutSec","AUDIO_LOOPBACK requires at least 35 seconds");
+                if(s.getMaxAttempts()!=1)fail(s,"maxAttempts","microphone test must not automatically re-record");
+            } else if ("VOICE_CAPTURE".equals(type)) {
+                fields(s,n,Set.of("sensing_type","duration_sec","language_code"));
+                number(s,n,"duration_sec",1,15,false,required,template);
+                if(literal(n.get("duration_sec"),template)&&!n.get("duration_sec").isIntegralNumber())fail(s,"duration_sec","requires whole seconds");
+                enumeration(s,n,"language_code",Set.of("vi","en"),required,template);
+                if(s.getTimeoutSec()<65)fail(s,"timeoutSec","VOICE_CAPTURE requires at least 65 seconds for recording and STT");
+                if(s.getMaxAttempts()!=1)fail(s,"maxAttempts","voice capture must not automatically re-record");
+            } else if ("MAPPING".equals(type)) {
 
                 enumeration(
                         s,

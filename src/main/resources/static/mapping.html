@@ -327,7 +327,7 @@ async function prepareWorkflow(file,code,field){
 }
 $('prepareMapping').onclick=async()=>{const b=$('prepareMapping');b.disabled=true;try{await prepareWorkflow('mapping-workflow.json','WF_MAPPING','workflow');notice('Workflow quét và lưu đã sẵn sàng.')}catch(e){notice(e.message)}finally{b.disabled=false}};
 </script>
-<script src="/map-navigation.js?v=20261104-workflow"></script>
+<script src="/map-navigation.js?v=20261105-delete-endpoint"></script>
 <script>
 autoMapping=MappingAutonomy.mount({
   context:()=>({job,session,mapping,busy,jogActive:jog.active}),buttons,
@@ -337,7 +337,7 @@ autoMapping=MappingAutonomy.mount({
   manualStop:()=>jog.stop(),save:requestSaveMap
 });buttons();
 </script>
-<script src="/robot-test-workflow.js?v=20261104-workflow"></script>
+<script src="/robot-test-workflow.js?v=20261105-stt-tts"></script>
 <script>
 let workflowRunner;
 const savedMapNavigation=SavedMapNavigation.mount({element:document.getElementById('mapNavigation'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,isMappingActive:()=>mapping||jog.active,getSavedMapId:()=>document.getElementById('savedMapId').value,isWorkflowActive:()=>workflowRunner?.isActive()||false,onContextChange:()=>workflowRunner?.refreshContext()});

@@ -31,7 +31,11 @@ public class OpenAiTtsService implements AutoCloseable {
     private final ThreadPoolExecutor executor = new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,
         new ArrayBlockingQueue<>(8),r->{Thread t=new Thread(r,"openai-tts");t.setDaemon(true);return t;});
     private final Map<String,Work> pending=new HashMap<>();
+    private volatile long storageRetryAfter;
+    private static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(OpenAiTtsService.class);
     static final int MAX_BYTES=4*1024*1024;
+    public record Configuration(boolean enabled,boolean configured,String model,String voice) { }
+    public Configuration configuration(){return new Configuration(enabled,!apiKey.isBlank(),model,voice);}
 
     @org.springframework.beans.factory.annotation.Autowired
     public OpenAiTtsService(@Value("${app.tts.enabled:false}") boolean enabled,
@@ -68,10 +72,12 @@ public class OpenAiTtsService implements AutoCloseable {
         String id=sha256(("openai\n"+model+"\n"+voice+"\n"+renderSpeed+"\n"+language+"\n"+instructions+"\n"+text).getBytes(StandardCharsets.UTF_8));
         Path file=directory.resolve(id+".wav");
         try {
-            if(s3!=null)try{byte[] audio=s3.get(cacheKey(id),MAX_BYTES);if(wav(audio))return new Result("READY",null,audio);}catch(com.mediassistrover.backend.exception.ResourceNotFoundException ignored){}
             if(Files.isRegularFile(file)) {
                 if(Files.size(file)>MAX_BYTES)Files.delete(file);
-                else {byte[] audio=Files.readAllBytes(file);if(wav(audio))return new Result("READY",null,audio);Files.delete(file);}
+                else {byte[] audio=Files.readAllBytes(file);if(wav(audio)){
+                    Work cached=pending.get(id);if(cached!=null&&cached.future.isDone())pending.remove(id);
+                    return new Result("READY",null,audio);
+                }Files.delete(file);}
             }
             Work work=pending.get(id);
             if(work!=null&&work.future.isDone()) {
@@ -82,6 +88,14 @@ public class OpenAiTtsService implements AutoCloseable {
             long now=System.currentTimeMillis();
             pending.entrySet().removeIf(e->e.getValue().future.isDone()&&now-e.getValue().created>180_000);
             if(work==null) {
+                // A cache lookup is not a prerequisite for speaking. In
+                // particular, S3 HEAD may return 403 for an absent object when
+                // the credentials do not have ListBucket permission.
+                if(s3!=null&&now>=storageRetryAfter)try{
+                    byte[] audio=s3.get(cacheKey(id),MAX_BYTES);
+                    if(wav(audio)){cacheLocal(file,audio);return new Result("READY",null,audio);}
+                }catch(com.mediassistrover.backend.exception.ResourceNotFoundException ignored){}
+                catch(com.mediassistrover.backend.exception.StorageUnavailableException unavailable){cacheUnavailable();}
                 if(pending.size()>=128)return new Result("FAILED","TTS_BUSY",null);
                 try {pending.put(id,new Work(executor.submit(()->generate(text,language,file,renderSpeed)),now));}
                 catch(RejectedExecutionException e){return new Result("FAILED","TTS_BUSY",null);}
@@ -103,13 +117,22 @@ public class OpenAiTtsService implements AutoCloseable {
         if(response.statusCode()!=200)throw new IOException("TTS_PROVIDER_REJECTED");
         byte[] bytes=response.body();
         if(!wav(bytes))throw new IOException("TTS_INVALID_WAV");
-        if(s3!=null){s3.put(cacheKey(file.getFileName().toString().replaceFirst("\\.wav$","")),new ByteArrayInputStream(bytes),bytes.length,"audio/wav",sha256(bytes),true);return bytes;}
+        cacheLocal(file,bytes);
+        if(s3!=null&&System.currentTimeMillis()>=storageRetryAfter)try{
+            s3.put(cacheKey(file.getFileName().toString().replaceFirst("\\.wav$","")),new ByteArrayInputStream(bytes),bytes.length,"audio/wav",sha256(bytes),true);
+        }catch(com.mediassistrover.backend.exception.StorageUnavailableException unavailable){cacheUnavailable();}
+        return bytes;
+    }
+    private void cacheUnavailable(){
+        storageRetryAfter=System.currentTimeMillis()+30_000;
+        log.warn("TTS_CACHE_S3_UNAVAILABLE: using bounded local WAV cache; provider and map storage unchanged");
+    }
+    private void cacheLocal(Path file,byte[] bytes)throws IOException{
         Files.createDirectories(directory);
         Path temporary=Files.createTempFile(directory,"tts-",".tmp");
         try {Files.write(temporary,bytes);Files.move(temporary,file,StandardCopyOption.REPLACE_EXISTING);}
         finally {Files.deleteIfExists(temporary);}
         trimCache();
-        return bytes;
     }
     private String cacheKey(String id){return "audio/"+UUID.nameUUIDFromBytes(id.getBytes(StandardCharsets.UTF_8))+".wav";}
     private void trimCache() throws IOException {

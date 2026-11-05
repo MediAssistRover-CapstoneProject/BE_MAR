@@ -94,6 +94,16 @@ final class Schema3StepResultContractValidator {
             if (input.has("map_id")) same(input, n, "map_id");
             if (n.path("model_version").asText().isBlank() || n.path("model_version").asText().length()>100) invalid("model_version requires 1-100 characters");
             if("CROWD_DENSITY".equals(type) && !metrics.path("count").canConvertToInt())invalid("AI count exceeds integer range");
+        } else if ("AUDIO_LOOPBACK".equals(type)) {
+            same(input,metrics,"volume");
+            if(Math.abs(metrics.path("duration_sec").asDouble()-input.path("duration_sec").asDouble())>.1)
+                invalid("audio loopback duration differs from command");
+        } else if ("VOICE_CAPTURE".equals(type)) {
+            same(input,metrics,"language_code");
+            if(Math.abs(metrics.path("duration_sec").asDouble()-input.path("duration_sec").asDouble())>.1)
+                invalid("voice recording duration differs from command");
+            if(!metrics.path("playback_text").asText().equals(metrics.path("text").asText().substring(0,Math.min(500,metrics.path("text").asText().length()))))
+                invalid("playback_text must be the first 500 characters of the transcript");
         } else if ("MAPPING".equals(type)) {
             same(input, n, "mapping_session_id");
             switch (input.path("action").asText()) {

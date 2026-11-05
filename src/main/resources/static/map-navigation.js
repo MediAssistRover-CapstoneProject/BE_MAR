@@ -180,6 +180,8 @@
         <label>Hướng thân robot trên map (độ)<input id="navYaw" type="number" step="1" min="-180" max="180" value="0"></label>
         <small>0° theo +X map; 90° theo +Y. Mũi tên thể hiện hướng thân robot; cần hiệu chuẩn góc lắp camera.</small>
         <button id="navSavePoint" disabled>Lưu endpoint</button>
+        <button id="navDeletePoint" disabled>Xóa endpoint đã chọn</button>
+        <small>Xóa sẽ ngưng sử dụng và ẩn endpoint khỏi map/danh sách MOVE; lịch sử nhiệm vụ được giữ lại.</small>
         <small id="navPointId">CHARGER chỉ là điểm đến để cắm sạc thủ công; không tự xác nhận đang sạc.</small>
         <label class="nav-render-option"><input id="navAtParking" type="checkbox"> Robot thật đang ở đúng parking đã chọn</label>
         <button id="navParkingSeed" disabled>Dùng parking làm vị trí khởi tạo</button>
@@ -259,6 +261,7 @@
       for(const id of ['navSeedMode','navSeedX','navSeedY','navSeedYaw'])$(id).disabled=!loaded||locked;
       for (const id of ['navNewPoint', 'navEndpoints', 'navPointCode', 'navPointName', 'navX', 'navY', 'navYaw']) $(id).disabled = !loaded || locked;
       $('navSavePoint').disabled = !loaded || locked || !state.draft;
+      $('navDeletePoint').disabled = !loaded || locked || !selected()?.active;
       for(const id of ['navPointType','navPointZone','navAtParking','navNewZone','navReloadZones','navZoneMode','navZones','navZoneCode','navZoneName','navZoneType','navZoneActive','navZonePoints','navZoneUndo','navSaveZone'])$(id).disabled=!loaded||locked;
       $('navZoneSpeed').disabled=!loaded||locked||$('navZoneType').value!=='SPEED';
       $('navToggleZone').disabled=!loaded||locked||!state.zoneEditing;
@@ -366,7 +369,7 @@
       $('navSwagger').textContent = 'Chọn vị trí trên map để lấy JSON.'; controls(); draw();
     }
     async function endpoints(id = '') {
-      state.endpoints = (await pages('/api/v1/endpoints')).filter(e => e.mapId === state.meta.map_id);
+      state.endpoints = (await pages('/api/v1/endpoints')).filter(e => e.mapId === state.meta.map_id && e.active);
       state.zoneAck=null;state.zoneSyncAt=0;
       showEndpoints(id); draw();
     }
@@ -529,6 +532,19 @@
       const saved = await api('/api/v1/endpoints' + (existing ? '/' + existing.endpointId : ''), {method: existing ? 'PUT' : 'POST', body});
       await endpoints(saved.endpointId); $('navEndpoints').onchange();
       say('Đã lưu endpoint ' + saved.endpointId + '. Chưa gửi MOVE; Nav2 sẽ kiểm tra khả năng đi tới khi chạy.');
+    });
+    $('navDeletePoint').onclick = () => mutate(async () => {
+      const point = selected();
+      if (!point?.active) throw Error('Chọn endpoint đã lưu trước khi xóa.');
+      if (active() || options.isMappingActive()) throw Error('Kết thúc hoặc hủy nhiệm vụ đang chạy trước khi xóa endpoint.');
+      if (!window.confirm('Xóa endpoint ' + point.endpointCode + ' — ' + point.endpointName + '? Điểm sẽ không còn dùng để MOVE; lịch sử nhiệm vụ vẫn được giữ.')) return;
+      await snapshot();
+      if (active() || options.isMappingActive()) throw Error('Robot vừa có nhiệm vụ mới; chưa xóa endpoint.');
+      await api('/api/v1/endpoints/' + point.endpointId + '/deactivate', {method:'POST',body:{}});
+      state.endpoints = state.endpoints.filter(e => e.endpointId !== point.endpointId);
+      state.zoneAck = null; state.zoneSyncAt = 0;
+      showEndpoints(); clearPoint();
+      say('Đã xóa endpoint ' + point.endpointCode + ' khỏi map và danh sách MOVE. Workflow nháp còn dùng điểm này cần bỏ hoặc thay step MOVE; lịch sử job được giữ lại.');
     });
     $('navActivate').onclick = () => mutate(async () => {
       if (options.isMappingActive()) throw Error('Kết thúc phiên quét trước khi đổi map active.');

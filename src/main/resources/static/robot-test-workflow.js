@@ -5,7 +5,7 @@
   const UUID=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
   const TERMINAL=new Set(['SUCCEEDED','FAILED','CANCELLED']);
   function stepPayload(step){
-    if(!['MOVE','WAIT','OPEN_SERVO','CLOSE_SERVO','WAIT_CONFIRM'].includes(step.kind))throw Error('Loại step không hợp lệ.');
+    if(!['MOVE','WAIT','SPEAK','AUDIO_LOOPBACK','OPEN_SERVO','CLOSE_SERVO','WAIT_CONFIRM'].includes(step.kind))throw Error('Loại step không hợp lệ.');
     if(step.kind==='MOVE'){
       if(!UUID.test(step.endpointId||''))throw Error('MOVE thiếu endpoint đã lưu.');
       return {kind:'MOVE',endpointId:step.endpointId};
@@ -15,7 +15,36 @@
       if(!Number.isFinite(seconds)||seconds<1||seconds>300)throw Error('WAIT phải từ 1 đến 300 giây.');
       return {kind:'WAIT',durationSec:seconds};
     }
+    if(step.kind==='AUDIO_LOOPBACK')return {kind:'AUDIO_LOOPBACK',...loopbackBody(step.durationSec,step.volume??70)};
+    if(step.kind==='SPEAK'){
+      const text=String(step.text||'').trim(),languageCode=step.languageCode||'vi',volume=Number(step.volume??70);
+      if(!text||text.length>500)throw Error('SPEAK cần nội dung từ 1 đến 500 ký tự.');
+      if(!['vi','en'].includes(languageCode)||!Number.isInteger(volume)||volume<0||volume>100)throw Error('Ngôn ngữ hoặc âm lượng SPEAK không hợp lệ.');
+      return {kind:'SPEAK',text,languageCode,volume};
+    }
     return {kind:step.kind};
+  }
+  function loopbackBody(durationSec,volume){
+    const seconds=Number(durationSec),level=Number(volume);
+    if(!Number.isInteger(seconds)||seconds<1||seconds>15)throw Error('Thời gian thu WAV phải là số nguyên từ 1 đến 15 giây.');
+    if(!Number.isInteger(level)||level<0||level>100)throw Error('Âm lượng phải từ 0 đến 100.');
+    return {durationSec:seconds,volume:level};
+  }
+  function voiceTestBody(durationSec,volume,languageCode){
+    const audio=loopbackBody(durationSec,volume);
+    if(!['vi','en'].includes(languageCode))throw Error('Ngôn ngữ nhận dạng phải là vi hoặc en.');
+    return {...audio,languageCode,playback:true};
+  }
+  function voiceResult(detail){
+    const capture=detail?.steps?.find(s=>s.resolvedInputsJson?.sensing_type==='VOICE_CAPTURE');
+    if(!capture)return null;
+    const text=capture.resultJson?.metrics?.text||'',spoken=capture.resultJson?.metrics?.playback_text||'';
+    const speech=detail.steps.find(s=>s.stepTypeSnapshot==='INTERACT'&&s.resolvedInputsJson?.action==='SPEAK');
+    const status=text?(speech?.status==='SUCCEEDED'?'Robot đã đọc lại text nhận dạng bằng TTS.':speech?.status==='FAILED'?'Đã nhận dạng được text; phát TTS thất bại: '+(speech.errorCode||detail.job?.errorCode||'xem kết quả job'):['FAILED','CANCELLED','RECOVERY_REQUIRED'].includes(detail.job?.status)?'Đã có text; job dừng trước khi phát TTS: '+detail.job.status:'Đã nhận dạng được text; đang chờ robot đọc lại bằng TTS.')
+      :capture.status==='FAILED'?'Thu/nhận dạng thất bại: '+(capture.errorCode||detail.job?.errorCode||'xem kết quả job')
+      :capture.status==='CANCELLED'?'Đã hủy thu/nhận dạng.'
+      :capture.status==='RUNNING'?'Pi đang thu/nhận dạng. Nói sau tiếng bíp; text sẽ hiện khi STT hoàn tất.':'Đang chờ Pi bắt đầu thu âm; hãy đợi tiếng bíp.';
+    return {text,spoken,status};
   }
   function body(robotId,context,steps,speed,compartmentId){
     if(!UUID.test(robotId||''))throw Error('Robot ID không hợp lệ.');
@@ -39,7 +68,7 @@
   function mount(options){
     const host=options.element;
     host.innerHTML=`<h2>Chạy workflow</h2>
-      <p>Thêm các step theo thứ tự rồi chạy trong một job. Ví dụ: MOVE A → WAIT 5 giây → MOVE B → mở servo → chờ xác nhận → đóng servo.</p>
+      <p>Thêm các step theo thứ tự rồi chạy trong một job. Ví dụ: MOVE A → phát thông báo → WAIT 5 giây → MOVE B → mở servo → chờ xác nhận → đóng servo.</p>
       <small>Dùng Robot ID và token ADMIN ở đầu trang. Kết thúc job quét trước khi thử; MOVE dùng phiên map READY đang mở, không khởi tạo lại AMCL.</small>
       <label>Trần tốc độ MOVE (m/s)<input id="testSpeed" type="number" min="0.05" max="0.6" step="0.05" value="0.4"></label>
       <details><summary>Cấu hình servo</summary><label>Compartment ID<input id="testCompartment" value="CART_MAIN" maxlength="64"></label>
@@ -49,6 +78,19 @@
       <button id="testLoadEndpoints">Lấy endpoint từ map</button><button id="testAddMove">Thêm MOVE</button>
       <label>WAIT (giây)<input id="testWaitSeconds" type="number" min="1" max="300" step="0.1" value="5"></label>
       <button id="testAddWait">Thêm WAIT</button><button id="testAddOpen">Thêm mở servo</button><button id="testAddClose">Thêm đóng servo</button>
+      <label>Nội dung phát loa — giọng tổng hợp AI<textarea id="testSpeechText" maxlength="500" rows="2">Xin chào, tôi là robot hỗ trợ bệnh viện MediAssist.</textarea></label>
+      <label>Ngôn ngữ<select id="testSpeechLanguage"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
+      <label>Âm lượng loa (%)<input id="testAudioVolume" type="number" min="0" max="100" step="1" value="70"></label>
+      <button id="testAddSpeak">Thêm phát loa vào workflow (INTERACT/SPEAK)</button>
+      <button id="testSpeakNow">Chạy một job phát nội dung trên</button>
+      <fieldset><legend>Thử thu âm — WAV gốc hoặc STT → TTS</legend>
+      <label>Thời gian thu (giây)<input id="testRecordSeconds" type="number" min="1" max="15" step="1" value="5"></label>
+      <button id="testAudioLoopback">Thu và phát lại WAV gốc trên robot</button>
+      <small>Đợi tiếng bíp rồi nói. Robot thu qua micro và phát lại nguyên nội dung ghi âm qua loa; không gửi STT/TTS, không đổi thành text. WAV tạm được xóa khi xong.</small>
+      <button id="testVoiceStt">Thu → STT → đọc lại bằng TTS</button>
+      <small>Đợi tiếng bíp rồi nói. Pi gửi WAV → BE gọi STT → hiện text bên dưới → robot đọc lại bằng giọng TTS. Dùng ngôn ngữ và âm lượng đã chọn ở trên; không cần chọn file.</small>
+      <label id="testTranscriptPanel" hidden>Văn bản STT nhận dạng<textarea id="testTranscript" readonly rows="3"></textarea></label>
+      <small id="testTranscriptNote" hidden></small></fieldset>
       <button id="testAddConfirm">Thêm chờ xác nhận lấy hàng</button><button id="testClear">Xóa danh sách</button>
       <ol id="testSteps"></ol><button id="testRun">Chạy workflow</button><p id="testReadiness" role="status">Thêm step để bắt đầu.</p>
       <p id="testStatus" class="nav-status" role="status">Chưa gửi lệnh.</p>
@@ -58,7 +100,7 @@
       <p><code>POST /api/v1/test-workflows/run</code> · header <code>Idempotency-Key</code> mới cho mỗi lượt. Dùng token ADMIN để chạy trang kiểm thử.</p>
       <p>Theo dõi <code>GET /api/v1/jobs/{jobId}</code> hoặc <code>/stream</code>; hủy bằng <code>POST /api/v1/jobs/{jobId}/cancel</code>. Workflow này dùng runtime thật của BE/Pi.</p>
       <button id="testPreview">Xem workflow BE dựng từ tham số</button><pre id="testJson"></pre></details>
-      <pre id="testProgress">Chưa có job.</pre>`;
+      <pre id="testProgress">Chưa có job.</pre><p id="testAudioStatus" role="status" aria-live="polite"></p>`;
     const $=id=>host.querySelector('#'+id),storage='mar-basic-test-workflow';
     const state={steps:[],pending:null,detail:null,busy:false,closed:false,timer:null,points:[],confirmEvent:null,pointSignature:null};
     const say=(message,error=false)=>{$('testStatus').textContent=message;$('testStatus').style.color=error?'#a51d1d':'';};
@@ -69,7 +111,7 @@
       $('testSteps').replaceChildren();
       state.steps.forEach((step,index)=>{
         const li=document.createElement('li'),label=document.createElement('span');
-        label.textContent=step.kind==='MOVE'?'MOVE → '+(step.label||step.endpointId):step.kind==='WAIT'?'WAIT '+step.durationSec+' giây':({OPEN_SERVO:'Mở servo',CLOSE_SERVO:'Đóng servo',WAIT_CONFIRM:'Chờ bấm xác nhận lấy hàng'}[step.kind]);li.append(label);
+        label.textContent=step.kind==='MOVE'?'MOVE → '+(step.label||step.endpointId):step.kind==='WAIT'?'WAIT '+step.durationSec+' giây':step.kind==='SPEAK'?'SPEAK → '+step.text:({AUDIO_LOOPBACK:'Thu và phát lại WAV gốc ('+step.durationSec+' giây)',OPEN_SERVO:'Mở servo',CLOSE_SERVO:'Đóng servo',WAIT_CONFIRM:'Chờ bấm xác nhận lấy hàng'}[step.kind]);li.append(label);
         for(const [text,delta] of [['↑',-1],['↓',1],['Bỏ',0]]){
           const b=document.createElement('button');b.textContent=text;b.disabled=state.busy||!!state.pending&&!state.pending.done||delta!==0&&(index+delta<0||index+delta>=state.steps.length);
           b.onclick=()=>{if(delta){const next=index+delta;[state.steps[index],state.steps[next]]=[state.steps[next],state.steps[index]];}else state.steps.splice(index,1);persist();render();};li.append(b);
@@ -77,7 +119,7 @@
         $('testSteps').append(li);
       });
       const active=state.pending&&!state.pending.done,known=active&&state.pending.jobId,wait=waitingConfirmation(state.detail);
-      for(const id of ['testAddMove','testAddWait','testAddOpen','testAddClose','testAddConfirm','testClear'])$(id).disabled=state.busy||!!active;
+      for(const id of ['testSpeakNow','testAudioLoopback','testVoiceStt','testAddMove','testAddWait','testAddSpeak','testAddOpen','testAddClose','testAddConfirm','testClear'])$(id).disabled=state.busy||!!active;
       $('testRun').textContent=active&&!known?'Gửi lại cùng yêu cầu cũ':'Chạy workflow';
       $('testCancel').disabled=state.busy||!known||state.detail?.job?.status==='RECOVERY_REQUIRED';
       $('testConfirm').disabled=state.busy||!wait;
@@ -105,7 +147,7 @@
       }
       const retry=active&&!state.pending.jobId;
       $('testRun').disabled=state.busy||!!(active&&state.pending.jobId)||(!retry&&reasons.length>0);
-      $('testReadiness').textContent=active?'Đang theo dõi workflow hiện tại.':reasons.length?'Chưa sẵn sàng: '+reasons.join('; ')+'.':state.steps.length+' step sẵn sàng; thực hiện theo thứ tự bên trên.';
+      $('testReadiness').textContent=active?(state.pending.label||'Đang theo dõi workflow hiện tại.'):reasons.length?'Chưa sẵn sàng: '+reasons.join('; ')+'.':state.steps.length+' step sẵn sàng; thực hiện theo thứ tự bên trên.';
     }
     async function api(path,data,key){
       const token=options.getToken().trim().replace(/^Bearer\s+/i,'');if(!token)throw Error('Cần token ADMIN ở đầu trang.');
@@ -128,6 +170,21 @@
       const detail=await api('/api/v1/jobs/'+pending.jobId);if(pending!==state.pending)return;
       state.detail=detail;
       $('testProgress').textContent='Job '+detail.job.jobId+' · '+detail.job.status+'\n'+detail.steps.slice().sort((a,b)=>a.stepCodeSnapshot.localeCompare(b.stepCodeSnapshot)).map(s=>s.stepCodeSnapshot+' · '+s.stepTypeSnapshot+' · '+s.status+(s.errorCode?' · '+s.errorCode:'')).join('\n');
+      const rawStep=detail.steps.find(s=>s.resolvedInputsJson?.sensing_type==='AUDIO_LOOPBACK');
+      if(rawStep){
+        const m=rawStep.resultJson?.metrics;
+        $('testAudioStatus').textContent=m?.playback_completed?'Robot đã phát xong WAV gốc '+m.duration_sec+' giây · RMS '+m.rms+' · đỉnh '+m.peak+'. Hãy nghe thực tế để xác nhận micro/loa.'
+          :rawStep.status==='RUNNING'?'Pi đang thực hiện thu/phát. Đợi tiếng bíp rồi nói; sau khi thu xong robot phát lại bản ghi.'
+          :rawStep.status==='FAILED'?'Thử thu/phát thất bại: '+(rawStep.errorCode||detail.job.errorCode||'xem kết quả job'):'Đang chờ Pi bắt đầu thu WAV.';
+      }
+      const voice=voiceResult(detail);
+      if(voice){
+        $('testAudioStatus').textContent=voice.status;
+        $('testTranscriptPanel').hidden=!voice.text;
+        $('testTranscript').value=voice.text;
+        $('testTranscriptNote').hidden=!voice.text;
+        $('testTranscriptNote').textContent=voice.spoken!==voice.text?'TTS đọc tối đa 500 ký tự đầu của text nhận dạng.':'TTS đọc đúng text nhận dạng ở trên; hãy đối chiếu với câu bạn đã nói.';
+      }
       if(TERMINAL.has(detail.job.status)){pending.done=true;persist();say('Job '+detail.job.status+(detail.job.errorCode?' · '+detail.job.errorCode:''),detail.job.status!=='SUCCEEDED');}
       if(detail.job.status==='RECOVERY_REQUIRED')say('Job cần recovery. Kiểm tra bằng chứng dừng trước khi đóng; chưa tạo job mới.',true);
       render();
@@ -137,12 +194,13 @@
       try{await refresh();}catch(e){say('Chưa đọc được trạng thái: '+e.message,true);}
       if(!state.closed&&state.pending&&!state.pending.done)state.timer=setTimeout(poll,2000);
     }
-    async function send(){
+    async function send(prepared=null){
       if(options.isMappingActive())throw Error('Kết thúc job quét trước khi chạy workflow test.');
       if(!state.pending||state.pending.done){
-        const b=payload();
         if(!UUID.test(robot()))throw Error('Robot ID không hợp lệ.');
-        state.pending={key:crypto.randomUUID(),path:'/api/v1/test-workflows/run',body:b,robotId:robot(),done:false};state.detail=null;state.confirmEvent=null;persist();
+        const proposal=prepared||{path:'/api/v1/test-workflows/run',body:payload()};
+        state.pending={key:crypto.randomUUID(),...proposal,robotId:robot(),done:false};state.detail=null;state.confirmEvent=null;
+        $('testAudioStatus').textContent='';$('testTranscript').value='';$('testTranscriptPanel').hidden=true;$('testTranscriptNote').hidden=true;persist();
       }
       const p=state.pending;if(p.jobId)throw Error('Job đang chạy; chờ kết thúc hoặc bấm hủy.');
       say('Đang gửi workflow; yêu cầu gửi lại sẽ dùng cùng Idempotency-Key.');
@@ -164,6 +222,15 @@
     $('testLoadEndpoints').onclick=()=>mutate(loadEndpoints);
     $('testAddMove').onclick=()=>mutate(()=>{const point=state.points.find(p=>p.endpointId===$('testEndpoint').value);if(!point)throw Error('Chọn endpoint đã lưu trước.');add({kind:'MOVE',endpointId:point.endpointId,mapId:point.mapId,label:point.endpointCode});});
     $('testAddWait').onclick=()=>mutate(()=>{const step=stepPayload({kind:'WAIT',durationSec:$('testWaitSeconds').value});add(step);});
+    $('testAddSpeak').onclick=()=>mutate(()=>add(stepPayload({kind:'SPEAK',text:$('testSpeechText').value,languageCode:$('testSpeechLanguage').value,volume:Number($('testAudioVolume').value)})));
+    $('testSpeakNow').onclick=()=>mutate(()=>{
+      const step=stepPayload({kind:'SPEAK',text:$('testSpeechText').value,languageCode:$('testSpeechLanguage').value,volume:Number($('testAudioVolume').value)});
+      return send({path:'/api/v1/test-workflows/run',body:{robotId:robot(),steps:[step]},label:'Đang theo dõi job phát giọng tổng hợp.'});
+    });
+    $('testAudioLoopback').onclick=()=>mutate(()=>send({path:'/api/v1/robots/'+robot()+'/audio-loopback-test',
+      body:loopbackBody($('testRecordSeconds').value,$('testAudioVolume').value),label:'Đang theo dõi job thu/phát WAV gốc.'}));
+    $('testVoiceStt').onclick=()=>mutate(()=>send({path:'/api/v1/robots/'+robot()+'/voice-test',
+      body:voiceTestBody($('testRecordSeconds').value,$('testAudioVolume').value,$('testSpeechLanguage').value),label:'Đang theo dõi job thu âm → STT → TTS.'}));
     $('testAddOpen').onclick=()=>mutate(()=>add({kind:'OPEN_SERVO'}));$('testAddClose').onclick=()=>mutate(()=>add({kind:'CLOSE_SERVO'}));
     $('testAddConfirm').onclick=()=>mutate(()=>add({kind:'WAIT_CONFIRM'}));
     $('testClear').onclick=()=>mutate(()=>{state.steps=[];persist();render();});
@@ -180,5 +247,5 @@
     // No command on page load. Resume read-only tracking after an explicit click.
     return {state,refresh,refreshContext,isActive:()=>!!state.pending&&!state.pending.done};
   }
-  return {stepPayload,body,waitingConfirmation,mount};
+  return {stepPayload,loopbackBody,voiceTestBody,voiceResult,body,waitingConfirmation,mount};
 });

@@ -1,6 +1,7 @@
 package com.mediassistrover.backend.controller.robot;
 
 import com.mediassistrover.backend.speech.OpenAiTtsService;
+import com.mediassistrover.backend.speech.OpenAiSttService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -10,12 +11,26 @@ import org.springframework.http.*;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import java.util.Map;
+import java.io.IOException;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController @RequestMapping("/api/v1/pi/speech") @RequiredArgsConstructor
 @PreAuthorize("hasAnyRole('DEVICE','ADMIN')")
 @Tag(name="Robot Speech",description="Vietnamese TTS audio prepared on BE; API key never goes to Pi")
 public class RobotSpeechAudioController {
     private final OpenAiTtsService speech;
+    private final OpenAiSttService transcription;
+    @GetMapping("/status")
+    @Operation(summary="Inspect STT/TTS model configuration; no provider requests or robot jobs")
+    public Map<String,Object> status(){return Map.of("stt",transcription.configuration(),"tts",speech.configuration());}
+    @PostMapping(value="/transcribe",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
+    @Operation(summary="Transcribe a short PCM16 mono 16 kHz WAV; no RAG, workflow or motion commands")
+    public ResponseEntity<?> transcribe(@RequestPart("file") MultipartFile file,
+            @RequestParam(defaultValue="vi") String languageCode)throws IOException {
+        if(file.getSize()>OpenAiSttService.MAX_BYTES)throw new com.mediassistrover.backend.exception.FileTooLargeException("STT recording exceeds 1 MB");
+        var result=transcription.transcribe(file.getBytes(),languageCode);
+        return ResponseEntity.status(result.status()).header("Cache-Control","no-store").body(result.body());
+    }
     public record Request(@NotBlank @Size(min=1,max=500) String text,
                           @NotNull @Pattern(regexp="vi|en") String languageCode,
                           @Min(80) @Max(220) Integer speedWpm) { }

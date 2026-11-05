@@ -304,6 +304,55 @@
             "mapping_session_id"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "sensing_type": {
+              "const": "VOICE_CAPTURE"
+            },
+            "duration_sec": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 15
+            },
+            "language_code": {
+              "enum": [
+                "vi",
+                "en"
+              ]
+            }
+          },
+          "required": [
+            "sensing_type",
+            "duration_sec",
+            "language_code"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "sensing_type": {
+              "const": "AUDIO_LOOPBACK"
+            },
+            "duration_sec": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 15
+            },
+            "volume": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "sensing_type",
+            "duration_sec",
+            "volume"
+          ],
+          "additionalProperties": false
         }
       ]
     },

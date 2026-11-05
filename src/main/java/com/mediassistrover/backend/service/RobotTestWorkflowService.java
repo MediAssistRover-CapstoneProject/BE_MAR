@@ -23,13 +23,23 @@ import java.time.Instant;
 /** Administrator commissioning flows use the ordinary job/step/MQTT runtime. */
 @Service @RequiredArgsConstructor
 public class RobotTestWorkflowService {
-    public enum Kind { MOVE, WAIT, OPEN_SERVO, CLOSE_SERVO, WAIT_CONFIRM }
+    public enum Kind { MOVE, WAIT, SPEAK, VOICE_CAPTURE, AUDIO_LOOPBACK, SPEAK_LAST_TRANSCRIPT, OPEN_SERVO, CLOSE_SERVO, WAIT_CONFIRM }
     public record TestStep(@NotNull Kind kind, UUID endpointId,
-            @DecimalMin("1") @DecimalMax("300") Double durationSec) { }
+            @DecimalMin("1") @DecimalMax("300") Double durationSec,
+            @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) @Size(max=500) String text,
+            @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) @Pattern(regexp="vi|en") String languageCode,
+            @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL) @Min(0) @Max(100) Integer volume) {
+        public TestStep(Kind kind,UUID endpointId,Double durationSec){this(kind,endpointId,durationSec,null,null,null);}
+    }
     public record Create(@NotNull UUID robotId,UUID mapId,UUID navigationSessionId,
             @DecimalMin("0.05") @DecimalMax("0.60") Double maxSpeedMps,
             @Pattern(regexp="[A-Za-z0-9_-]{1,64}") String compartmentId,
             @NotEmpty @Size(max=20) List<@NotNull @Valid TestStep> steps) { }
+    public record AudioLoopback(@Min(1) @Max(15) Integer durationSec,
+            @Min(0) @Max(100) Integer volume) { }
+    public record Voice(@Min(1) @Max(15) Integer durationSec,
+            @Pattern(regexp="vi|en") String languageCode, Boolean playback,
+            @Min(0) @Max(100) Integer volume) { }
     public record Servo(@NotNull @Pattern(regexp="OPEN|CLOSE") String action,
             @Pattern(regexp="[A-Za-z0-9_-]{1,64}") String compartmentId) { }
     public record Result(UUID jobId,UUID workflowId,String status,boolean reused) { }
@@ -60,10 +70,28 @@ public class RobotTestWorkflowService {
         for(var step:r.steps()){
             if(step.kind()==Kind.MOVE&&step.endpointId()==null)throw new BusinessRuleException("MOVE requires endpointId");
             if(step.kind()!=Kind.MOVE&&step.endpointId()!=null)throw new BusinessRuleException("Only MOVE accepts endpointId");
-            if(step.kind()==Kind.WAIT){
+            if(step.kind()==Kind.WAIT||step.kind()==Kind.VOICE_CAPTURE||step.kind()==Kind.AUDIO_LOOPBACK){
                 if(step.durationSec()==null||!Double.isFinite(step.durationSec())||step.durationSec()<1||step.durationSec()>300)
                     throw new BusinessRuleException("WAIT requires durationSec 1..300");
-            }else if(step.durationSec()!=null)throw new BusinessRuleException("Only WAIT accepts durationSec");
+            }else if(step.durationSec()!=null)throw new BusinessRuleException("Only WAIT/VOICE_CAPTURE/AUDIO_LOOPBACK accept durationSec");
+            if((step.kind()==Kind.VOICE_CAPTURE||step.kind()==Kind.AUDIO_LOOPBACK) && (step.durationSec()>15 || step.durationSec()!=Math.rint(step.durationSec())))
+                throw new BusinessRuleException("Audio recording requires an integer durationSec 1..15");
+            if(step.kind()==Kind.SPEAK_LAST_TRANSCRIPT && r.steps().subList(0,r.steps().indexOf(step)).stream().noneMatch(s->s.kind()==Kind.VOICE_CAPTURE))
+                throw new BusinessRuleException("SPEAK_LAST_TRANSCRIPT requires a preceding VOICE_CAPTURE");
+            if(step.kind()==Kind.SPEAK){
+                if(step.text()==null||step.text().isBlank()||step.text().length()>500)
+                    throw new BusinessRuleException("SPEAK requires text 1..500 characters");
+                if(step.languageCode()!=null&&!Set.of("vi","en").contains(step.languageCode()))throw new BusinessRuleException("SPEAK languageCode must be vi or en");
+                if(step.volume()!=null&&(step.volume()<0||step.volume()>100))throw new BusinessRuleException("SPEAK volume must be 0..100");
+            }else if(step.kind()==Kind.AUDIO_LOOPBACK){
+                if(step.text()!=null||step.languageCode()!=null)throw new BusinessRuleException("AUDIO_LOOPBACK replays the original WAV; no text or languageCode");
+                if(step.volume()!=null&&(step.volume()<0||step.volume()>100))throw new BusinessRuleException("Playback volume must be 0..100");
+            }else if(step.kind()==Kind.VOICE_CAPTURE||step.kind()==Kind.SPEAK_LAST_TRANSCRIPT){
+                if(step.text()!=null)throw new BusinessRuleException("Voice capture/echo does not accept supplied text");
+                if(step.languageCode()!=null&&!Set.of("vi","en").contains(step.languageCode()))throw new BusinessRuleException("Voice languageCode must be vi or en");
+                if(step.volume()!=null&&(step.kind()==Kind.VOICE_CAPTURE||step.volume()<0||step.volume()>100))throw new BusinessRuleException("Only speech playback accepts volume 0..100");
+            }else if(step.text()!=null||step.languageCode()!=null||step.volume()!=null)
+                throw new BusinessRuleException("Speech fields require a voice step");
         }
     }
     /** Pure preview: no workflow is saved, published or dispatched. */
@@ -90,6 +118,19 @@ public class RobotTestWorkflowService {
                 case MOVE -> {s.put("stepType","MOVE");p.put("mode","NORMAL").put("map_id",r.mapId().toString())
                         .put("endpoint_id",item.endpointId().toString()).put("max_speed_mps",speed(r));timeout=180;}
                 case WAIT -> {s.put("stepType","WAIT");p.put("wait_type","DURATION").put("duration_sec",item.durationSec());timeout=(int)Math.ceil(item.durationSec())+10;}
+                case SPEAK -> {s.put("stepType","INTERACT");p.put("action","SPEAK").put("prompt_key","TEST_SPEAK_"+(i+1));
+                        p.putObject("data").put("text",item.text()).put("language_code",item.languageCode()==null?"vi":item.languageCode())
+                            .put("volume",item.volume()==null?70:item.volume()).put("speed_wpm",150);timeout=120;}
+                case AUDIO_LOOPBACK -> {s.put("stepType","EXECUTE_SENSING");p.put("sensing_type","AUDIO_LOOPBACK")
+                        .put("duration_sec",item.durationSec().intValue()).put("volume",item.volume()==null?70:item.volume());timeout=45;}
+                case VOICE_CAPTURE -> {s.put("stepType","EXECUTE_SENSING");p.put("sensing_type","VOICE_CAPTURE")
+                        .put("duration_sec",item.durationSec().intValue()).put("language_code",item.languageCode()==null?"vi":item.languageCode());timeout=85;}
+                case SPEAK_LAST_TRANSCRIPT -> {s.put("stepType","INTERACT");p.put("action","SPEAK").put("prompt_key","TEST_ECHO_"+(i+1));
+                        int source=i-1;while(r.steps().get(source).kind()!=Kind.VOICE_CAPTURE)source--;
+                        String pointer="/outputs/"+String.format(Locale.ROOT,"TEST_%02d",source+1)+"/metrics/playback_text";
+                        var data=p.putObject("data").put("language_code",item.languageCode()==null?"vi":item.languageCode())
+                            .put("volume",item.volume()==null?70:item.volume()).put("speed_wpm",150);
+                        data.set("text",json.createObjectNode().put("$ref",pointer));timeout=120;}
                 case WAIT_CONFIRM -> {s.put("stepType","WAIT");p.put("wait_type","EVENT").put("event_type","TEST_OPERATOR_CONFIRMED");
                         // Scope to this job's operation, never a reusable workflow-wide key.
                         ((ObjectNode)s.path("inputMappingJson")).set("correlation_key",json.createObjectNode().put("$ref","/inputs/test_confirm_keys/"+code));timeout=600;}
@@ -124,6 +165,10 @@ public class RobotTestWorkflowService {
             return new Result(previous.getJobId(),previous.getWorkflow().getWorkflowId(),previous.getStatus().name(),true);
         }
         if(hardware(r)&&!mqtt.getEnabledStepTypes().contains("CONTROL_HARDWARE"))throw new BusinessRuleException("CONTROL_HARDWARE is not enabled on BE");
+        if(r.steps().stream().anyMatch(s->s.kind()==Kind.SPEAK||s.kind()==Kind.SPEAK_LAST_TRANSCRIPT)&&!mqtt.getEnabledStepTypes().contains("INTERACT"))
+            throw new BusinessRuleException("INTERACT/SPEAK is not enabled on BE");
+        if(r.steps().stream().anyMatch(s->s.kind()==Kind.VOICE_CAPTURE||s.kind()==Kind.AUDIO_LOOPBACK)&&!mqtt.getEnabledStepTypes().contains("EXECUTE_SENSING"))
+            throw new BusinessRuleException("EXECUTE_SENSING/VOICE_CAPTURE is not enabled on BE");
         if(r.steps().stream().anyMatch(s->s.kind()==Kind.OPEN_SERVO)&&!mqtt.isAllowCommissioningUnlock())
             throw new BusinessRuleException("BE commissioning unlock is disabled");
         if(moves(r)){
