@@ -2,6 +2,7 @@ package com.mediassistrover.backend.service.impl;
 
 import com.mediassistrover.backend.dto.facility.request.FacilityRequests.*;
 import com.mediassistrover.backend.dto.facility.response.FacilityResponses.*;
+import com.mediassistrover.backend.dto.common.DeletionContracts.*;
 import com.mediassistrover.backend.entity.*;
 import com.mediassistrover.backend.enums.HospitalInformationStatus;
 import com.mediassistrover.backend.enums.MapStatus;
@@ -41,6 +42,7 @@ public class FacilityServiceImpl implements FacilityService {
     private final com.mediassistrover.backend.storage.S3ObjectStorageService s3;
     private final AuditService auditService;
     private final Clock clock;
+    private final HospitalHardDeleteService hospitalDelete;
 
     @Override @Transactional
     public HospitalInformationResponse createHospitalInformation(HospitalInformationRequest r, UUID actorId, RequestMetadata md) {
@@ -75,14 +77,17 @@ public class FacilityServiceImpl implements FacilityService {
     }
 
     @Override @Transactional
-    public HospitalInformationResponse retireHospitalInformation(UUID id, UUID actorId, RequestMetadata md) {
-        HospitalInformation entity = hospital(id); entity.setStatus(HospitalInformationStatus.RETIRED);
+    public HospitalInformationResponse retireHospitalInformation(UUID id,String reason,UUID actorId,RequestMetadata md) {
+        HospitalInformation entity = hospital(id); HospitalInformationStatus before=entity.getStatus();entity.setStatus(HospitalInformationStatus.RETIRED);
         Account actor = account(actorId); entity.setUpdatedBy(actor);
-        audit(actor, "HOSPITAL_INFORMATION_RETIRED", "HospitalInformation", id, md);
+        auditService.record(actor,"HOSPITAL_INFORMATION_RETIRED","HospitalInformation",id,Map.of("status",before.name()),Map.of("status","RETIRED","reason",reason),md);
         return mapper.toResponse(entity);
     }
-    @Override public Page<HospitalInformationResponse> listHospitalInformation(Pageable p) { return hospitalRepository.findAll(p).map(mapper::toResponse); }
-    @Override public HospitalInformationResponse getHospitalInformation(UUID id){return mapper.toResponse(hospital(id));}
+    @Override @Transactional public HospitalInformationResponse restoreHospitalInformation(UUID id,String reason,UUID actorId,RequestMetadata md){HospitalInformation entity=hospital(id);if(entity.getStatus()!=HospitalInformationStatus.RETIRED)throw new BusinessRuleException("Only RETIRED hospital information can be restored");entity.setStatus(HospitalInformationStatus.DRAFT);Account actor=account(actorId);entity.setUpdatedBy(actor);auditService.record(actor,"HOSPITAL_INFORMATION_RESTORED","HospitalInformation",id,Map.of("status","RETIRED"),Map.of("status","DRAFT","reason",reason),md);return mapper.toResponse(entity);}
+    @Override public Page<HospitalInformationResponse> listHospitalInformation(boolean includeDeleted,Pageable p) { return(includeDeleted?hospitalRepository.findAll(p):hospitalRepository.findByStatusNot(HospitalInformationStatus.RETIRED,p)).map(mapper::toResponse); }
+    @Override public HospitalInformationResponse getHospitalInformation(UUID id,boolean includeDeleted){HospitalInformation entity=hospital(id);if(!includeDeleted&&entity.getStatus()==HospitalInformationStatus.RETIRED)throw notFound("HospitalInformation",id);return mapper.toResponse(entity);}
+    @Override public DeletionImpactResponse hospitalDeletionImpact(UUID id){hospital(id);return hospitalDelete.impact(id);}
+    @Override @Transactional public HardDeleteResponse forceDeleteHospital(UUID id,String reason,UUID actorId,RequestMetadata md){Account actor=account(actorId);HardDeleteResponse result=hospitalDelete.delete(id);auditService.record(actor,"HOSPITAL_INFORMATION_FORCE_DELETED","HospitalInformation",id,null,Map.of("reason",reason,"deleted",result.deleted()),md);return result;}
 
     @Override @Transactional
     public FloorResponse createFloor(FloorRequest r, UUID actorId, RequestMetadata md) {

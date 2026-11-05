@@ -11,9 +11,12 @@ public interface FacilityService {
     HospitalInformationResponse createHospitalInformation(HospitalInformationRequest request, UUID actorId, RequestMetadata metadata);
     HospitalInformationResponse updateHospitalInformation(UUID id, HospitalInformationRequest request, UUID actorId, RequestMetadata metadata);
     HospitalInformationResponse publishHospitalInformation(UUID id, UUID actorId, RequestMetadata metadata);
-    HospitalInformationResponse retireHospitalInformation(UUID id, UUID actorId, RequestMetadata metadata);
-    Page<HospitalInformationResponse> listHospitalInformation(Pageable pageable);
-    HospitalInformationResponse getHospitalInformation(UUID id);
+    HospitalInformationResponse retireHospitalInformation(UUID id,String reason,UUID actorId,RequestMetadata metadata);
+    HospitalInformationResponse restoreHospitalInformation(UUID id,String reason,UUID actorId,RequestMetadata metadata);
+    Page<HospitalInformationResponse> listHospitalInformation(boolean includeDeleted,Pageable pageable);
+    HospitalInformationResponse getHospitalInformation(UUID id,boolean includeDeleted);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse hospitalDeletionImpact(UUID id);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDeleteHospital(UUID id,String reason,UUID actorId,RequestMetadata metadata);
 
     FloorResponse createFloor(FloorRequest request, UUID actorId, RequestMetadata metadata);
     FloorResponse updateFloor(UUID id, FloorRequest request, UUID actorId, RequestMetadata metadata);

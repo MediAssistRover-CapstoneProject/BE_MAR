@@ -16,9 +16,11 @@ public interface HospitalInformationArticleService {
                                               UUID actorId, RequestMetadata metadata);
     HospitalInformationArticleResponse publish(UUID hospitalId, UUID articleId,
                                                UUID actorId, RequestMetadata metadata);
-    HospitalInformationArticleResponse retire(UUID hospitalId, UUID articleId,
-                                              UUID actorId, RequestMetadata metadata);
-    HospitalInformationArticleResponse get(UUID hospitalId, UUID articleId);
+    HospitalInformationArticleResponse retire(UUID hospitalId,UUID articleId,String reason,UUID actorId,RequestMetadata metadata);
+    HospitalInformationArticleResponse restore(UUID hospitalId,UUID articleId,String reason,UUID actorId,RequestMetadata metadata);
+    HospitalInformationArticleResponse get(UUID hospitalId,UUID articleId,boolean includeDeleted);
     Page<HospitalInformationArticleResponse> list(UUID hospitalId, HospitalInformationStatus status,
-                                                  Pageable pageable);
+                                                  boolean includeDeleted,Pageable pageable);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID hospitalId,UUID articleId);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID hospitalId,UUID articleId,String reason,UUID actorId,RequestMetadata metadata);
 }

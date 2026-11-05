@@ -1,6 +1,7 @@
 package com.mediassistrover.backend.controller.facility;
 
 import com.mediassistrover.backend.dto.common.PageResponse;
+import com.mediassistrover.backend.dto.common.DeletionContracts.*;
 import com.mediassistrover.backend.dto.facility.request.FacilityRequests.HospitalInformationArticleRequest;
 import com.mediassistrover.backend.dto.facility.response.FacilityResponses.HospitalInformationArticleResponse;
 import com.mediassistrover.backend.enums.HospitalInformationStatus;
@@ -27,16 +28,18 @@ import java.util.UUID;
 @PreAuthorize("hasAnyRole('ADMIN','STAFF')")
 public class HospitalInformationArticleController {
     private final HospitalInformationArticleService service;
+    private final DeletionPolicy deletionPolicy;
 
     @GetMapping public PageResponse<HospitalInformationArticleResponse> list(
             @PathVariable UUID hospitalId, @RequestParam(required = false) HospitalInformationStatus status,
+            @RequestParam(defaultValue="false") boolean includeDeleted,
             @RequestParam(defaultValue = "0") @Min(0) int page,
             @RequestParam(defaultValue = "20") @Min(1) @Max(100) int size) {
-        return PageResponse.from(service.list(hospitalId, status,
+        return PageResponse.from(service.list(hospitalId,status,includeDeleted,
                 PageRequest.of(page, size, Sort.by("createdAt").descending())));
     }
     @GetMapping("/{articleId}") public HospitalInformationArticleResponse get(
-            @PathVariable UUID hospitalId, @PathVariable UUID articleId) { return service.get(hospitalId, articleId); }
+            @PathVariable UUID hospitalId,@PathVariable UUID articleId,@RequestParam(defaultValue="false")boolean includeDeleted) { return service.get(hospitalId,articleId,includeDeleted); }
     @PostMapping @ResponseStatus(HttpStatus.CREATED) @PreAuthorize("hasRole('ADMIN')")
     public HospitalInformationArticleResponse create(@PathVariable UUID hospitalId,
             @Valid @RequestBody HospitalInformationArticleRequest body,
@@ -54,9 +57,13 @@ public class HospitalInformationArticleController {
             @AuthenticationPrincipal AccountPrincipal actor, HttpServletRequest request) {
         return service.publish(hospitalId, articleId, actor.accountId(), RequestMetadataFactory.from(request));
     }
-    @PostMapping("/{articleId}/retire") @PreAuthorize("hasRole('ADMIN')")
+    @DeleteMapping("/{articleId}") @PreAuthorize("hasRole('ADMIN')")
     public HospitalInformationArticleResponse retire(@PathVariable UUID hospitalId, @PathVariable UUID articleId,
-            @AuthenticationPrincipal AccountPrincipal actor, HttpServletRequest request) {
-        return service.retire(hospitalId, articleId, actor.accountId(), RequestMetadataFactory.from(request));
+            @Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request) {
+        return service.retire(hospitalId,articleId,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));
     }
+    @PostMapping("/{articleId}/retire") @PreAuthorize("hasRole('ADMIN')") public HospitalInformationArticleResponse retireAlias(@PathVariable UUID hospitalId,@PathVariable UUID articleId,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.retire(hospitalId,articleId,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));}
+    @PostMapping("/{articleId}/restore") @PreAuthorize("hasRole('ADMIN')") public HospitalInformationArticleResponse restore(@PathVariable UUID hospitalId,@PathVariable UUID articleId,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.restore(hospitalId,articleId,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));}
+    @GetMapping("/{articleId}/deletion-impact") @PreAuthorize("hasRole('ADMIN')") public DeletionImpactResponse impact(@PathVariable UUID hospitalId,@PathVariable UUID articleId){return service.deletionImpact(hospitalId,articleId);}
+    @DeleteMapping("/{articleId}/force") @PreAuthorize("hasRole('ADMIN')") public HardDeleteResponse forceDelete(@PathVariable UUID hospitalId,@PathVariable UUID articleId,@RequestHeader("X-Confirm-Hard-Delete")Boolean confirmed,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){deletionPolicy.requireHardDeleteConfirmation(confirmed);return service.forceDelete(hospitalId,articleId,body.reason(),actor.accountId(),RequestMetadataFactory.from(request));}
 }

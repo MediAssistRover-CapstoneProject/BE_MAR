@@ -20,9 +20,11 @@ public interface HospitalInformationArticleRepository extends JpaRepository<Hosp
             select a from HospitalInformationArticle a
             where a.hospitalInformation.hospitalInformationId = :hospitalId
               and (:status is null or a.status = :status)
+              and (:includeDeleted = true or a.status <> com.mediassistrover.backend.enums.HospitalInformationStatus.RETIRED)
             """)
     Page<HospitalInformationArticle> search(@Param("hospitalId") UUID hospitalId,
                                             @Param("status") HospitalInformationStatus status,
+                                            @Param("includeDeleted") boolean includeDeleted,
                                             Pageable pageable);
 
     @Query("""

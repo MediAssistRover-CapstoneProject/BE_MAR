@@ -2,10 +2,10 @@
 
 ## 0. Trạng thái triển khai
 
-**Cập nhật gần nhất:** 05/11/2026
+**Cập nhật gần nhất:** 06/11/2026
 
 **Nhánh:** `main`
-**Trạng thái:** checkpoint Giai đoạn 1 đã build thành công, chuẩn bị commit/push.
+**Trạng thái:** checkpoint Giai đoạn 1 đã commit local tại `5c5cfc8`; chưa push theo yêu cầu chỉ push khi hoàn thành toàn bộ.
 
 ### Đã hoàn thành trong lượt hiện tại
 
@@ -31,6 +31,11 @@
   - Chỉ xóa dữ liệu sở hữu gồm StaffProfile, RefreshToken và RevokedToken.
   - Trả `409` nếu Account còn bất kỳ tham chiếu nghiệp vụ nào khác.
   - Chặn account tự hard-delete chính mình.
+- [x] Hoàn thiện Hospital/Article:
+  - Soft-delete bằng `RETIRED`, restore về `DRAFT`, ẩn mặc định và hỗ trợ `includeDeleted=true`.
+  - Có `deletion-impact` và `/force`, bắt buộc reason/confirmation theo chuẩn chung.
+  - Hospital hard-delete xóa Article sở hữu nhưng chặn nếu còn Floor.
+  - Article không có dependent table nên được hard-delete độc lập.
 - [x] `mvn -q -DskipTests compile` thành công sau các thay đổi trên.
 - [x] `mvn -q -DskipTests package` và `git diff --check` thành công.
 
@@ -38,13 +43,14 @@
 
 - [ ] Chưa kiểm tra Swagger thủ công trên database phát triển.
 - [ ] Admin Account controller hiện mới có lock/unlock/reset-password; chưa có bộ lifecycle endpoint riêng cho account không phải Staff.
+- [ ] Chưa triển khai nhóm Facility: Floor, Map, Zone, Room, Endpoint, EndpointGroup và membership.
 
 ### Bước tiếp theo cho lần làm sau
 
 1. Kiểm tra Swagger và gọi thủ công các endpoint Workflow/Staff mới trên database phát triển.
 2. Rà diff lần cuối rồi commit/push checkpoint Giai đoạn 1.
 3. Bổ sung lifecycle API riêng cho account không phải Staff nếu sản phẩm cho phép quản lý các role đó.
-4. Chuyển sang Hospital/Article.
+4. Chuyển sang nhóm Facility.
 
 ## 1. Mục tiêu và phạm vi
 
