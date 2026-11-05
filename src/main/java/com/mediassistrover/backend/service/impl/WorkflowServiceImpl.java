@@ -32,6 +32,7 @@ public class WorkflowServiceImpl implements WorkflowService {
     private final JobRepository jobRepository;
     private final com.mediassistrover.backend.validation.WorkflowExecutionReadiness readiness;
     private final com.mediassistrover.backend.mqtt.MqttRolloutService rollout;
+    private final WorkflowHardDeleteService hardDeleteService;
 
     @Override @Transactional
     public WorkflowDetailResponse createGraph(GraphCreateRequest request,UUID actorId,RequestMetadata md){
@@ -102,6 +103,17 @@ public class WorkflowServiceImpl implements WorkflowService {
         Map<UUID,Step> stepMap=new HashMap<>();for(Step old:stepRepository.findByWorkflowWorkflowIdOrderBySequenceNoAsc(id)){Step n=stepRepository.save(Step.builder().workflow(clone).task(taskMap.get(old.getTask().getTaskId())).stepType(old.getStepType()).stepCode(old.getStepCode()).stepName(old.getStepName()).sequenceNo(old.getSequenceNo()).description(old.getDescription()).enabled(old.isEnabled()).paramsJson(copy(old.getParamsJson())).inputMappingJson(copy(old.getInputMappingJson())).timeoutSec(old.getTimeoutSec()).maxAttempts(old.getMaxAttempts()).retryDelaySec(old.getRetryDelaySec()).retryCodesJson(copy(old.getRetryCodesJson())).maxVisits(old.getMaxVisits()).auditLevel(old.getAuditLevel()).build());stepMap.put(old.getStepId(),n);}stepRepository.flush();
         for(StepTransition old:transitionRepository.findByWorkflowWorkflowIdOrderByFromStepSequenceNoAscOutcomeAscPriorityAsc(id))transitionRepository.save(StepTransition.builder().workflow(clone).fromStep(stepMap.get(old.getFromStep().getStepId())).toStep(old.getToStep()==null?null:stepMap.get(old.getToStep().getStepId())).outcome(old.getOutcome()).conditionJson(nullableJson(old.getConditionJson())).priority(old.getPriority()).defaultTransition(old.isDefaultTransition()).terminalStatus(old.getTerminalStatus()).build());clone.setStartStep(stepMap.get(source.getStartStep().getStepId()));audit(actorId,"WORKFLOW_CLONED","Workflow",clone.getWorkflowId(),md);return detail(clone);}
     @Override @Transactional public void deleteDraft(UUID id,UUID actorId,RequestMetadata md){Workflow w=workflow(id);if(w.getStatus()!=WorkflowStatus.DRAFT)throw new BusinessRuleException("Only DRAFT workflow can be deleted");if(jobRepository.existsByWorkflowWorkflowId(id))throw new ConflictException("Workflow is referenced by Job history");w.setStartStep(null);workflowRepository.flush();workflowRepository.delete(w);audit(actorId,"WORKFLOW_DELETED","Workflow",id,md);}
+    @Override @Transactional public WorkflowHardDeleteResponse forceDelete(UUID id,UUID actorId,RequestMetadata md){
+        Account actor=account(actorId);
+        rollout.lockForWorkflowMaintenance();
+        WorkflowHardDeleteResponse result=hardDeleteService.delete(id);
+        auditService.record(actor,"WORKFLOW_FORCE_DELETED","Workflow",id,null,Map.of(
+                "workflowCode",result.workflowCode(),"previousStatus",result.previousStatus().name(),
+                "deletedJobs",result.deletedJobs(),"deletedSchedules",result.deletedSchedules(),
+                "clearedNavigationRequests",result.clearedNavigationRequests(),
+                "deletedRuntimeRecords",result.deletedRuntimeRecords()),md);
+        return result;
+    }
 
     private WorkflowDetailResponse detail(Workflow w){return new WorkflowDetailResponse(mapper.toResponse(w),taskRepository.findByWorkflowWorkflowIdOrderBySequenceNoAsc(w.getWorkflowId()).stream().map(mapper::toResponse).toList(),stepRepository.findByWorkflowWorkflowIdOrderBySequenceNoAsc(w.getWorkflowId()).stream().map(mapper::toResponse).toList(),transitionRepository.findByWorkflowWorkflowIdOrderByFromStepSequenceNoAscOutcomeAscPriorityAsc(w.getWorkflowId()).stream().map(mapper::toResponse).toList(),w.getCompiledDefinitionJson());}
     private PublishedWorkflowSummaryResponse publishedSummary(Workflow w){return new PublishedWorkflowSummaryResponse(w.getWorkflowId(),w.getWorkflowCode(),w.getVersionNo(),w.getWorkflowName(),w.getServiceType(),w.getDescription(),w.getRequiredCapabilitiesJson(),w.getMaxDurationSec(),w.getGraphVersion(),w.getSchemaVersion(),w.getPublishedAt());}

@@ -32,4 +32,7 @@ public final class WorkflowResponses {
                                          List<TransitionResponse> transitions,JsonNode compiledDefinitionJson) {}
     public record WorkflowValidationResponse(UUID workflowId,WorkflowStatus status,String definitionHash,
                                              int taskCount,int stepCount,int transitionCount,List<String> warnings) {}
+    public record WorkflowHardDeleteResponse(UUID workflowId,String workflowCode,WorkflowStatus previousStatus,
+                                             int deletedJobs,int deletedSchedules,int clearedNavigationRequests,
+                                             int deletedRuntimeRecords) {}
 }

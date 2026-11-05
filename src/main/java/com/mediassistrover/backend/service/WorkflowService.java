@@ -32,4 +32,5 @@ public interface WorkflowService {
     WorkflowResponse archive(UUID id,UUID actorId,RequestMetadata metadata);
     WorkflowDetailResponse cloneVersion(UUID id,String name,UUID actorId,RequestMetadata metadata);
     void deleteDraft(UUID id,UUID actorId,RequestMetadata metadata);
+    WorkflowHardDeleteResponse forceDelete(UUID id,UUID actorId,RequestMetadata metadata);
 }

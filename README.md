@@ -24,6 +24,7 @@ Trong `.env`: TTS_ENABLED=true, OPENAI_API_KEY=<key riêng>, OPENAI_TTS_MODEL=gp
 - POST /api/v1/maps/import: multipart floorId/mapCode/versionNo/mapName/yaml/pgm; map DRAFT.
 - POST/PUT /api/v1/endpoints: cấu hình endpoint.
 - GET /api/v1/pi/maps/{mapId}/bundle: YAML/PGM/metadata; DEVICE chỉ tải map được gán.
+- DELETE /api/v1/admin/workflows/{id}/force: ADMIN xóa cứng workflow ở mọi trạng thái cùng Job/Schedule và runtime liên quan; trả 409 nếu còn Job QUEUED, ACCEPTED hoặc RUNNING. ServiceRequest/NavigationRequest gốc được giữ lại.
 
 Giữ 11 step types. BE xử lý nghiệp vụ; Pi chạy handler robot. MOVE cần map đã nạp và profile ACK. Tạo workflow không tự tạo handler phần cứng mới.
 

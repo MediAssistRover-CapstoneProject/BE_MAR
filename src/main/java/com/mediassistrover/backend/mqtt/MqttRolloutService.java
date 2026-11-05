@@ -40,6 +40,9 @@ public class MqttRolloutService {
     /** Acquire before workflow/robot selection and retain until runtime creation commits. */
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.MANDATORY)
     public State lockForRuntimeCreation() { return read(" FOR SHARE"); }
+    /** Exclusive counterpart used by destructive workflow maintenance. */
+    @Transactional(propagation=org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public State lockForWorkflowMaintenance() { return read(" FOR UPDATE"); }
     public void requireSchema(State state,int schemaVersion) {
         if(state.mode()!=Mode.LEGACY_COMPATIBLE && schemaVersion!=3)
             throw new BusinessRuleException("MQTT rollout "+state.mode()+" requires schema 3; legacy runtime creation/publish is closed");
