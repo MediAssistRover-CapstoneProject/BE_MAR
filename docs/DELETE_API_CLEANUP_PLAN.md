@@ -65,7 +65,7 @@
   - Migration `V47` thêm `archived_at`; DELETE chỉ archive request terminal (`COMPLETED`, `FAILED`, `CANCELLED`), không hỗ trợ restore.
   - List/Get ẩn request archived mặc định; ADMIN dùng `includeDeleted=true`.
   - Đã thêm deletion-impact chặn khi còn Job chưa terminal.
-  - Chưa có `/force`: cần hoàn thiện thứ tự xóa subtype, Job terminal và runtime FK trước khi mở endpoint.
+  - Có `/force`: chặn Job active, Alert và VoiceCommand; dọn Job terminal bằng Job hard-delete trước khi xóa subtype và parent.
 - [~] Đang triển khai Job:
   - Migration `V48` thêm `archived_at`; DELETE archive chỉ áp dụng `SUCCEEDED`, `FAILED`, `CANCELLED` và không hỗ trợ restore.
   - List/Get ẩn Job archived mặc định; có `deletion-impact` chặn mọi Job chưa terminal.

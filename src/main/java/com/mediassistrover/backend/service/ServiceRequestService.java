@@ -25,4 +25,5 @@ public interface ServiceRequestService {
     ServiceRequestResponse cancel(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
     ServiceRequestResponse archive(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
     com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id,AccountPrincipal actor);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
 }

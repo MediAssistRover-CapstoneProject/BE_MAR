@@ -26,6 +26,7 @@ import java.time.Instant;
 @PreAuthorize("hasAnyRole('ADMIN','STAFF')") @Tag(name="Service Requests")
 public class ServiceRequestController {
     private final ServiceRequestService service;
+    private final com.mediassistrover.backend.service.DeletionPolicy deletionPolicy;
     @PostMapping("/information-requests") @ResponseStatus(HttpStatus.CREATED) public ServiceRequestResponse information(@RequestHeader("Idempotency-Key") String key,@Valid @RequestBody InformationCreateRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.createInformation(b,key,a,RequestMetadataFactory.from(r));}
     @PostMapping("/navigation-requests") @ResponseStatus(HttpStatus.CREATED) public NavigationResponse navigation(@RequestHeader("Idempotency-Key") String key,@Valid @RequestBody NavigationCreateRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.createNavigation(b,key,a,RequestMetadataFactory.from(r));}
     @PostMapping("/escort-requests") @ResponseStatus(HttpStatus.CREATED) public EscortResponse escort(@RequestHeader("Idempotency-Key") String key,@Valid @RequestBody EscortCreateRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.createEscort(b,key,a,RequestMetadataFactory.from(r));}
@@ -37,4 +38,5 @@ public class ServiceRequestController {
     @PostMapping("/service-requests/{id}/cancel") public ServiceRequestResponse cancel(@PathVariable UUID id,@Valid @RequestBody CancelRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.cancel(id,b.reason(),a,RequestMetadataFactory.from(r));}
     @DeleteMapping("/service-requests/{id}") public ServiceRequestResponse archive(@PathVariable UUID id,@Valid @RequestBody LifecycleActionRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){return service.archive(id,b.reason(),a,RequestMetadataFactory.from(r));}
     @GetMapping("/service-requests/{id}/deletion-impact") public DeletionImpactResponse impact(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal a){return service.deletionImpact(id,a);}
+    @DeleteMapping("/service-requests/{id}/force") @PreAuthorize("hasRole('ADMIN')") public HardDeleteResponse force(@PathVariable UUID id,@RequestHeader("X-Confirm-Hard-Delete")Boolean confirmed,@Valid @RequestBody LifecycleActionRequest b,@AuthenticationPrincipal AccountPrincipal a,HttpServletRequest r){deletionPolicy.requireHardDeleteConfirmation(confirmed);return service.forceDelete(id,b.reason(),a,RequestMetadataFactory.from(r));}
 }
