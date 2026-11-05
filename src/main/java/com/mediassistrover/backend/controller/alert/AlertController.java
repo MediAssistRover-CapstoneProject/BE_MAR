@@ -1,6 +1,7 @@
 package com.mediassistrover.backend.controller.alert;
 import com.mediassistrover.backend.dto.alert.response.AlertResponses.AlertResponse;
 import com.mediassistrover.backend.dto.common.PageResponse;
+import com.mediassistrover.backend.dto.common.DeletionContracts.LifecycleActionRequest;
 import com.mediassistrover.backend.enums.AlertStatus;
 import com.mediassistrover.backend.enums.AlertSeverity;
 import com.mediassistrover.backend.security.AccountPrincipal;
@@ -24,10 +25,11 @@ public class AlertController {
     @GetMapping public PageResponse<AlertResponse> list(@RequestParam(required=false)AlertStatus status,
             @RequestParam(required=false)AlertSeverity severity,@RequestParam(required=false)String type,
             @RequestParam(required=false)Instant from,@RequestParam(required=false)Instant to,
-            @RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size,
-            @AuthenticationPrincipal AccountPrincipal actor){return PageResponse.from(service.list(status,severity,type,from,to,actor,PageRequest.of(page,size,Sort.by(Sort.Direction.DESC,"createdAt"))));}
-    @GetMapping("/{id}") public AlertResponse get(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor){return service.get(id,actor);}
+            @RequestParam(defaultValue="false")boolean includeDeleted,@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size,
+            @AuthenticationPrincipal AccountPrincipal actor){return PageResponse.from(service.list(status,severity,type,from,to,includeDeleted,actor,PageRequest.of(page,size,Sort.by(Sort.Direction.DESC,"createdAt"))));}
+    @GetMapping("/{id}") public AlertResponse get(@PathVariable UUID id,@RequestParam(defaultValue="false")boolean includeDeleted,@AuthenticationPrincipal AccountPrincipal actor){return service.get(id,includeDeleted,actor);}
     @PostMapping("/{id}/acknowledge") public AlertResponse acknowledge(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.acknowledge(id,actor,RequestMetadataFactory.from(request));}
     @PostMapping("/{id}/resolve") public AlertResponse resolve(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.resolve(id,actor,RequestMetadataFactory.from(request));}
     @PostMapping("/{id}/close") public AlertResponse close(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.close(id,actor,RequestMetadataFactory.from(request));}
+    @DeleteMapping("/{id}") public AlertResponse archive(@PathVariable UUID id,@jakarta.validation.Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.archive(id,body.reason(),actor,RequestMetadataFactory.from(request));}
 }

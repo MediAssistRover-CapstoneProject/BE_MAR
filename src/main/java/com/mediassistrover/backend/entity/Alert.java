@@ -30,5 +30,6 @@ public class Alert {
     @Column(name="operation_key",nullable=false,length=150,unique=true) private String operationKey;
     @Column(name="created_at",nullable=false,updatable=false) private Instant createdAt;
     @Column(name="expires_at") private Instant expiresAt;
+    @Column(name="archived_at") private Instant archivedAt;
     @Version @Column(name="row_version",nullable=false) private long rowVersion;
 }

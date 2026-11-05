@@ -1,0 +1,1 @@
+ALTER TABLE `Alert` ADD COLUMN `archived_at` DATETIME(6) NULL;

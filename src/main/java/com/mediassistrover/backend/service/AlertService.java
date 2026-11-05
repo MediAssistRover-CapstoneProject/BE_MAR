@@ -14,10 +14,11 @@ public interface AlertService {
     Alert createSystemAlert(String operationKey,String type,AlertSeverity severity,String message,JsonNode data,
                             EmergencyIncident incident,ServiceRequest request,JobStep step,Zone zone,
                             boolean requireAck,AlertAckPolicy policy,Instant expiresAt,JsonNode recipients);
-    AlertResponse get(UUID id,AccountPrincipal actor);
+    AlertResponse get(UUID id,boolean includeDeleted,AccountPrincipal actor);
     Page<AlertResponse> list(AlertStatus status,AlertSeverity severity,String type,Instant from,Instant to,
-                             AccountPrincipal actor,Pageable pageable);
+                             boolean includeDeleted,AccountPrincipal actor,Pageable pageable);
     AlertResponse acknowledge(UUID id,AccountPrincipal actor,RequestMetadata metadata);
     AlertResponse resolve(UUID id,AccountPrincipal actor,RequestMetadata metadata);
     AlertResponse close(UUID id,AccountPrincipal actor,RequestMetadata metadata);
+    AlertResponse archive(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
 }
