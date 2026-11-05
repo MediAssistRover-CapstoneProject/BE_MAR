@@ -74,6 +74,10 @@
   - Migration `V49` thêm `archived_at`; DELETE chỉ archive Alert `CLOSED`, không hỗ trợ restore.
   - List/Get ẩn Alert archive mặc định; ADMIN có `includeDeleted=true`.
   - Chưa có hard-delete AlertRecipient/Incident theo dependency order.
+- [~] Đang triển khai EmergencyIncident:
+  - Migration `V50` thêm `archived_at`; DELETE chỉ archive `CLOSED` hoặc `FALSE_ALARM`, không hỗ trợ restore.
+  - List/Get ẩn archived Incident mặc định; ADMIN có `includeDeleted=true`.
+  - Hard-delete Incident và AlertRecipient theo thứ tự FK vẫn chưa hoàn thiện.
 - [x] `mvn -DskipTests compile` thành công sau thay đổi Facility.
 - [x] `git diff --check` thành công sau thay đổi Facility.
 
