@@ -77,7 +77,10 @@
 - [~] Đang triển khai EmergencyIncident:
   - Migration `V50` thêm `archived_at`; DELETE chỉ archive `CLOSED` hoặc `FALSE_ALARM`, không hỗ trợ restore.
   - List/Get ẩn archived Incident mặc định; ADMIN có `includeDeleted=true`.
-  - Hard-delete Incident và AlertRecipient theo thứ tự FK vẫn chưa hoàn thiện.
+  - Có deletion-impact và `/force`; chỉ xóa Incident terminal, Alert `CLOSED`/AlertRecipient con. ServiceRequest liên quan là blocker để không tạo tham chiếu mồ côi.
+- [x] Giai đoạn retention đã có sẵn và phù hợp kế hoạch:
+  - Scheduler/admin endpoint hỗ trợ dry-run, archive-before-delete, batch, dependency predicate và audit.
+  - Không có CRUD delete theo ID cho AuditLog, history, telemetry, JobEvent hay runtime receipts.
 - [x] Hoàn thiện VoiceInteraction:
   - Migration `V51` thêm `archived_at`; DELETE chỉ archive interaction không còn `ACTIVE`, không hỗ trợ restore.
   - List/Get ẩn interaction archived mặc định; ADMIN có `includeDeleted=true`.

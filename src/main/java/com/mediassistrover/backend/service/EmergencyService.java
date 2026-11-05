@@ -20,4 +20,6 @@ public interface EmergencyService {
     IncidentResponse close(UUID id,AccountPrincipal actor,RequestMetadata metadata);
     IncidentResponse falseAlarm(UUID id,Resolution request,AccountPrincipal actor,RequestMetadata metadata);
     IncidentResponse archive(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id,AccountPrincipal actor);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
 }

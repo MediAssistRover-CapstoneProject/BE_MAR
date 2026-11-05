@@ -1,6 +1,8 @@
 package com.mediassistrover.backend.controller.emergency;
 import com.mediassistrover.backend.dto.common.PageResponse;
 import com.mediassistrover.backend.dto.common.DeletionContracts.LifecycleActionRequest;
+import com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse;
+import com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse;
 import com.mediassistrover.backend.dto.emergency.request.EmergencyRequests.Resolution;
 import com.mediassistrover.backend.dto.emergency.response.EmergencyResponses.IncidentResponse;
 import com.mediassistrover.backend.enums.EmergencyIncidentStatus;
@@ -24,6 +26,7 @@ import java.util.UUID;
 @PreAuthorize("hasAnyRole('ADMIN','STAFF')") @Tag(name="Emergency Incidents")
 public class EmergencyController {
     private final EmergencyService service;
+    private final com.mediassistrover.backend.service.DeletionPolicy deletionPolicy;
     @GetMapping public PageResponse<IncidentResponse> list(@RequestParam(required=false)EmergencyIncidentStatus status,
             @RequestParam(required=false)EmergencyIncidentSeverity severity,@RequestParam(required=false)String type,
             @RequestParam(required=false)UUID mapId,@RequestParam(required=false)UUID roomId,
@@ -37,4 +40,6 @@ public class EmergencyController {
     @PostMapping("/{id}/close") public IncidentResponse close(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.close(id,actor,RequestMetadataFactory.from(request));}
     @PostMapping("/{id}/false-alarm") public IncidentResponse falseAlarm(@PathVariable UUID id,@Valid @RequestBody Resolution body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.falseAlarm(id,body,actor,RequestMetadataFactory.from(request));}
     @DeleteMapping("/{id}") public IncidentResponse archive(@PathVariable UUID id,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.archive(id,body.reason(),actor,RequestMetadataFactory.from(request));}
+    @GetMapping("/{id}/deletion-impact") @PreAuthorize("hasRole('ADMIN')") public DeletionImpactResponse impact(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor){return service.deletionImpact(id,actor);}
+    @DeleteMapping("/{id}/force") @PreAuthorize("hasRole('ADMIN')") public HardDeleteResponse force(@PathVariable UUID id,@RequestHeader("X-Confirm-Hard-Delete")Boolean confirmed,@Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){deletionPolicy.requireHardDeleteConfirmation(confirmed);return service.forceDelete(id,body.reason(),actor,RequestMetadataFactory.from(request));}
 }
