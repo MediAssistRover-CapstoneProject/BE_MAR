@@ -17,10 +17,12 @@ public interface ServiceRequestService {
     NavigationResponse createNavigation(NavigationCreateRequest request,String idempotencyKey,AccountPrincipal actor,RequestMetadata metadata);
     EscortResponse createEscort(EscortCreateRequest request,String idempotencyKey,AccountPrincipal actor,RequestMetadata metadata);
     ServiceRequestResponse createOperational(OperationalCreateRequest request,String idempotencyKey,AccountPrincipal actor,RequestMetadata metadata);
-    ServiceRequestResponse get(UUID id,AccountPrincipal actor);
+    ServiceRequestResponse get(UUID id,boolean includeDeleted,AccountPrincipal actor);
     java.util.Optional<ServiceRequestResponse> findByIdempotencyKey(String key,AccountPrincipal actor);
     Page<ServiceRequestResponse> list(ServiceRequestStatus status,ServiceRequestType requestType,UUID robotId,
-                                      Instant from,Instant to,AccountPrincipal actor,Pageable pageable);
+                                      Instant from,Instant to,boolean includeDeleted,AccountPrincipal actor,Pageable pageable);
     ServiceRequestResponse submit(UUID id,AccountPrincipal actor,RequestMetadata metadata);
     ServiceRequestResponse cancel(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
+    ServiceRequestResponse archive(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id,AccountPrincipal actor);
 }

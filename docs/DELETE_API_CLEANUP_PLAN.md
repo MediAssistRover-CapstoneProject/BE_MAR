@@ -61,6 +61,11 @@
 - [x] Hoàn thiện MediaAsset:
   - Migration `V46` bổ sung `is_active`; DELETE chỉ retire catalog, restore không tạo S3 object mới.
   - `/force` kiểm tra toàn bộ reference hiện có trước khi xóa catalog và S3 object; có deletion-impact và confirmation header.
+- [~] Đang triển khai ServiceRequest:
+  - Migration `V47` thêm `archived_at`; DELETE chỉ archive request terminal (`COMPLETED`, `FAILED`, `CANCELLED`), không hỗ trợ restore.
+  - List/Get ẩn request archived mặc định; ADMIN dùng `includeDeleted=true`.
+  - Đã thêm deletion-impact chặn khi còn Job chưa terminal.
+  - Chưa có `/force`: cần hoàn thiện thứ tự xóa subtype, Job terminal và runtime FK trước khi mở endpoint.
 - [x] `mvn -DskipTests compile` thành công sau thay đổi Facility.
 - [x] `git diff --check` thành công sau thay đổi Facility.
 
@@ -69,7 +74,7 @@
 - [ ] Chưa kiểm tra Swagger thủ công trên database phát triển.
 - [ ] Admin Account controller hiện mới có lock/unlock/reset-password; chưa có bộ lifecycle endpoint riêng cho account không phải Staff.
 - [ ] Chưa triển khai lifecycle riêng cho endpoint-group membership (hiện đã có deactivate bằng `DELETE`, chưa có restore/force/impact độc lập do đây là association).
-- [ ] Chưa triển khai nhóm vận hành.
+- [ ] Chưa hoàn thiện hard-delete ServiceRequest, Job, Alert/Incident, VoiceInteraction và retention.
 
 ### Bước tiếp theo cho lần làm sau
 
