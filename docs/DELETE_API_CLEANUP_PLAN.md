@@ -73,7 +73,7 @@
 - [~] Đang triển khai Alert:
   - Migration `V49` thêm `archived_at`; DELETE chỉ archive Alert `CLOSED`, không hỗ trợ restore.
   - List/Get ẩn Alert archive mặc định; ADMIN có `includeDeleted=true`.
-  - Chưa có hard-delete AlertRecipient/Incident theo dependency order.
+  - Có deletion-impact và `/force`; chỉ Alert `CLOSED` được xóa, AlertRecipient con được xóa trong cùng transaction.
 - [~] Đang triển khai EmergencyIncident:
   - Migration `V50` thêm `archived_at`; DELETE chỉ archive `CLOSED` hoặc `FALSE_ALARM`, không hỗ trợ restore.
   - List/Get ẩn archived Incident mặc định; ADMIN có `includeDeleted=true`.

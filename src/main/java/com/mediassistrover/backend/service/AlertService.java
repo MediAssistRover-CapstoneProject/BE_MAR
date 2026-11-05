@@ -21,4 +21,6 @@ public interface AlertService {
     AlertResponse resolve(UUID id,AccountPrincipal actor,RequestMetadata metadata);
     AlertResponse close(UUID id,AccountPrincipal actor,RequestMetadata metadata);
     AlertResponse archive(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
+    com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id,AccountPrincipal actor);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
 }
