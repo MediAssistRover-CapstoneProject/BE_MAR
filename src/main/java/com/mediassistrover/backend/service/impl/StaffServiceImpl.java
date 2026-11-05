@@ -27,6 +27,7 @@ public class StaffServiceImpl implements StaffService {
     private final AuditService audit;
     private final Clock clock;
     private final S3ObjectStorageService storage;
+    private final StaffHardDeleteService hardDeleteService;
 
     @Override @Transactional
     public StaffResponse create(StaffRequests.Create r, UUID actorId, RequestMetadata md) {
@@ -57,16 +58,35 @@ public class StaffServiceImpl implements StaffService {
         profile.setJobTitle(r.jobTitle());profile.setContactExtension(r.contactExtension());profile.setUrl(staffImageUrl(r.url()));
         record(actorId,"STAFF_UPDATED",profile,md);return mapper.toResponse(profile);
     }
-    @Override public StaffResponse get(UUID id){return mapper.toResponse(require(id));}
-    @Override public Page<StaffResponse> list(Pageable p){return profiles.findAll(p).map(mapper::toResponse);}
+    @Override public StaffResponse get(UUID id,boolean includeDeleted){StaffProfile profile=require(id);if(!includeDeleted&&!profile.isActive())throw new ResourceNotFoundException("Staff not found");return mapper.toResponse(profile);}
+    @Override public Page<StaffResponse> list(boolean includeDeleted,Pageable p){return(includeDeleted?profiles.findAll(p):profiles.findByActiveTrue(p)).map(mapper::toResponse);}
     @Override @Transactional
-    public void deactivate(UUID id,UUID actorId,RequestMetadata md){
+    public StaffResponse deactivate(UUID id,String reason,UUID actorId,RequestMetadata md){
         StaffProfile profile=require(id);Account account=profile.getAccount();
-        if(!profile.isActive() && account.getStatus()==AccountStatus.INACTIVE)return;
+        if(!profile.isActive() && account.getStatus()==AccountStatus.INACTIVE)return mapper.toResponse(profile);
         profile.setActive(false);account.setStatus(AccountStatus.INACTIVE);
         account.setTokenVersion(account.getTokenVersion()+1);
         refreshTokens.revokeAll(account,RevocationReason.ACCOUNT_LOCKED);
-        record(actorId,"STAFF_DEACTIVATED",profile,md);
+        record(actorId,"STAFF_DEACTIVATED",profile,reason,md);
+        return mapper.toResponse(profile);
+    }
+    @Override @Transactional
+    public StaffResponse restore(UUID id,String reason,UUID actorId,RequestMetadata md){
+        StaffProfile profile=require(id);Account account=profile.getAccount();
+        if(profile.isActive()&&account.getStatus()==AccountStatus.ACTIVE)return mapper.toResponse(profile);
+        if(account.getStatus()==AccountStatus.LOCKED)throw new BusinessRuleException("Locked staff must be unlocked before restore");
+        profile.setActive(true);account.setStatus(AccountStatus.ACTIVE);
+        record(actorId,"STAFF_RESTORED",profile,reason,md);
+        return mapper.toResponse(profile);
+    }
+    @Override public com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id){require(id);return hardDeleteService.impact(id);}
+    @Override @Transactional public com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,UUID actorId,RequestMetadata md){
+        StaffProfile profile=require(id);UUID accountId=profile.getAccount().getAccountId();
+        if(accountId.equals(actorId))throw new BusinessRuleException("An account cannot permanently delete itself");
+        var result=hardDeleteService.delete(id);
+        Account actor=accounts.findById(actorId).orElseThrow(()->new ResourceNotFoundException("Account not found"));
+        audit.record(actor,"STAFF_FORCE_DELETED","StaffProfile",id,null,Map.of("accountId",accountId,"reason",reason,"deleted",result.deleted()),md);
+        return result;
     }
     private void unique(StaffProfile current,String email,String phone,String code){
         Account account=current==null?null:current.getAccount();
@@ -80,5 +100,9 @@ public class StaffServiceImpl implements StaffService {
     private void record(UUID actorId,String action,StaffProfile profile,RequestMetadata md){
         Account actor=accounts.findById(actorId).orElseThrow(()->new ResourceNotFoundException("Account not found"));
         audit.record(actor,action,"StaffProfile",profile.getStaffProfileId(),null,Map.of("accountId",profile.getAccount().getAccountId(),"active",profile.isActive()),md);
+    }
+    private void record(UUID actorId,String action,StaffProfile profile,String reason,RequestMetadata md){
+        Account actor=accounts.findById(actorId).orElseThrow(()->new ResourceNotFoundException("Account not found"));
+        audit.record(actor,action,"StaffProfile",profile.getStaffProfileId(),null,Map.of("accountId",profile.getAccount().getAccountId(),"active",profile.isActive(),"reason",reason),md);
     }
 }

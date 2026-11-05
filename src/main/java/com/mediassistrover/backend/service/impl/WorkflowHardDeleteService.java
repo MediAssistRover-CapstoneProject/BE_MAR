@@ -1,6 +1,7 @@
 package com.mediassistrover.backend.service.impl;
 
 import com.mediassistrover.backend.dto.workflow.response.WorkflowResponses.WorkflowHardDeleteResponse;
+import com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse;
 import com.mediassistrover.backend.enums.WorkflowStatus;
 import com.mediassistrover.backend.exception.ConflictException;
 import com.mediassistrover.backend.exception.ResourceNotFoundException;
@@ -12,6 +13,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.ArrayList;
+import java.util.Map;
 import java.util.UUID;
 
 /** Ordered physical deletion for a workflow. The caller owns the transaction and rollout lock. */
@@ -22,6 +26,22 @@ public class WorkflowHardDeleteService {
             " JOIN JobTask jt ON jt.job_task_id=js.job_task_id JOIN Job j ON j.job_id=jt.job_id WHERE j.workflow_id=?";
 
     private final JdbcTemplate jdbc;
+
+    @Transactional(readOnly=true)
+    public DeletionImpactResponse impact(UUID workflowId) {
+        byte[] id=bytes(workflowId);
+        Integer exists=jdbc.queryForObject("SELECT COUNT(*) FROM Workflow WHERE workflow_id=?",Integer.class,id);
+        if(exists==null||exists==0)throw new ResourceNotFoundException("Workflow not found: "+workflowId);
+        long active=countLong("SELECT COUNT(*) FROM Job WHERE workflow_id=? AND status IN ('QUEUED','ACCEPTED','RUNNING')",id);
+        var dependencies=new LinkedHashMap<String,Long>();
+        dependencies.put("jobs",countLong("SELECT COUNT(*) FROM Job WHERE workflow_id=?",id));
+        dependencies.put("activeJobs",active);
+        dependencies.put("schedules",countLong("SELECT COUNT(*) FROM Schedule WHERE workflow_id=?",id));
+        dependencies.put("navigationRequestsToUnlink",countLong("SELECT COUNT(*) FROM NavigationRequest WHERE workflow_id=?",id));
+        var blockers=new ArrayList<String>();
+        if(active>0)blockers.add("Workflow has QUEUED, ACCEPTED or RUNNING Jobs");
+        return new DeletionImpactResponse(workflowId,"Workflow",blockers.isEmpty(),List.copyOf(blockers),Map.copyOf(dependencies));
+    }
 
     @Transactional(propagation=Propagation.MANDATORY)
     public WorkflowHardDeleteResponse delete(UUID workflowId) {
@@ -89,6 +109,7 @@ public class WorkflowHardDeleteService {
 
     private int delete(String sql,byte[] id){return jdbc.update(sql,id);}
     private int count(String sql,byte[] id){Integer value=jdbc.queryForObject(sql,Integer.class,id);return value==null?0:value;}
+    private long countLong(String sql,byte[] id){Long value=jdbc.queryForObject(sql,Long.class,id);return value==null?0:value;}
     private static byte[] bytes(UUID id){return ByteBuffer.allocate(16).putLong(id.getMostSignificantBits()).putLong(id.getLeastSignificantBits()).array();}
     private record WorkflowSnapshot(String code,WorkflowStatus status) {}
 }

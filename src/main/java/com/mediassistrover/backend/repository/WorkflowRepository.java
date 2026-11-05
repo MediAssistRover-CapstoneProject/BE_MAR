@@ -9,6 +9,7 @@ public interface WorkflowRepository extends JpaRepository<Workflow,UUID> {
     boolean existsByWorkflowCodeIgnoreCaseAndVersionNo(String code,int version);
     Optional<Workflow> findTopByWorkflowCodeIgnoreCaseOrderByVersionNoDesc(String code);
     Page<Workflow> findByStatus(WorkflowStatus status,Pageable pageable);
+    Page<Workflow> findByStatusNot(WorkflowStatus status,Pageable pageable);
     List<Workflow> findByStatusAndAcceptsNewJobsTrueOrderByWorkflowCodeAscVersionNoDesc(WorkflowStatus status);
     @Query("select w from Workflow w where w.status=:status and w.acceptsNewJobs=true " +
             "and (:serviceType is null or lower(w.serviceType)=lower(:serviceType))")
