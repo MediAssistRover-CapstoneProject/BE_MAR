@@ -15,5 +15,6 @@ public class MediaAsset {
     @Column(name="content_type",nullable=false,length=100) private String contentType;
     @Column(name="size_bytes",nullable=false) private long sizeBytes;
     @Column(name="sha256",length=64,columnDefinition="CHAR(64)") private String sha256;
+    @Column(name="is_active",nullable=false) private boolean active;
     @Column(name="created_at",nullable=false,updatable=false) private Instant createdAt;
 }

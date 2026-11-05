@@ -58,6 +58,9 @@
 - [x] Hoàn thiện SystemSetting:
   - Migration `V45` bổ sung `is_active`; runtime chỉ đọc override active, nên soft-delete quay về property fallback.
   - Có DELETE/restore/deletion-impact/force-delete, reason và confirmation header; list/get ẩn setting inactive mặc định.
+- [x] Hoàn thiện MediaAsset:
+  - Migration `V46` bổ sung `is_active`; DELETE chỉ retire catalog, restore không tạo S3 object mới.
+  - `/force` kiểm tra toàn bộ reference hiện có trước khi xóa catalog và S3 object; có deletion-impact và confirmation header.
 - [x] `mvn -DskipTests compile` thành công sau thay đổi Facility.
 - [x] `git diff --check` thành công sau thay đổi Facility.
 
@@ -66,7 +69,7 @@
 - [ ] Chưa kiểm tra Swagger thủ công trên database phát triển.
 - [ ] Admin Account controller hiện mới có lock/unlock/reset-password; chưa có bộ lifecycle endpoint riêng cho account không phải Staff.
 - [ ] Chưa triển khai lifecycle riêng cho endpoint-group membership (hiện đã có deactivate bằng `DELETE`, chưa có restore/force/impact độc lập do đây là association).
-- [ ] Chưa triển khai Media và nhóm vận hành.
+- [ ] Chưa triển khai nhóm vận hành.
 
 ### Bước tiếp theo cho lần làm sau
 
