@@ -66,6 +66,10 @@
   - List/Get ẩn request archived mặc định; ADMIN dùng `includeDeleted=true`.
   - Đã thêm deletion-impact chặn khi còn Job chưa terminal.
   - Chưa có `/force`: cần hoàn thiện thứ tự xóa subtype, Job terminal và runtime FK trước khi mở endpoint.
+- [~] Đang triển khai Job:
+  - Migration `V48` thêm `archived_at`; DELETE archive chỉ áp dụng `SUCCEEDED`, `FAILED`, `CANCELLED` và không hỗ trợ restore.
+  - List/Get ẩn Job archived mặc định; có `deletion-impact` chặn mọi Job chưa terminal.
+  - Chưa có `/force`: cần dọn JobTask/JobStep/JobEvent/MQTT/mapping/AI runtime theo thứ tự FK trước khi mở endpoint.
 - [x] `mvn -DskipTests compile` thành công sau thay đổi Facility.
 - [x] `git diff --check` thành công sau thay đổi Facility.
 

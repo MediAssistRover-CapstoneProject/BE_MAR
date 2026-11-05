@@ -49,5 +49,6 @@ public class Job {
     @Column(name="failure_reason",columnDefinition="TEXT") private String failureReason;
     @Column(name="reconciled_at") private Instant reconciledAt;
     @Column(name="reconciliation_note",columnDefinition="TEXT") private String reconciliationNote;
+    @Column(name="archived_at") private Instant archivedAt;
     @Version @Column(name="row_version",nullable=false) private long rowVersion;
 }

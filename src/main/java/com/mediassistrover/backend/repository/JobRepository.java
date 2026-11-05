@@ -44,6 +44,8 @@ public interface JobRepository extends JpaRepository<Job,UUID> {
     Page<Job> search(@Param("status") JobStatus status,@Param("workflowId") UUID workflowId,
                      @Param("requestId") UUID requestId,@Param("robotId") UUID robotId,
                      @Param("from") Instant from,@Param("to") Instant to,Pageable pageable);
+    @Query("select j from Job j where j.archivedAt is null and (:status is null or j.status=:status) and (:workflowId is null or j.workflow.workflowId=:workflowId) and (:requestId is null or j.serviceRequest.serviceRequestId=:requestId) and (:robotId is null or j.robot.robotId=:robotId) and (:from is null or j.queuedAt>=:from) and (:to is null or j.queuedAt<:to)")
+    Page<Job> searchActive(@Param("status") JobStatus status,@Param("workflowId") UUID workflowId,@Param("requestId") UUID requestId,@Param("robotId") UUID robotId,@Param("from") Instant from,@Param("to") Instant to,Pageable pageable);
     List<Job> findByRobotRobotIdAndStatusIn(UUID robotId,Collection<JobStatus> statuses);
     @Query("select j.jobId from Job j where j.status='QUEUED' and j.robot is null order by j.priority desc,j.queuedAt,j.jobId")
     List<UUID> findUnassignedQueuedJobIds(Pageable pageable);
