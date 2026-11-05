@@ -17,4 +17,5 @@ public interface JobService {
     JobResponse assignStaff(UUID id,UUID staffId,AccountPrincipal actor,RequestMetadata metadata);
     JobResponse archive(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
     com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id,AccountPrincipal actor);
+    com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
 }

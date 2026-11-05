@@ -69,7 +69,8 @@
 - [~] Đang triển khai Job:
   - Migration `V48` thêm `archived_at`; DELETE archive chỉ áp dụng `SUCCEEDED`, `FAILED`, `CANCELLED` và không hỗ trợ restore.
   - List/Get ẩn Job archived mặc định; có `deletion-impact` chặn mọi Job chưa terminal.
-  - Chưa có `/force`: cần dọn JobTask/JobStep/JobEvent/MQTT/mapping/AI runtime theo thứ tự FK trước khi mở endpoint.
+  - Có `/force`: khóa Job terminal, dọn JobTask/JobStep/JobEvent/MQTT/orchestration/QR-auth/AI runtime theo thứ tự FK và unlink telemetry để retention giữ trách nhiệm dọn lịch sử.
+  - Chặn khi còn recovery Job hoặc Alert; các aggregate độc lập phải được xử lý trước.
 - [~] Đang triển khai Alert:
   - Migration `V49` thêm `archived_at`; DELETE chỉ archive Alert `CLOSED`, không hỗ trợ restore.
   - List/Get ẩn Alert archive mặc định; ADMIN có `includeDeleted=true`.
