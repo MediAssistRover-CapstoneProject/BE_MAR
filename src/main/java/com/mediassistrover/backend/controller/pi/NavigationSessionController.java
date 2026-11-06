@@ -13,6 +13,18 @@ import java.util.UUID;
 @RestController @RequiredArgsConstructor @Tag(name="Navigation test session")
 public class NavigationSessionController {
     private final NavigationSessionService sessions;
+    private final com.mediassistrover.backend.service.NavigationGuidanceService guidance;
+    public record GuidanceRequest(@jakarta.validation.constraints.NotNull UUID jobStepId) { }
+    @GetMapping("/api/v1/robots/{robotId}/navigation-guidance") @PreAuthorize("hasRole('ADMIN')")
+    public ObjectNode guidance(@PathVariable UUID robotId){return guidance.view(robotId);}
+    @PostMapping("/api/v1/pi/navigation-session/guidance") @PreAuthorize("hasRole('DEVICE')")
+    public ObjectNode deviceGuidance(@AuthenticationPrincipal DevicePrincipal device,@Valid @RequestBody GuidanceRequest body){
+        sessions.device(device);
+        ObjectNode result=guidance.view(device.robotId());
+        if(!body.jobStepId().toString().equals(result.path("plan").path("jobStepId").asText()))
+            result.remove("interaction");
+        return result;
+    }
     @GetMapping("/api/v1/robots/{robotId}/navigation-session") @PreAuthorize("hasRole('ADMIN')")
     public ObjectNode status(@PathVariable UUID robotId){return sessions.status(robotId);}
     @PostMapping("/api/v1/robots/{robotId}/navigation-session") @PreAuthorize("hasRole('ADMIN')")

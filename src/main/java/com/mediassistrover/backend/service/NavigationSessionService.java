@@ -123,13 +123,14 @@ public class NavigationSessionService {
                 throw new BusinessRuleException("Navigation plan contains invalid coordinates");
             points.addObject().put("xM",p.xM()).put("yM",p.yM());
         }
-        // One preview per MOVE. A retried upload or local replan must not
-        // rewrite the initial display path or create another UI update.
+        path.put("endpointName",point.getEndpointName());
+        // Retried identical uploads need no UI event. Changed paths replace the preview.
         var initial=row.getPlannedPathJson();
         if(initial!=null&&request.jobId().toString().equals(initial.path("jobId").asText())
                 &&request.jobStepId().toString().equals(initial.path("jobStepId").asText())
                 &&request.sessionId().toString().equals(initial.path("sessionId").asText())
-                &&row.getInitializationRevision()==initial.path("initializationRevision").asLong(-1))
+                &&row.getInitializationRevision()==initial.path("initializationRevision").asLong(-1)
+                &&points.equals(initial.path("points")))
             return wire.object().put("accepted",true).put("jobStepId",request.jobStepId().toString());
         row.setPlannedPathJson(path);
         updates.publishEvent(new RobotRealtimeEventStream.Changed(device.robotId()));

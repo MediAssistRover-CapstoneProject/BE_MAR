@@ -18,7 +18,7 @@ public class NavigationLivePoseService {
     public record Closed(UUID robotId) { }
     public record Pose(UUID robotId,ObjectNode value) { }
     private static final class Slot {
-        final Authorization authorization;long sequence=-1;
+        final Authorization authorization;long sequence=-1;ObjectNode latest;
         Slot(Authorization authorization){this.authorization=authorization;}
     }
     private final Clock clock;
@@ -30,7 +30,7 @@ public class NavigationLivePoseService {
         if(slots.size()>=256&&!slots.containsKey(value.robotId()))return;
         slots.compute(value.robotId(),(id,old)->{
             if(old!=null&&sameIdentity(old.authorization,value)){
-                var next=new Slot(value);synchronized(old){next.sequence=old.sequence;}return next;
+                var next=new Slot(value);synchronized(old){next.sequence=old.sequence;next.latest=old.latest;}return next;
             }
             return new Slot(value);
         });
@@ -40,6 +40,14 @@ public class NavigationLivePoseService {
         &&a.map().equals(b.map())&&a.hash().equals(b.hash())&&a.revision()==b.revision();}
     @TransactionalEventListener(phase=TransactionPhase.AFTER_COMMIT)
     public void closed(Closed value){slots.remove(value.robotId());}
+    public ObjectNode latest(UUID robot){
+        var slot=slots.get(robot);if(slot==null)return null;
+        synchronized(slot){
+            if(!slot.authorization.until().isAfter(Instant.now(clock))
+                    ||!slot.authorization.connection().equals(connection.connectionId())||slot.latest==null)return null;
+            return slot.latest.deepCopy();
+        }
+    }
     public void accept(ObjectNode value){
         UUID robot=UUID.fromString(value.path("robotId").asText());var slot=slots.get(robot);if(slot==null)return;
         synchronized(slot){
@@ -55,6 +63,7 @@ public class NavigationLivePoseService {
                 ||value.path("sequenceNo").asLong()<=slot.sequence)return;
             slot.sequence=value.path("sequenceNo").asLong();
             ObjectNode sample=value.deepCopy();sample.put("receivedAt",now.toString());
+            slot.latest=sample;
             events.publishEvent(new Pose(robot,sample));
         }
     }

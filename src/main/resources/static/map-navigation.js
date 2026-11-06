@@ -163,7 +163,18 @@
         <small>Nét hiển thị mượt mặc định. Tọa độ và dữ liệu dẫn đường dùng bản đồ gốc.</small>
         <label>Góc xoay hiển thị (độ)<input id="navViewAngle" type="number" min="-180" max="180" step="1" value="0"></label>
         <small>Xoay để căn tường theo chiều ngang. Chỉ đổi góc nhìn; tọa độ endpoint, hướng robot và file map giữ nguyên.</small>
-        <div class="nav-map-wrap"><canvas id="navCanvas" width="640" height="360" hidden aria-label="Bản đồ chọn vị trí và hướng endpoint"></canvas></div>
+        <div class="nav-map-wrap">
+          <canvas id="navCanvas" width="640" height="360" hidden aria-label="Bản đồ chỉ đường trong nhà"></canvas>
+          <div id="navGuidance" class="nav-guidance" role="status" hidden>
+            <span id="navGuidanceIcon" class="nav-guidance-icon" aria-hidden="true">↑</span>
+            <div><strong id="navGuidanceText"></strong><small id="navGuidanceDestination"></small></div>
+          </div>
+          <div id="navMapTools" class="nav-map-tools" hidden>
+            <button id="navZoomIn" aria-label="Phóng to bản đồ">＋</button>
+            <button id="navZoomOut" aria-label="Thu nhỏ bản đồ">−</button>
+            <button id="navFollow">Về vị trí robot</button>
+          </div>
+        </div>
         <div class="nav-legend"><span style="--marker:#0879ee">Robot còn dữ liệu mới</span><span style="--marker:#777">Vị trí cuối đang chờ định vị</span><span style="--marker:#157347">Endpoint đã lưu</span><span style="--marker:#dc7400">Điểm đang đặt</span><span style="--marker:#2563eb">Đường Nav2 dự kiến</span></div>
         <small id="navPlanStatus">Chưa có đường Nav2 cho MOVE hiện tại.</small>
         <div id="navPose" class="nav-status" role="status">Chưa có vị trí robot trên map này.</div>
@@ -206,7 +217,7 @@
     const $ = id => host.querySelector('#' + id), canvas = $('navCanvas'), ctx = canvas.getContext('2d');
     const state = {meta: null, map: null, image: null, imageUrl: null, endpoints: [], draft: null, editing: null,
       snapshot: null, receivedAt: 0, robotId: '', busy: false, generation: 0, timer: null, closed: false,
-      dragging: null,seed:null,
+      dragging: null,seed:null,route:null,routeAt:0,follow:true,zoom:1.8,viewCenter:null,pan:null,routeKey:null,
       zones:[],zoneEditing:null,zonePoints:[],zoneSyncAt:0,zoneAck:null};
     const say = (message, error = false) => { $('navAction').textContent = message; $('navAction').classList.toggle('nav-error', error); };
     const active = () => !!state.snapshot?.activeJobId || !!options.isWorkflowActive?.();
@@ -313,6 +324,18 @@
       canvas.style.imageRendering = original ? 'pixelated' : 'auto';
       ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.setTransform(canvas.width / transform.width, 0, 0, canvas.height / transform.height, 0, 0);
+      const guidance=currentGuidance();
+      const plan=guidance?.plan||plannedPath(state.snapshot,state.meta);
+      const navigating=!!plan;
+      const zoom=navigating?state.zoom:1;
+      const currentPose=pose();
+      if(navigating&&state.follow&&currentPose){
+        const pixel=mapToPixel(state.meta,currentPose.xM,currentPose.yM);
+        state.viewCenter=transform.forward(pixel.u,pixel.v);
+      }
+      const center=navigating&&state.viewCenter?state.viewCenter:{u:transform.width/2,v:transform.height/2};
+      state.camera={zoom,center,transform};
+      ctx.translate(transform.width/2,transform.height/2);ctx.scale(zoom,zoom);ctx.translate(-center.u,-center.v);
       ctx.translate(transform.width/2,transform.height/2); ctx.rotate(transform.radians);
       ctx.translate(-state.meta.width_px/2,-state.meta.height_px/2);
       ctx.imageSmoothingEnabled = !original; ctx.imageSmoothingQuality = 'high';
@@ -327,19 +350,41 @@
       }
       for(const z of state.zones)if(z.active&&z.zoneId!==state.zoneEditing?.zoneId)polygon(z.polygonJson?.points||z.polygonJson,z.zoneType,z.zoneCode+(z.zoneType==='SPEED'?' '+z.speedLimitMps+' m/s':''));
       polygon(state.zonePoints,$('navZoneType').value,'Zone đang sửa',true);
-      const plan=plannedPath(state.snapshot,state.meta);
       if(plan){
-        ctx.beginPath();
-        plan.points.forEach((point,index)=>{const pixel=mapToPixel(state.meta,point.xM,point.yM);
-          if(index===0)ctx.moveTo(pixel.u,pixel.v);else ctx.lineTo(pixel.u,pixel.v);});
-        ctx.strokeStyle='#2563eb';ctx.lineWidth=Math.max(2,.055/state.meta.resolution_m_per_pixel);
-        ctx.lineJoin='round';ctx.lineCap='round';ctx.setLineDash([6,3]);ctx.stroke();ctx.setLineDash([]);
+        const line=(points,color,width)=>{
+          if(points.length<2)return;
+          ctx.beginPath();points.forEach((point,index)=>{const pixel=mapToPixel(state.meta,point.xM,point.yM);
+            if(index===0)ctx.moveTo(pixel.u,pixel.v);else ctx.lineTo(pixel.u,pixel.v);});
+          ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke();
+        };
+        const width=Math.max(2,.055/state.meta.resolution_m_per_pixel);
+        line(plan.points,'#fff',width+2/zoom);
+        line(plan.points,'#a9bfd8',width);
+        if(guidance?.state==='TRACKING'){
+          line([guidance.projection,...plan.points.slice(guidance.segmentIndex+1)],'#1877ed',width);
+        }else if(guidance?.state!=='ARRIVED')line(plan.points,'#1877ed',width);
+        const destination=plan.points[plan.points.length-1],pin=mapToPixel(state.meta,destination.xM,destination.yM);
+        ctx.fillStyle='#d94b3d';ctx.strokeStyle='#fff';ctx.lineWidth=1/zoom;
+        ctx.beginPath();ctx.arc(pin.u,pin.v,Math.max(3,.065/state.meta.resolution_m_per_pixel),0,Math.PI*2);ctx.fill();ctx.stroke();
+        ctx.font=Math.max(4,12*transform.width/canvas.width/zoom)+'px system-ui';
+        ctx.fillStyle='#172c43';ctx.fillText(plan.endpointName||'Điểm đến',pin.u+5/zoom,pin.v-5/zoom);
+        if(guidance?.state==='TRACKING'&&guidance.turn){
+          const turn=mapToPixel(state.meta,guidance.turn.xM,guidance.turn.yM);
+          const radius=Math.max(5,17*transform.width/canvas.width/zoom);
+          ctx.fillStyle='#075dc4';ctx.beginPath();ctx.arc(turn.u,turn.v,radius,0,Math.PI*2);ctx.fill();
+          ctx.save();ctx.translate(turn.u,turn.v);ctx.rotate(-transform.radians);
+          ctx.fillStyle='#fff';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='bold '+radius*1.5+'px system-ui';
+          ctx.fillText(guidanceSymbol(guidance.direction),0,0);ctx.restore();
+        }
       }
-      $('navPlanStatus').textContent=plan
-        ?'Đường Nav2 ban đầu, giữ nguyên trong lượt MOVE; vị trí robot cập nhật riêng. Pi vẫn được đổi đường để né vật cản. Đường sẽ ẩn khi lượt kết thúc.'
-        :'Chưa có đường Nav2 được xác nhận cho MOVE hiện tại.';
+      $('navGuidance').hidden=!plan;$('navMapTools').hidden=!plan;
+      $('navGuidanceText').textContent=guidance?.text||'Đang chờ vị trí robot';
+      $('navGuidanceIcon').textContent=guidance?.state==='ARRIVED'?'✓':guidanceSymbol(guidance?.direction);
+      $('navGuidanceDestination').textContent=plan?(plan.endpointName||'Điểm đến')+(guidance?.state==='TRACKING'?' · Còn '+guidance.remainingCm+' cm':''):'';
+      $('navFollow').classList.toggle('following',state.follow);
+      $('navPlanStatus').textContent=plan?'Đường xanh tới đích · đoạn nhạt đã đi · khoảng cách theo cm':'Chưa có đường Nav2 được xác nhận cho MOVE hiện tại.';
       const radius = Math.max(1.5, .07 / state.meta.resolution_m_per_pixel);
-      for (const e of state.endpoints) if (inside(state.meta, e.xM, e.yM)) arrow(e.xM, e.yM, e.yawRad, e.endpointId === selected()?.endpointId ? '#7427bd' : '#157347', e.endpointCode, radius);
+      for (const e of state.endpoints) if (e.endpointId!==plan?.endpointId && inside(state.meta, e.xM, e.yM)) arrow(e.xM, e.yM, e.yawRad, e.endpointId === selected()?.endpointId ? '#7427bd' : '#157347', e.endpointCode, radius);
       if (state.draft) arrow(state.draft.xM, state.draft.yM, state.draft.yawRad, '#dc7400', '', radius);
       if(state.seed)arrow(state.seed.xM,state.seed.yM,state.seed.yawRad,'#bd7515','Ước lượng khởi tạo',radius*1.4);
       const view=poseView(state.snapshot,state.meta,performance.now()-state.receivedAt,performance.now(),state.remembered);
@@ -355,6 +400,35 @@
         if(live)$('navPose').textContent+=`\nLuồng vị trí trực tiếp · tuổi mẫu ${Math.round(live.ageMs)} ms (chỉ quan sát).`;
         if(!view.live)$('navPose').textContent+=`\nVị trí cuối ${Math.ceil(view.ageMs/1000)} giây trước; đang chờ định vị mới. Chỉ để xem, MOVE đang khóa.`;
       } else $('navPose').textContent = 'Chưa có vị trí mới, đúng map và hash đã chọn. Cần Pi nạp map, định vị AMCL và gửi pose mới.';
+    }
+    function guidanceSymbol(direction){return {LEFT:'↰',RIGHT:'↱',UTURN:'↶',STRAIGHT:'↑'}[direction]||'…';}
+    function currentGuidance(){
+      const route=state.route,plan=route?.plan,session=state.snapshot?.navigationSession;
+      if(!plan||!session||plan.sessionId!==session.sessionId||plan.mapId!==state.meta?.map_id
+        ||plan.mapAssetHash?.toLowerCase()!==state.meta.asset_hash.toLowerCase()
+        ||plan.initializationRevision!==session.initialization?.revision
+        ||plan.frameId!==state.meta.frame_id||!Array.isArray(plan.points)||plan.points.length<2
+        ||!plan.points.every(p=>Number.isFinite(p.xM)&&Number.isFinite(p.yM)&&inside(state.meta,p.xM,p.yM)))return null;
+      if(route.state!=='ARRIVED'&&(plan.jobId!==state.snapshot.activeJobId||plan.jobStepId!==state.snapshot.selectedJobStepId))return null;
+      if(route.state==='ARRIVED'&&state.snapshot.activeJobId&&plan.jobId!==state.snapshot.activeJobId)return null;
+      const snapshotPlan=state.snapshot.navigationPlan;
+      if(snapshotPlan?.jobStepId===plan.jobStepId&&Date.parse(snapshotPlan.plannedAt)>Date.parse(plan.plannedAt))return null;
+      if(route.state==='ARRIVED'&&state.snapshot.selectedStepType==='MOVE'&&plan.jobStepId!==state.snapshot.selectedJobStepId)return null;
+      if(!['TRACKING','WAITING_FOR_POSE','ARRIVED'].includes(route.state))return null;
+      const poseAge=Date.parse(route.observedAt)-Date.parse(route.capturedAt)+performance.now()-state.routeAt;
+      if(route.state==='TRACKING'&&(performance.now()-state.routeAt>1200||!pose()||poseAge>1500))
+        return {...route,state:'WAITING_FOR_POSE',direction:null,text:'Đang chờ vị trí robot'};
+      return route;
+    }
+    async function refreshGuidance(generation){
+      if(!state.snapshot?.navigationSession?.sessionId){state.route=null;return;}
+      const requestedRobot=robotId(),started=performance.now();
+      const route=await api('/api/v1/robots/'+requestedRobot+'/navigation-guidance');
+      if(generation!==state.generation||requestedRobot!==robotId())return;
+      if(route.plan?.jobStepId&&route.plan.jobStepId!==state.routeKey){
+        state.routeKey=route.plan.jobStepId;state.follow=true;state.zoom=1.8;state.viewCenter=null;
+      }
+      state.route=route;state.routeAt=started;
     }
     function showEndpoints(id = '') {
       $('navEndpoints').replaceChildren(new Option('Chọn endpoint', ''));
@@ -490,8 +564,8 @@
     async function poll(generation) {
       if (state.closed || generation !== state.generation || !state.meta) return;
       const started=performance.now();ensureRobotStream(generation);
-      let delay=1000;
-      try { if(performance.now()-streamLastAt>6000)await snapshot(); }
+      let delay=500;
+      try { if(performance.now()-streamLastAt>6000)await snapshot(); await refreshGuidance(generation); }
       catch (error) { if(generation!==state.generation)return;
         $('navRobotStatus').textContent = 'UI chưa nhận trạng thái mới; chưa kết luận mất MQTT: ' + error.message; controls();draw();
         if (error.status === 401 || error.status === 403) {stopRobotStream();delay=5000;
@@ -594,12 +668,24 @@
     });
     $('navOriginalCells').onchange = draw;
     $('navViewAngle').oninput = draw;
+    $('navFollow').onclick=()=>{state.follow=true;draw();};
+    const zoomBy=factor=>{state.zoom=Math.max(1,Math.min(8,state.zoom*factor));draw();};
+    $('navZoomIn').onclick=()=>zoomBy(1.3);
+    $('navZoomOut').onclick=()=>zoomBy(1/1.3);
+    canvas.addEventListener('wheel',event=>{if(!state.camera||$('navMapTools').hidden)return;
+      event.preventDefault();zoomBy(event.deltaY<0?1.12:1/1.12);},{passive:false});
     const pointer = event => {
       const box = canvas.getBoundingClientRect();
       const transform = viewTransform(state.meta.width_px,state.meta.height_px,Number($('navViewAngle').value));
-      return transform.inverse((event.clientX-box.left)*transform.width/box.width,(event.clientY-box.top)*transform.height/box.height);
+      const camera=state.camera||{zoom:1,center:{u:transform.width/2,v:transform.height/2}};
+      return transform.inverse(((event.clientX-box.left)*transform.width/box.width-transform.width/2)/camera.zoom+camera.center.u,
+        ((event.clientY-box.top)*transform.height/box.height-transform.height/2)/camera.zoom+camera.center.v);
     };
     canvas.addEventListener('pointerdown', event => {
+      if(state.meta&&event.button===0&&!$('navMapTools').hidden){
+        state.follow=false;state.pan={x:event.clientX,y:event.clientY,center:{...state.camera.center}};
+        canvas.setPointerCapture(event.pointerId);draw();return;
+      }
       if (!state.meta || state.busy || active() || event.button !== 0) return;
       const p = pointer(event); if (p.u < 0 || p.v < 0 || p.u >= state.meta.width_px || p.v >= state.meta.height_px) return;
       if($('navZoneMode').checked){if(state.zonePoints.length>=256)return;const point=pixelToMap(state.meta,Math.floor(p.u)+.5,Math.floor(p.v)+.5);state.zonePoints=[...state.zonePoints,[point.xM,point.yM]];zoneDraft();return;}
@@ -613,13 +699,19 @@
       state.dragging = {point, x: event.clientX, y: event.clientY}; canvas.setPointerCapture(event.pointerId); updateDraft();
     });
     canvas.addEventListener('pointermove', event => {
+      if(state.pan){
+        const box=canvas.getBoundingClientRect(),camera=state.camera;
+        state.viewCenter={u:state.pan.center.u-(event.clientX-state.pan.x)*camera.transform.width/box.width/camera.zoom,
+          v:state.pan.center.v-(event.clientY-state.pan.y)*camera.transform.height/box.height/camera.zoom};
+        draw();return;
+      }
       if (!state.dragging) return;
       if (Math.hypot(event.clientX - state.dragging.x, event.clientY - state.dragging.y) < 6) return;
       const p = pointer(event), end = pixelToMap(state.meta, p.u, p.v), start = state.dragging.point;
       if(state.dragging.seed){$('navSeedYaw').value=(Math.atan2(end.yM-start.yM,end.xM-start.xM)*180/Math.PI).toFixed(2);updateSeed();return;}
       $('navYaw').value = (Math.atan2(end.yM - start.yM, end.xM - start.xM) * 180 / Math.PI).toFixed(2); updateDraft();
     });
-    const release = () => { state.dragging = null; };
+    const release = () => { state.dragging = null;state.pan=null; };
     canvas.addEventListener('pointerup', release); canvas.addEventListener('pointercancel', release);
     $('navMapId').addEventListener('input', () => {
       stopRobotStream();state.generation++; clearTimeout(state.timer); state.meta = state.image = state.snapshot = null; canvas.hidden = true;

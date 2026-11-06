@@ -4,7 +4,15 @@
 <!-- BEGIN_NAVIGATION_STYLE -->
 <style>
 #mapNavigation .nav-layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:20px}
-#mapNavigation .nav-map-wrap{display:flex;justify-content:center;align-items:start;background:#e7e7e7;min-height:180px;padding:8px;overflow:auto}
+#mapNavigation .nav-map-wrap{position:relative;display:flex;justify-content:center;align-items:start;background:#e7e7e7;min-height:180px;padding:8px;overflow:hidden;border-radius:14px}
+#mapNavigation .nav-guidance{position:absolute;top:18px;left:18px;right:18px;display:flex;gap:14px;align-items:center;background:#0757a6;color:white;padding:14px 18px;border-radius:12px;box-shadow:0 4px 18px #102c4933;pointer-events:none}
+#mapNavigation .nav-guidance[hidden],#mapNavigation .nav-map-tools[hidden]{display:none}
+#mapNavigation .nav-guidance-icon{font-size:38px;line-height:1}
+#mapNavigation .nav-guidance strong{display:block;font-size:clamp(16px,2vw,23px);line-height:1.3}
+#mapNavigation .nav-guidance small{display:block;color:#deedff;margin-top:5px}
+#mapNavigation .nav-map-tools{position:absolute;right:16px;bottom:16px;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+#mapNavigation .nav-map-tools button{background:white;color:#164f85;border:1px solid #c3d6e7;border-radius:20px;padding:9px 13px;box-shadow:0 2px 8px #153c4922;margin:0}
+#mapNavigation .nav-map-tools button.following{background:#e8f2ff;border-color:#1877ed}
 #mapNavigation canvas{display:block;max-width:100%;height:auto;touch-action:none;cursor:crosshair;image-rendering:auto}
 #mapNavigation select,#mapNavigation input{width:100%;padding:9px;border:1px solid #999;border-radius:4px;background:#fff}
 #mapNavigation .nav-render-option input{width:auto;margin-right:6px}
@@ -334,7 +342,7 @@ async function prepareWorkflow(file,code,field){
 $('prepareMapping').onclick=async()=>{const b=$('prepareMapping');b.disabled=true;try{await prepareWorkflow('mapping-workflow.json','WF_MAPPING','workflow');notice('Workflow quét và lưu đã sẵn sàng.')}catch(e){notice(e.message)}finally{b.disabled=false}};
 $('prepareVoiceNavigation').onclick=async()=>{const b=$('prepareVoiceNavigation');b.disabled=true;try{await prepareWorkflow('voice-navigation-workflow.json','WF_VOICE_ENDPOINT_V1','voiceNavigationWorkflow');notice('Workflow voice đã sẵn sàng: MOVE thành công rồi robot mới báo đã tới nơi.')}catch(e){notice(e.message)}finally{b.disabled=false}};
 </script>
-<script src="/map-navigation.js?v=20261105-delete-endpoint"></script>
+<script src="/map-navigation.js?v=20261106-indoor-guidance"></script>
 <script>
 autoMapping=MappingAutonomy.mount({
   context:()=>({job,session,mapping,busy,jogActive:jog.active}),buttons,
