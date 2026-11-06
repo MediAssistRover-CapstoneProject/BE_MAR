@@ -30,6 +30,7 @@ public class MqttRuntimeEvents {
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     private final com.mediassistrover.backend.ai.AiSensingService ai;
     private final com.mediassistrover.backend.validation.StepExecutionPolicy executionPolicy;
+    private final com.mediassistrover.backend.service.OperationAuthorizationService operationAuthorization;
 
     public void apply(Job job,MqttWire.Envelope e) {
         if (job==null || !job.isBeOrchestrated() || job.getSchemaVersion()!=3 || job.getRobot()==null || !job.getRobot().getRobotId().equals(e.robotId()))
@@ -92,6 +93,9 @@ public class MqttRuntimeEvents {
                 if (job.getStatus()!=JobStatus.RUNNING || step.getStatus()!=JobStepStatus.PENDING || !"ACKNOWLEDGED".equals(command.getState())) throw new BusinessRuleException("STEP_STARTED requires accepted command and PENDING selected step");
                 if (!step.getStepTypeSnapshot().equals(p.path("stepType").asText()) || !command.getPayloadJson().path("step").path("params").equals(p.path("resolvedInputs")))
                     throw new BusinessRuleException("STEP_STARTED differs from frozen command params");
+                JsonNode grant = p.path("resolvedInputs").path("authorization");
+                if ("CONTROL_HARDWARE".equals(step.getStepTypeSnapshot()) && "STAFF_VERIFIED".equals(grant.path("mode").asText()))
+                    operationAuthorization.requireBound(step, grant);
                 step.setStatus(JobStepStatus.RUNNING);step.setStartedAt(now);step.setAttemptNo(1);command.setState("STARTED");
             }
             case "STEP_RESULT" -> {if(!lateTerminal && selected)control.handle(job,step);result(job,step,command,p,e.time());remember(command,e);}

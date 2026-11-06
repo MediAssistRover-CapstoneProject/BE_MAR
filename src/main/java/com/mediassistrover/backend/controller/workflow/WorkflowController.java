@@ -28,6 +28,14 @@ import java.util.*;
 public class WorkflowController {
     private final WorkflowService service;
     private final DeletionPolicy deletionPolicy;
+    private final com.mediassistrover.backend.service.StaffQrDeliveryWorkflowFactory staffQrDelivery;
+
+    @PostMapping("/staff-phone-delivery-draft") @ResponseStatus(HttpStatus.CREATED) @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary="Create a draft delivery workflow for staff phone QR and verified handover")
+    public WorkflowDetailResponse createStaffQrDraft(@AuthenticationPrincipal AccountPrincipal actor,
+                                                     HttpServletRequest request) {
+        return service.createGraph(staffQrDelivery.build(), actor.accountId(), RequestMetadataFactory.from(request));
+    }
     @PostMapping("/graph") @ResponseStatus(HttpStatus.CREATED) @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary="Create Workflow and complete graph atomically")
     public WorkflowDetailResponse createGraph(@Valid @RequestBody GraphCreateRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.createGraph(body,actor.accountId(),RequestMetadataFactory.from(request));}

@@ -3,6 +3,7 @@ package com.mediassistrover.backend.service.impl;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mediassistrover.backend.config.QrChallengeProperties;
 import com.mediassistrover.backend.dto.verification.request.QrVerificationRequests.Issue;
+import com.mediassistrover.backend.dto.verification.request.QrVerificationRequests.CameraVerify;
 import com.mediassistrover.backend.dto.verification.response.AuthVerificationResponse;
 import com.mediassistrover.backend.dto.verification.response.QrChallengeResponse;
 import com.mediassistrover.backend.entity.*;
@@ -10,6 +11,7 @@ import com.mediassistrover.backend.enums.*;
 import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.exception.ConflictException;
 import com.mediassistrover.backend.exception.ResourceNotFoundException;
+import com.mediassistrover.backend.mqtt.MqttSessionRegistry;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.AccountPrincipal;
 import com.mediassistrover.backend.security.DevicePrincipal;
@@ -24,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -37,6 +40,8 @@ import java.util.*;
 @RequiredArgsConstructor
 public class QrVerificationServiceImpl implements QrVerificationService {
     private static final String PREFIX = "MARQR1";
+    private static final String STAFF_PHONE_PREFIX = "MARSTAFF1";
+    private static final String DEFAULT_SECRET = "change-me-qr-challenge-secret-at-least-32";
 
     private final QrChallengeRepository challengeRepository;
     private final AuthVerificationRepository verificationRepository;
@@ -50,6 +55,8 @@ public class QrVerificationServiceImpl implements QrVerificationService {
     private final StaffOperationalScopePolicy staffScope;
     private final DeviceResourceScopePolicy deviceScope;
     private final QrChallengeProperties properties;
+    private final RobotMqttSessionRepository mqttSessions;
+    private final MqttSessionRegistry mqttRegistry;
     private final SecureRandom random = new SecureRandom();
 
     @Override
@@ -157,6 +164,137 @@ public class QrVerificationServiceImpl implements QrVerificationService {
         if (!expected.getAccountId().equals(account.getAccountId()))
             throw new AccessDeniedException("QR challenge belongs to another Staff account");
 
+        return completeVerification(job, step, challenge, account, now, metadata);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public StaffCode issueForStaffPhone(UUID jobId, AccountPrincipal actor) {
+        requireStaffPhoneSecret();
+        Job job = jobRepository.findById(jobId).orElseThrow(() -> new ResourceNotFoundException("Job not found"));
+        staffScope.requireJobAccess(job, actor);
+        Account account = requireCurrentStaff(actor);
+        JobStep step = selectedStaffAuth(job);
+        QrChallenge challenge = requireActiveChallenge(step);
+        Account expected = requireExpectedAccount(job, challenge);
+        if (!expected.getAccountId().equals(account.getAccountId()))
+            throw new AccessDeniedException("QR challenge belongs to another Staff account");
+        requireScanSession(job, null);
+        return new StaffCode(step.getJobStepId(), challenge.getPurpose(), challenge.getExpiresAt(),
+                staffPhoneProof(challenge, expected));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<ScanWindow> staffScanWindow(RobotMqttSession session) {
+        if (!staffPhoneEnabled() || !supportsCameraScan(session)) return Optional.empty();
+        List<Job> active = jobRepository.findByRobotRobotIdAndStatusIn(session.getRobotId(), List.of(JobStatus.RUNNING));
+        if (active.size() != 1) return Optional.empty();
+        Job job = active.getFirst();
+        JobStep step = job.getSelectedJobStep();
+        if (job.getSchemaVersion() != 3 || step == null || step.getStep().getStepType() != StepType.AUTHENTICATE
+                || step.getStatus() != JobStepStatus.RUNNING || job.getCancelRequestedAt() != null) return Optional.empty();
+        try {
+            selectedStaffAuth(job);
+            QrChallenge challenge = requireActiveChallenge(step);
+            return Optional.of(new ScanWindow(job.getJobId(), step.getJobStepId(), challenge.getExpiresAt()));
+        } catch (BusinessRuleException | ResourceNotFoundException ex) {
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    @Transactional
+    public AuthVerificationResponse verifyFromCamera(UUID jobId, CameraVerify request, DevicePrincipal actor,
+                                                     RequestMetadata metadata) {
+        requireStaffPhoneSecret();
+        Robot robot = deviceScope.requireCurrentDevice(actor);
+        Job job = jobRepository.lockById(jobId).orElseThrow(() -> new ResourceNotFoundException("Job not found"));
+        if (job.getRobot() == null || !job.getRobot().getRobotId().equals(robot.getRobotId()))
+            throw new AccessDeniedException("Job is outside this Device scope");
+        requireScanSession(job, request.transportSessionId());
+        JobStep step = selectedStaffAuth(job);
+        if (!step.getJobStepId().equals(request.authJobStepId()))
+            throw new BusinessRuleException("QR scan is outside the active AUTHENTICATE step");
+        QrChallenge challenge = requireActiveChallenge(step);
+        Account expected = requireExpectedAccount(job, challenge);
+        String validProof = staffPhoneProof(challenge, expected);
+        if (!MessageDigest.isEqual(validProof.getBytes(StandardCharsets.UTF_8),
+                request.proof().getBytes(StandardCharsets.UTF_8)))
+            throw new BusinessRuleException("Staff phone QR is invalid or expired");
+        Instant now = Instant.now(clock).truncatedTo(ChronoUnit.MICROS);
+        if (!challenge.getExpiresAt().isAfter(now)) throw new BusinessRuleException("Staff phone QR expired");
+        return completeVerification(job, step, challenge, expected, now, metadata);
+    }
+
+    private JobStep selectedStaffAuth(Job job) {
+        JobStep step = job.getSelectedJobStep();
+        if (job.getSchemaVersion() != 3 || step == null
+                || !"QR_CODE".equals(step.getStep().getParamsJson().path("method").asText()))
+            throw new BusinessRuleException("Staff phone QR requires an active schema 3 delivery AUTHENTICATE step");
+        requireLiveAuthentication(job, step);
+        return step;
+    }
+
+    private QrChallenge requireActiveChallenge(JobStep step) {
+        QrChallenge challenge = challengeRepository.findByAuthJobStepJobStepId(step.getJobStepId())
+                .orElseThrow(() -> new ResourceNotFoundException("Active QR challenge not found"));
+        requireUnusedChallenge(challenge);
+        return challenge;
+    }
+
+    private Account requireExpectedAccount(Job job, QrChallenge challenge) {
+        DeliveryRequest delivery = delivery(job);
+        Account current = challenge.getPurpose() == AuthVerificationPurpose.DELIVERY_SENDER
+                ? delivery.getExpectedSenderAccount() : delivery.getExpectedReceiverAccount();
+        if (current == null || challenge.getExpectedAccount() == null
+                || !current.getAccountId().equals(challenge.getExpectedAccount().getAccountId()))
+            throw new AccessDeniedException("Expected delivery Staff assignment changed");
+        requireEligibleExpectedStaff(current);
+        return current;
+    }
+
+    private void requireScanSession(Job job, UUID expectedTransport) {
+        RobotMqttSession session = job.getRobot() == null ? null
+                : mqttSessions.findById(job.getRobot().getRobotId()).orElse(null);
+        if (!supportsCameraScan(session)
+                || (expectedTransport != null && !expectedTransport.equals(session.getTransportSessionId())))
+            throw new BusinessRuleException("QR_CAMERA_ROBOT_NOT_READY");
+    }
+
+    private boolean supportsCameraScan(RobotMqttSession session) {
+        if (!mqttRegistry.fresh(session) || session.getHelloJson() == null) return false;
+        var hello = session.getHelloJson();
+        if (!"STAFF_VERIFIED".equals(hello.path("unlockPolicy").asText())) return false;
+        Set<String> capabilities = new HashSet<>();
+        hello.path("capabilities").forEach(value -> capabilities.add(value.asText()));
+        return capabilities.containsAll(Set.of(STAFF_SCAN_CAPABILITY, "secure-unlock-v1"));
+    }
+
+    private boolean staffPhoneEnabled() {
+        return !Set.of(DEFAULT_SECRET, "replace-with-another-random-secret-at-least-32-bytes").contains(properties.secret());
+    }
+
+    private void requireStaffPhoneSecret() {
+        if (!staffPhoneEnabled()) throw new BusinessRuleException("QR_CHALLENGE_SECRET_NOT_CONFIGURED");
+    }
+
+    private String staffPhoneProof(QrChallenge challenge, Account account) {
+        UUID id = challenge.getChallengeId();
+        Job job = challenge.getJob();
+        // Keep the QR small. Only the challenge UUID and its MAC are on screen.
+        // Distinct signing domains prevent a Device's legacy QR from becoming a Staff proof.
+        String claims = String.join("|", STAFF_PHONE_PREFIX, id.toString(), job.getJobId().toString(),
+                job.getRobot().getRobotId().toString(), challenge.getAuthJobStep().getJobStepId().toString(),
+                account.getAccountId().toString(), Long.toString(account.getTokenVersion()),
+                challenge.getPurpose().name(), Long.toString(challenge.getExpiresAt().getEpochSecond()));
+        byte[] proof = ByteBuffer.allocate(48).putLong(id.getMostSignificantBits())
+                .putLong(id.getLeastSignificantBits()).put(hmac(claims)).array();
+        return STAFF_PHONE_PREFIX + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(proof);
+    }
+
+    private AuthVerificationResponse completeVerification(Job job, JobStep step, QrChallenge challenge,
+                                                          Account account, Instant now, RequestMetadata metadata) {
         challenge.setUsedAt(now);
         challenge.setUsedByAccount(account);
         AuthVerification verification = verificationRepository.save(AuthVerification.builder()
@@ -176,17 +314,21 @@ public class QrVerificationServiceImpl implements QrVerificationService {
                 .put("purpose", verification.getPurpose().name())
                 .put("service_request_id", job.getServiceRequest().getServiceRequestId().toString())
                 .put("verified_at", now.toString());
-        completionService.complete(step, result, account, JobEventProducerType.STAFF,
-                "QR_VERIFICATION_SUCCEEDED", null);
+        if (!completionService.complete(step, result, account, JobEventProducerType.STAFF,
+                "QR_VERIFICATION_SUCCEEDED", null)) throw new ConflictException("AUTHENTICATE has already completed");
         auditService.record(account, "QR_PROOF_VERIFIED", "AuthVerification", verification.getVerificationId(), null,
-                Map.of("jobId", jobId, "challengeId", challenge.getChallengeId()), metadata);
+                Map.of("jobId", job.getJobId(), "challengeId", challenge.getChallengeId()), metadata);
         return verificationResponse(verification);
     }
 
     private QrChallengeResponse active(QrChallenge challenge) {
+        requireUnusedChallenge(challenge);
+        return response(challenge);
+    }
+
+    private void requireUnusedChallenge(QrChallenge challenge) {
         if (challenge.getUsedAt() != null || !challenge.getExpiresAt().isAfter(Instant.now(clock)))
             throw new BusinessRuleException("QR challenge is no longer active");
-        return response(challenge);
     }
 
     private QrChallengeResponse response(QrChallenge challenge) {

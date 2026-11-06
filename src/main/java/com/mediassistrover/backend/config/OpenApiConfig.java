@@ -183,7 +183,7 @@ public class OpenApiConfig {
     private boolean isStaffDeliveryPath(String path) {
         return path.startsWith("/api/v1/delivery-requests")
                 || path.startsWith("/api/v1/auth-verifications")
-                || path.matches("/api/v1/jobs/\\{[^}]+}/(auth-verifications|qr-challenges|qr-verifications)")
+                || path.matches("/api/v1/jobs/\\{[^}]+}/(auth-verifications|qr-challenges|qr-verifications|staff-phone-qr)")
                 || path.matches("/api/v1/job-steps/\\{[^}]+}/responses");
     }
 

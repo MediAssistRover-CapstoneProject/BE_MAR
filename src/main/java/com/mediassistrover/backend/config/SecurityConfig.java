@@ -44,6 +44,8 @@ public class SecurityConfig {
                                 "/map-navigation.js",
                                 "/mapping-autonomy.js",
                                 "/robot-test-workflow.js",
+                                "/delivery-qr.html",
+                                "/delivery-qr.js",
                                 "/map-preview.html",
                                 "/swagger-ui/**",
                                 "/api/v1/auth/login",

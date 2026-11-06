@@ -67,6 +67,13 @@
 <label>Workflow NAVIGATION cho voice<input id="voiceNavigationWorkflow" readonly placeholder="Chuẩn bị một lần; dùng lại với endpoint của map đang mở"></label>
 <small>Mở phiên map, chạy navigation trên Pi và chờ READY. Trong terminal Pi khác chạy voice_audio.py chat --start-now --once. Nói “dẫn tôi tới điểm b”, rồi “xác nhận”. BE tạo một job MOVE → SPEAK; không báo đã tới nơi khi MOVE thất bại.</small>
 </section>
+<section class="panel" aria-label="Giao nhận bằng QR">
+<h2>Giao nhận bằng QR</h2>
+<p><a href="/delivery-qr.html">Mở trang giao nhận cho staff</a></p>
+<button id="prepareStaffQrDelivery" type="button">Tạo workflow giao hàng QR nháp</button>
+<label>Workflow ID<input id="staffQrWorkflowId" readonly></label>
+<small id="staffQrDraftStatus" role="status">Dùng workflow đã publish để tạo nhiệm vụ giao hàng và gán staff ở hai đầu.</small>
+</section>
 <section id="robotTestWorkflow" class="panel" aria-label="Chạy workflow robot"></section>
 
 <details class="panel"><summary>Trạng thái nhiệm vụ</summary><pre id="state"></pre></details>
@@ -75,6 +82,17 @@
 'use strict';
 const $=id=>document.getElementById(id);let job='',session='',mapping=false,timer=null,busy=false,polling=false,cameraStreaming=false,recovery=false,manualSource=null;const images={};
 function notice(message){$('notice').textContent=message}
+$('prepareStaffQrDelivery').addEventListener('click', async () => {
+  const button = $('prepareStaffQrDelivery');
+  button.disabled = true;
+  try {
+    const response = await api('/api/v1/admin/workflows/staff-phone-delivery-draft', {}, false, {timeoutMs: 15000});
+    const draft = response.data ?? response;
+    $('staffQrWorkflowId').value = draft.workflow.workflowId;
+    $('staffQrDraftStatus').textContent = 'Đã tạo bản nháp. Kiểm tra và publish trong quản lý workflow trước khi tạo job.';
+  } catch (error) { $('staffQrDraftStatus').textContent = error.message; }
+  finally { button.disabled = false; }
+});
 let autoMapping=null;
 let watchEpoch=0,mapFrameRevision=null,mapFrameMetadata=null,mapLoaded=false,currentMapState=null;
 let savedMapGeneration=0,savedMapLoading=false,lastMappingStatus=null,saveIntent=null;

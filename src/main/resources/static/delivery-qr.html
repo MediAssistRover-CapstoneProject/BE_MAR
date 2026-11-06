@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Giao nhận hàng · MAR</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f2f5f8;color:#142533;font:16px system-ui,sans-serif}
+    main{max-width:36rem;margin:auto;padding:1rem}section{background:white;border:1px solid #dae2eb;border-radius:12px;padding:1rem;margin:1rem 0}
+    h1,h2{margin-top:0}label{display:block;margin:.8rem 0}input,select,button{width:100%;padding:.75rem;font:inherit;border-radius:8px}
+    input,select{border:1px solid #8094a4;margin-top:.3rem}button{border:0;background:#005ea3;color:white;cursor:pointer;margin:.35rem 0}
+    button:disabled{background:#657784;cursor:default}button.secondary{background:#e7eef4;color:#183b59}
+    fieldset{border:0;padding:0;margin:0}summary{cursor:pointer;font-weight:650}
+    details{border-bottom:1px solid #dae2eb;padding-bottom:.8rem}code{overflow-wrap:anywhere}
+    p{line-height:1.5}canvas{display:block;width:min(100%,19rem);height:auto;margin:1rem auto;image-rendering:pixelated}
+    [hidden]{display:none!important}#message{min-height:1.5em;color:#4f2430}#stage{font-weight:650}
+  </style>
+  <script src="/delivery-qr.js" defer></script>
+</head>
+<body><main>
+  <h1>Giao nhận hàng với MAR</h1>
+  <p>Đăng nhập tài khoản staff được giao nhiệm vụ để hiện mã cho camera robot.</p>
+  <section id="loginSection">
+    <form id="login">
+      <label>Tài khoản<input id="username" autocomplete="username" maxlength="100" required></label>
+      <label>Mật khẩu<input id="password" type="password" autocomplete="current-password" maxlength="128" required></label>
+      <button>Đăng nhập</button>
+    </form>
+  </section>
+  <section id="jobSection" hidden>
+    <p>Staff <span id="staffName"></span> · ID <code id="staffId"></code></p>
+    <details id="deliverySetup">
+      <summary>Tạo yêu cầu giao hàng</summary>
+      <form id="createDelivery">
+        <fieldset id="deliveryFields">
+          <label>Bản đồ đang hoạt động<select id="deliveryMap" required></select></label>
+          <label>Điểm lấy hàng<select id="pickupEndpoint" required></select></label>
+          <label>Điểm giao hàng<select id="deliveryEndpoint" required></select></label>
+          <label>ID tài khoản staff nhận hàng
+            <input id="receiverId" maxlength="36" autocomplete="off" spellcheck="false" required aria-describedby="receiverHelp">
+          </label>
+          <p id="receiverHelp">Người giao là tài khoản đang đăng nhập. Dùng ID của bạn để thử cả hai chặng.</p>
+          <label>Tên người nhận<input id="recipientName" maxlength="160" required></label>
+          <label>Tên hàng<input id="deliveryItem" maxlength="160" required></label>
+          <label>Số lượng<input id="deliveryQuantity" type="number" min="1" step="1" value="1" required></label>
+          <button id="createDeliveryButton" disabled>Tạo yêu cầu</button>
+        </fieldset>
+      </form>
+      <button id="sendDelivery" hidden>Gửi robot đi lấy hàng</button>
+      <button id="resetDelivery" class="secondary" hidden>Tạo yêu cầu khác</button>
+      <p id="deliveryMessage" role="status"></p>
+    </details>
+    <form id="watch">
+      <label>Job ID<input id="jobId" autocomplete="off" spellcheck="false" maxlength="36" required></label>
+      <button>Theo dõi nhiệm vụ</button>
+    </form>
+    <button id="copyJobLink" class="secondary" hidden>Sao chép liên kết job cho staff nhận</button>
+    <p id="stage" role="status"></p>
+    <button id="showQr" hidden>Hiện QR để robot quét</button>
+    <div id="qrPanel" hidden>
+      <canvas id="qr" aria-label="Mã QR cho camera robot"></canvas>
+      <p id="qrExpiry"></p>
+    </div>
+    <ul id="items" hidden></ul>
+    <button id="confirm" hidden></button>
+    <button id="signOut" class="secondary">Thoát trang giao nhận</button>
+  </section>
+  <p id="message" role="alert"></p>
+</main></body>
+</html>

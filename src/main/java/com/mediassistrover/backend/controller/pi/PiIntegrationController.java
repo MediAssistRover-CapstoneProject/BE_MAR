@@ -22,6 +22,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
 import java.util.UUID;
+import jakarta.servlet.http.HttpServletRequest;
+import com.mediassistrover.backend.dto.verification.request.QrVerificationRequests.CameraVerify;
+import com.mediassistrover.backend.util.RequestMetadataFactory;
 
 @RestController @RequestMapping("/api/v1/pi") @RequiredArgsConstructor
 @PreAuthorize("hasRole('DEVICE')") @Tag(name="Server–Pi Protocol v1")
@@ -52,4 +55,12 @@ public class PiIntegrationController {
     @ApiResponses({@ApiResponse(responseCode="200",description="Active one-time QR challenge"),
             @ApiResponse(responseCode="204",description="No active QR challenge for the current Job step")})
     public ResponseEntity<com.mediassistrover.backend.dto.verification.response.QrChallengeResponse> qrChallenge(@PathVariable UUID jobId,@AuthenticationPrincipal DevicePrincipal p){return qrVerificationService.activeForDevice(jobId,p).map(ResponseEntity::ok).orElseGet(()->ResponseEntity.noContent().build());}
+
+    @PostMapping("/jobs/{jobId}/staff-phone-qr/verify")
+    @Operation(summary="Verify the assigned staff QR read by the robot camera")
+    public ResponseEntity<Void> verifyStaffPhoneQr(@PathVariable UUID jobId, @Valid @RequestBody CameraVerify scan,
+            @AuthenticationPrincipal DevicePrincipal device, HttpServletRequest request) {
+        qrVerificationService.verifyFromCamera(jobId, scan, device, RequestMetadataFactory.from(request));
+        return ResponseEntity.noContent().build();
+    }
 }

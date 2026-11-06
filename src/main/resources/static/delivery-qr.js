@@ -1,0 +1,361 @@
+'use strict';
+
+const $ = id => document.getElementById(id);
+const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+let token = '', jobId = '', selectedStep = null, action = null, qrUntil = 0;
+let generation = 0, timer, responseKey = '', pending = false, respondedStep = '';
+let staff = null, endpoints = [], catalogLoaded = false, catalogLoading = false, draft = null;
+
+async function api(path, body, key) {
+  const response = await fetch(path, {
+    method: body === undefined ? 'GET' : 'POST', cache: 'no-store',
+    headers: {...(token ? {Authorization: 'Bearer ' + token} : {}),
+      ...(body === undefined ? {} : {'Content-Type': 'application/json'}),
+      ...(key ? {'Idempotency-Key': key} : {})},
+    body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(8000)
+  });
+  const data = response.status === 204 ? null : await response.json().catch(() => null);
+  if (!response.ok) throw Object.assign(new Error(data?.message || 'Yêu cầu không thành công.'), {status: response.status});
+  return data?.data ?? data;
+}
+
+function message(text) { $('message').textContent = text; }
+function deliveryMessage(text) { $('deliveryMessage').textContent = text; }
+
+async function allPages(path) {
+  const rows = [];
+  for (let page = 0, totalPages = 1; page < totalPages; page++) {
+    const result = await api(path + '?page=' + page + '&size=100');
+    rows.push(...result.content);
+    totalPages = result.totalPages;
+  }
+  return rows;
+}
+
+function updateDeliveryEndpoints() {
+  const map = $('deliveryMap').value;
+  const available = endpoints.filter(endpoint => endpoint.mapId === map);
+  for (const id of ['pickupEndpoint', 'deliveryEndpoint']) {
+    $(id).replaceChildren(new Option('Chọn endpoint', ''), ...available.map(endpoint =>
+      new Option(endpoint.endpointCode + ' · ' + endpoint.endpointName, endpoint.endpointId)));
+    $(id).disabled = !available.length;
+  }
+  $('createDeliveryButton').disabled = !available.length;
+  deliveryMessage(map && !available.length ? 'Bản đồ này chưa có endpoint khả dụng.' : '');
+}
+
+async function loadDeliveryCatalog() {
+  if (!$('deliverySetup').open || !staff || catalogLoaded || catalogLoading) return;
+  const currentToken = token;
+  catalogLoading = true;
+  deliveryMessage('Đang tải bản đồ và endpoint…');
+  try {
+    const [maps, points] = await Promise.all([allPages('/api/v1/maps'), allPages('/api/v1/endpoints')]);
+    if (token !== currentToken) return;
+    const active = maps.filter(map => map.status === 'ACTIVE');
+    endpoints = points.filter(point => point.active && point.accessible);
+    $('deliveryMap').replaceChildren(new Option('Chọn bản đồ', ''), ...active.map(map =>
+      new Option(map.mapName + ' · v' + map.versionNo, map.mapId)));
+    if (active.length === 1) $('deliveryMap').value = active[0].mapId;
+    catalogLoaded = true;
+    updateDeliveryEndpoints();
+    if (!active.length) deliveryMessage('Chưa có bản đồ đang hoạt động.');
+  } catch (error) {
+    if (token === currentToken) deliveryMessage(error.message + ' Đóng và mở lại phần tạo yêu cầu để tải lại.');
+  } finally {
+    if (token === currentToken) catalogLoading = false;
+  }
+}
+
+function resetDeliveryForm() {
+  draft = null;
+  $('createDelivery').reset();
+  $('receiverId').value = staff?.accountId ?? '';
+  $('recipientName').value = staff?.fullName || staff?.username || '';
+  $('deliveryFields').disabled = false;
+  $('sendDelivery').hidden = $('resetDelivery').hidden = true;
+  $('sendDelivery').textContent = 'Gửi robot đi lấy hàng';
+  updateDeliveryEndpoints();
+}
+
+$('deliverySetup').addEventListener('toggle', loadDeliveryCatalog);
+$('deliveryMap').addEventListener('change', updateDeliveryEndpoints);
+$('resetDelivery').addEventListener('click', resetDeliveryForm);
+$('receiverId').addEventListener('input', () => {
+  const ownName = staff?.fullName || staff?.username || '';
+  if ($('receiverId').value.trim() !== staff?.accountId && $('recipientName').value === ownName)
+    $('recipientName').value = '';
+});
+
+$('createDelivery').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (!staff || draft?.requestId || $('deliveryFields').disabled) return;
+  const receiver = $('receiverId').value.trim();
+  const name = $('recipientName').value.trim(), item = $('deliveryItem').value.trim();
+  const quantity = Number($('deliveryQuantity').value);
+  if (!uuid.test(receiver) || !name || !item || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 2147483647) {
+    deliveryMessage('Nhập ID staff hợp lệ, tên người nhận, tên hàng và số lượng.');
+    return;
+  }
+  const body = {
+    mapId: $('deliveryMap').value, pickupEndpointId: $('pickupEndpoint').value,
+    deliveryEndpointId: $('deliveryEndpoint').value, targetMode: 'ENDPOINT',
+    expectedSenderAccountId: staff.accountId, expectedReceiverAccountId: receiver,
+    recipientName: name, requiresConfirmation: true, priority: 50,
+    items: [{itemCode: 'ITEM-01', itemName: item, itemCategory: 'GENERAL', quantity, unit: 'kiện', sensitive: false}]
+  };
+  const signature = JSON.stringify(body);
+  if (draft?.signature !== signature) draft = {signature, key: crypto.randomUUID()};
+  const attempt = draft;
+  $('deliveryFields').disabled = true;
+  deliveryMessage('Đang tạo yêu cầu…');
+  try {
+    const created = await api('/api/v1/delivery-requests', body, attempt.key);
+    if (draft !== attempt) return;
+    attempt.requestId = created.request.serviceRequestId;
+    $('sendDelivery').hidden = false;
+    $('sendDelivery').disabled = false;
+    deliveryMessage('Đã tạo yêu cầu. Bấm Gửi robot để bắt đầu job.');
+  } catch (error) {
+    if (draft === attempt) {
+      $('deliveryFields').disabled = false;
+      deliveryMessage(error.message);
+    }
+  }
+});
+
+async function deliveryJob(requestId) {
+  const page = await api('/api/v1/jobs?size=1&requestId=' + requestId);
+  return page.content[0];
+}
+
+$('sendDelivery').addEventListener('click', async event => {
+  const button = event.currentTarget, attempt = draft;
+  if (!attempt?.requestId || button.disabled) return;
+  button.disabled = true;
+  deliveryMessage('Đang gửi yêu cầu tới robot…');
+  try {
+    let job;
+    if (!attempt.submitted) {
+      try { await api('/api/v1/service-requests/' + attempt.requestId + '/submit', {}); }
+      catch (error) {
+        // Recover the same Job if the request committed before the response was lost.
+        if (draft !== attempt) return;
+        job = await deliveryJob(attempt.requestId);
+        if (!job) throw error;
+      }
+      attempt.submitted = true;
+    }
+    if (draft !== attempt) return;
+    job ??= await deliveryJob(attempt.requestId);
+    if (draft !== attempt) return;
+    if (!job?.jobId) throw new Error('Đã gửi yêu cầu, đang chờ Job ID. Bấm tìm lại job.');
+    button.hidden = true;
+    $('resetDelivery').hidden = false;
+    deliveryMessage('Đã gửi robot · Job ' + job.jobId);
+    followJob(job.jobId);
+  } catch (error) {
+    if (draft === attempt) {
+      if (attempt.submitted) button.textContent = 'Tìm lại job';
+      deliveryMessage(error.message);
+    }
+  } finally {
+    if (draft === attempt) button.disabled = false;
+  }
+});
+
+function clearQr() {
+  qrUntil = 0;
+  $('qrPanel').hidden = true;
+  $('qr').width = 1;
+}
+
+function staffAction(step) {
+  const input = step?.resolvedInputsJson ?? {};
+  if (step?.stepTypeSnapshot === 'HANDLE_PAYLOAD' && Array.isArray(input.items)) {
+    return {label: input.action === 'LOAD' ? 'Đã đặt đủ hàng vào ngăn' : 'Đã lấy đủ hàng khỏi ngăn',
+      responseType: 'PAYLOAD_CONFIRMED', data: {confirmed: true, items: input.items}};
+  }
+  if (step?.stepTypeSnapshot === 'INTERACT' && ['CLOSE_SENDER', 'CLOSE_RECEIVER'].includes(input.prompt_key))
+    return {label: 'Đã đóng nắp và để tay ra khỏi cơ cấu khóa', responseType: 'DOOR_CLOSED', data: {closed: true}};
+  if (step?.stepTypeSnapshot === 'INTERACT' && ['VERIFY_SENDER', 'VERIFY_RECEIVER'].includes(input.prompt_key))
+    return {label: 'Đã kiểm tra ngăn khóa chắc', responseType: 'LOCK_CHECKED', data: {locked: true}};
+  return null;
+}
+
+function render(detail) {
+  const job = detail.job;
+  const step = job.status === 'RUNNING' && !job.cancelRequestedAt
+    ? detail.steps.find(s => s.jobStepId === job.selectedJobStepId && s.status === 'RUNNING') : null;
+  if (selectedStep?.jobStepId !== step?.jobStepId) {
+    clearQr();
+    responseKey = '';
+  }
+  selectedStep = step;
+  const phase = step?.stepCodeSnapshot?.match(/_(SENDER|RECEIVER)$/)?.[1]?.toLowerCase();
+  const assigned = phase && job.inputJson?.['expected_' + phase + '_account_id'];
+  const myTurn = !assigned || assigned === staff?.accountId;
+  action = myTurn ? staffAction(step) : null;
+  const qrStep = myTurn && step?.stepTypeSnapshot === 'AUTHENTICATE' && step.resolvedInputsJson?.method === 'QR_CODE';
+  $('stage').textContent = job.status === 'SUCCEEDED' ? 'Giao nhận đã hoàn tất.'
+    : job.status === 'RECOVERY_REQUIRED' ? 'Cần nhân viên kiểm tra robot và ngăn hàng.'
+    : !myTurn ? 'Đang chờ staff tại điểm ' + (phase === 'sender' ? 'lấy hàng.' : 'giao hàng.')
+    : qrStep ? 'Robot đang chờ quét QR của staff được giao.'
+    : action?.label || 'Trạng thái nhiệm vụ · ' + job.status;
+  if (qrUntil && qrUntil <= Date.now()) clearQr();
+  $('showQr').hidden = !qrStep || !!qrUntil;
+  $('showQr').disabled = pending;
+  $('confirm').hidden = !action;
+  $('confirm').disabled = pending || respondedStep === step?.jobStepId;
+  if (action) $('confirm').textContent = action.label;
+  $('items').hidden = !action?.data.items;
+  $('items').replaceChildren(...(action?.data.items ?? []).map(item => {
+    const line = document.createElement('li');
+    line.textContent = item.item_code + ' · ' + item.quantity;
+    return line;
+  }));
+}
+
+async function refresh(epoch) {
+  let finished = false;
+  try {
+    const detail = await api('/api/v1/jobs/' + jobId);
+    if (epoch === generation) {
+      render(detail);
+      finished = ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(detail.job.status);
+    }
+  } catch (error) {
+    if (epoch !== generation) return;
+    clearQr();
+    $('showQr').hidden = $('confirm').hidden = true;
+    if (error.status === 401) { signOut(); message('Phiên đăng nhập đã hết hạn.'); return; }
+    message(error.message);
+  } finally {
+    if (!finished && epoch === generation && token && jobId) timer = setTimeout(() => refresh(epoch), 2000);
+  }
+}
+
+$('login').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector('button');
+  button.disabled = true;
+  message('');
+  try {
+    const password = $('password').value;
+    $('password').value = '';
+    token = (await api('/api/v1/auth/login', {username: $('username').value.trim(), password})).accessToken;
+    const account = await api('/api/v1/auth/me');
+    if (account.role !== 'STAFF') throw new Error('Dùng tài khoản staff được giao nhiệm vụ.');
+    staff = account;
+    $('staffName').textContent = account.fullName || account.username;
+    $('staffId').textContent = account.accountId;
+    resetDeliveryForm();
+    $('loginSection').hidden = true;
+    $('jobSection').hidden = false;
+    if (uuid.test($('jobId').value.trim())) followJob($('jobId').value.trim());
+  } catch (error) {
+    token = '';
+    message(error.message);
+  } finally { button.disabled = false; }
+});
+
+function followJob(value) {
+  clearTimeout(timer);
+  clearQr();
+  selectedStep = action = null;
+  responseKey = respondedStep = '';
+  $('showQr').hidden = $('confirm').hidden = $('items').hidden = true;
+  message('');
+  $('jobId').value = value;
+  $('copyJobLink').hidden = false;
+  jobId = value;
+  refresh(++generation);
+}
+
+$('watch').addEventListener('submit', event => {
+  event.preventDefault();
+  const value = $('jobId').value.trim();
+  if (!uuid.test(value)) { message('Nhập Job ID hợp lệ.'); return; }
+  followJob(value);
+});
+
+$('copyJobLink').addEventListener('click', async () => {
+  if (!jobId) return;
+  const link = new URL('/delivery-qr.html', location.origin);
+  link.searchParams.set('jobId', jobId);
+  try {
+    await navigator.clipboard.writeText(link.href);
+    message('Đã sao chép liên kết giao nhận.');
+  } catch {
+    message('Gửi Job ID đang hiển thị cho staff nhận.');
+  }
+});
+
+$('showQr').addEventListener('click', async () => {
+  if (pending || !selectedStep) return;
+  pending = $('showQr').disabled = true;
+  message('');
+  const epoch = generation;
+  try {
+    const code = await api('/api/v1/jobs/' + jobId + '/staff-phone-qr', {});
+    if (epoch !== generation || code.authJobStepId !== selectedStep?.jobStepId) return;
+    const size = code.rows.length;
+    const until = Date.parse(code.expiresAt);
+    if (size < 21 || size > 120 || !code.rows.every(row => row.length === size && /^[01]+$/.test(row))
+        || !Number.isFinite(until) || until <= Date.now()) throw new Error('Mã QR đã hết hạn hoặc không hợp lệ.');
+    const canvas = $('qr'), pixels = 8;
+    canvas.width = canvas.height = size * pixels;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#fff';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#000';
+    code.rows.forEach((row, y) => [...row].forEach((value, x) => {
+      if (value === '1') context.fillRect(x * pixels, y * pixels, pixels, pixels);
+    }));
+    qrUntil = until;
+    $('qrExpiry').textContent = 'Đưa màn hình trước camera robot. Mã hết hạn lúc ' + new Date(until).toLocaleTimeString('vi-VN');
+    $('qrPanel').hidden = false;
+    $('showQr').hidden = true;
+  } catch (error) {
+    if (epoch === generation) message(error.message);
+  } finally { pending = $('showQr').disabled = false; }
+});
+
+$('confirm').addEventListener('click', async () => {
+  if (pending || !selectedStep || !action) return;
+  pending = $('confirm').disabled = true;
+  message('');
+  const epoch = generation, id = selectedStep.jobStepId;
+  try {
+    responseKey ||= crypto.randomUUID();
+    const {responseType, data} = action;
+    await api('/api/v1/job-steps/' + id + '/responses', {responseType, data}, responseKey);
+    if (epoch === generation) { respondedStep = id; message('Đã ghi nhận xác nhận.'); }
+  } catch (error) {
+    if (epoch === generation) message(error.message);
+  } finally {
+    pending = false;
+    $('confirm').disabled = respondedStep === selectedStep?.jobStepId;
+  }
+});
+
+function signOut() {
+  generation++;
+  clearTimeout(timer);
+  token = jobId = responseKey = respondedStep = '';
+  staff = null;
+  endpoints = [];
+  catalogLoaded = catalogLoading = false;
+  $('deliverySetup').open = false;
+  $('deliveryMap').replaceChildren();
+  $('copyJobLink').hidden = true;
+  resetDeliveryForm();
+  selectedStep = action = null;
+  clearQr();
+  $('jobSection').hidden = true;
+  $('loginSection').hidden = false;
+  message('');
+}
+$('signOut').addEventListener('click', signOut);
+const sharedJob = new URLSearchParams(location.search).get('jobId');
+if (sharedJob && uuid.test(sharedJob)) $('jobId').value = sharedJob;

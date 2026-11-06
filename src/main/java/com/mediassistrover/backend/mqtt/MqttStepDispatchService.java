@@ -110,10 +110,16 @@ public class MqttStepDispatchService {
             if ("LOCK".equals(params.path("action").asText())) params.put("action","LOCK_COMPARTMENT");}
         inputs.validatePiParams(step.getStep(),params);
         UUID commandId=UUID.randomUUID();Instant now=Instant.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        Instant expiresAt = now.plusSeconds(properties.getCommandTtlSec());
+        if (unlock && !commissioning) {
+            Instant grantExpiry = Instant.parse(params.path("authorization").path("valid_until").asText());
+            if (!grantExpiry.isAfter(now)) throw new BusinessRuleException("UNLOCK authorization has expired");
+            if (grantExpiry.isBefore(expiresAt)) expiresAt = grantExpiry;
+        }
         ObjectNode command=wire.object().put("protocolVersion","1.0").put("contract","MAR-STEP-2").put("messageType","COMMAND")
                 .put("commandId",commandId.toString()).put("correlationId",commandId.toString()).put("robotId",session.getRobotId().toString())
                 .put("transportSessionId",session.getTransportSessionId().toString()).put("commandType","EXECUTE_STEP")
-                .put("expiresAt",now.plusSeconds(properties.getCommandTtlSec()).toString());
+                .put("expiresAt",expiresAt.toString());
         ObjectNode action=command.putObject("step").put("jobId",job.getJobId().toString()).put("jobStepId",step.getJobStepId().toString())
                 .put("stepId",step.getStep().getStepId().toString()).put("stepCode",step.getStepCodeSnapshot()).put("stepType",step.getStepTypeSnapshot())
                 .put("visitNo",step.getVisitNo()).put("operationKey",step.getOperationKey()).put("timeoutSec",step.getTimeoutSecSnapshot());action.set("params",params);
@@ -133,7 +139,7 @@ public class MqttStepDispatchService {
         // Non-mapping steps return immediately; no extra MOVE round trip.
         mapping.publishing(step);
         commands.save(RobotCommandOutbox.builder().commandId(commandId).robotId(session.getRobotId()).jobId(job.getJobId()).jobStepId(step.getJobStepId())
-                .operationKey(step.getOperationKey()).navigationProfileHash(profileHash).aiProfileSnapshotJson(aiProfile).payloadJson(command).expiresAt(now.plusSeconds(properties.getCommandTtlSec())).state("PUBLISHING").sendAttempts(1).lastPublishAt(now).createdAt(now).build());
+                .operationKey(step.getOperationKey()).navigationProfileHash(profileHash).aiProfileSnapshotJson(aiProfile).payloadJson(command).expiresAt(expiresAt).state("PUBLISHING").sendAttempts(1).lastPublishAt(now).createdAt(now).build());
         // All scope, profile, rollout, robot and TTL checks above are held by
         // this transaction. This commit is the first publication-attempt boundary;
         // send its immutable snapshot AFTER commit rather than repeat those same

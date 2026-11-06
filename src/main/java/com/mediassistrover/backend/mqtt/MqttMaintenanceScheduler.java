@@ -2,6 +2,7 @@ package com.mediassistrover.backend.mqtt;
 
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.exception.BusinessRuleException;
+import com.mediassistrover.backend.service.QrVerificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -24,6 +25,7 @@ public class MqttMaintenanceScheduler {
     private final MqttWire wire;
     private final Clock clock;
     private final com.mediassistrover.backend.service.NavigationSessionService navigation;
+    private final QrVerificationService qrVerification;
     @Scheduled(fixedDelay=250)
     public void durableWork() {
         if (!properties.isEnabled() || !transport.connected()) return;
@@ -45,6 +47,14 @@ public class MqttMaintenanceScheduler {
                     .put("robotId",session.getRobotId().toString()).put("transportSessionId",session.getTransportSessionId().toString());
                 var authorization=navigation.mqttAuthorization(session);
                 if(authorization!=null)message.set("navigationSession",authorization);
+                try {
+                    qrVerification.staffScanWindow(session).ifPresent(window -> message.putObject("staffQrScan")
+                            .put("jobId", window.jobId().toString())
+                            .put("authJobStepId", window.authJobStepId().toString())
+                            .put("expiresAt", window.expiresAt().toString()));
+                } catch (RuntimeException ex) {
+                    log.warn("QR scan window unavailable for {} ({})", session.getRobotId(), ex.getClass().getSimpleName());
+                }
                 transport.publish(MqttTopics.topic(session.getRobotId(),"event-acks"),wire.bytes(message),1);
             }
         }
