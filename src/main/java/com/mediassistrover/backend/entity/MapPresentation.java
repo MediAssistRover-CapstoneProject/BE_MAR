@@ -13,7 +13,8 @@ import java.util.UUID;
 public class MapPresentation {
     @Id @Column(name="map_id", columnDefinition="BINARY(16)") private UUID mapId;
     @Column(nullable=false) private long revision;
-    @Column(name="source_asset_hash", nullable=false, length=64) private String sourceAssetHash;
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name="source_asset_hash", nullable=false, length=64, columnDefinition="CHAR(64)") private String sourceAssetHash;
     @JdbcTypeCode(SqlTypes.JSON) @Column(name="source_json", nullable=false, columnDefinition="json") private JsonNode sourceJson;
     @JdbcTypeCode(SqlTypes.JSON) @Column(name="draft_json", nullable=false, columnDefinition="json") private JsonNode draftJson;
     @JdbcTypeCode(SqlTypes.JSON) @Column(name="published_json", columnDefinition="json") private JsonNode publishedJson;

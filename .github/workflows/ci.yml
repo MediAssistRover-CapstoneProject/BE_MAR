@@ -20,6 +20,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: map-schema-ci
+          MYSQL_DATABASE: mar_map_schema_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pmap-schema-ci"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
     steps:
       # ========================================
       # 1. CHECKOUT SOURCE
@@ -55,12 +69,16 @@ jobs:
           echo "Deployment variables configured"
 
       # ========================================
-      # 4. BUILD SPRING BOOT - SKIP ALL TESTS
+      # 4. TEST AGAINST MYSQL AND BUILD SPRING BOOT
       # ========================================
-      - name: Build Spring Boot JAR
+      - name: Test MySQL schema and build Spring Boot JAR
+        env:
+          MAP_SCHEMA_TEST_JDBC_URL: jdbc:mysql://127.0.0.1:3306/mar_map_schema_test?allowPublicKeyRetrieval=true&useSSL=false
+          MAP_SCHEMA_TEST_DB_USER: root
+          MAP_SCHEMA_TEST_DB_PASSWORD: map-schema-ci
         run: |
           mvn -B --no-transfer-progress \
-            -Dmaven.test.skip=true \
+            -Dmaven.test.skip=false \
             clean package
 
           test -s target/backend-0.0.1-SNAPSHOT.jar
