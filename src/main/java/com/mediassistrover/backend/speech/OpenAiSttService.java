@@ -54,13 +54,17 @@ public class OpenAiSttService {
             String boundary="mar-voice-"+UUID.randomUUID();
             var body=new ByteArrayOutputStream(wav.length+1024);
             field(body,boundary,"model",model);
-            // The model API differs: legacy Whisper accepts `language`; newer
-            // models accept `languages`. A bounded prompt works with both.
+            field(body,boundary,"response_format","json");
             field(body,boundary,"prompt",language.equals("vi")?
-                "Vietnamese hospital conversation. Preserve spoken room names and numbers.":
-                language.equals("en")?"English hospital conversation. Preserve spoken room names and numbers.":
+                "Hội thoại tiếng Việt tại bệnh viện. Chép đúng lời nghe được, giữ nguyên tên phòng, tên điểm đến, chữ cái và số được nói.":
+                language.equals("en")?"English hospital conversation. Transcribe only audible speech; preserve spoken room names, destination labels, letters and numbers.":
                 "Vietnamese and English hospital conversation, including mixed language. Transcribe spoken words without translating; preserve destination names and letters.");
-            if(model.equals("whisper-1")&&!language.equals("auto"))field(body,boundary,"language",language);
+            // gpt-transcribe uses a plural array; legacy models accept one
+            // language hint. Never send both schema variants in one request.
+            if(model.equals("gpt-transcribe")) {
+                for(String code:language.equals("auto")?List.of("vi","en"):List.of(language))
+                    field(body,boundary,"languages[]",code);
+            } else if(!language.equals("auto"))field(body,boundary,"language",language);
             body.write(("--"+boundary+"\r\nContent-Disposition: form-data; name=\"file\"; filename=\"capture.wav\"\r\nContent-Type: audio/wav\r\n\r\n").getBytes(StandardCharsets.UTF_8));
             body.write(wav);body.write(("\r\n--"+boundary+"--\r\n").getBytes(StandardCharsets.US_ASCII));
             var request=HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(45))
@@ -82,6 +86,8 @@ public class OpenAiSttService {
             }
             var payload=json.readTree(raw);
             if(payload==null||!payload.isObject())return failed(502,"STT_TRANSCRIPT_INVALID",duration,started);
+            if(model.equals("gpt-transcribe")&&payload.path("languages").isArray()&&payload.path("languages").isEmpty())
+                return failed(422,"STT_NO_RELIABLE_SPEECH",duration,started);
             String text=payload.path("text").asText("").strip();
             if(text.isEmpty()||text.length()>4000)return failed(502,"STT_TRANSCRIPT_INVALID",duration,started);
             return new Result(200,new Transcript("READY",null,text,model,duration,elapsed(started)));
