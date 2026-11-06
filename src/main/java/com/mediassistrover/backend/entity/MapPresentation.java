@@ -18,8 +18,7 @@ public class MapPresentation {
 
     @JdbcTypeCode(SqlTypes.JSON) @Column(name="source_json", nullable=false, columnDefinition="json") private JsonNode sourceJson;
     @JdbcTypeCode(SqlTypes.JSON) @Column(name="draft_json", nullable=false, columnDefinition="json") private JsonNode draftJson;
-    @JdbcTypeCode(SqlTypes.JSON) @Column(name="published_json", columnDefinition="json") private JsonNode publishedJson;    @JdbcTypeCode(SqlTypes.CHAR)
-        @Column(name="source_asset_hash", nullable=false, length=64, columnDefinition="CHAR(64)") private String sourceAssetHash;
+    @JdbcTypeCode(SqlTypes.JSON) @Column(name="published_json", columnDefinition="json") private JsonNode publishedJson;
     @Column(name="published_revision") private Long publishedRevision;
     @Column(name="published_at") private Instant publishedAt;
     @Column(name="updated_at", nullable=false) private Instant updatedAt;
