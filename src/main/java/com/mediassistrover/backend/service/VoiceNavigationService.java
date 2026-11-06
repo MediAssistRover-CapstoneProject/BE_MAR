@@ -27,12 +27,17 @@ public class VoiceNavigationService {
     private final WorkflowRepository workflows;
     private final ServiceRequestRepository rows;
     private final ServiceRequestService requests;
+    private final JobRepository jobs;
     private final MqttWire wire;
 
     public ObjectNode destinations(DevicePrincipal device) {
         scope.requireCurrentDevice(device);
         var session=sessions.device(device);UUID mapId=UUID.fromString(session.path("mapId").asText());
         var result=wire.object();result.set("navigationSession",session);
+        // Queried only on wake/explicit confirmation, never in a polling loop.
+        // Include server-side steps and gaps between Pi commands in this job fence.
+        result.put("robotAvailable",jobs.findRobotJobIds(device.robotId(),List.of(
+            JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED)).isEmpty());
         result.put("workflowCode",WORKFLOW_CODE);
         var workflow=workflows.findFirstByWorkflowCodeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(WORKFLOW_CODE,WorkflowStatus.PUBLISHED);
         result.put("workflowPrepared",workflow.isPresent());
