@@ -257,13 +257,16 @@
       $('navMapId').disabled = locked;
       $('navActivate').disabled = !loaded || locked || state.map?.status === 'ACTIVE';
       $('navAssign').disabled = !loaded || locked || state.map?.status !== 'ACTIVE';
-      const session=state.snapshot?.navigationSession,open=session&&['WAITING_FOR_PI','LOCALIZING','READY'].includes(session.state)&&session.mapId===state.meta?.map_id;
-      $('navAssign').disabled ||= !!open || state.meta?.navigation_reload_safe===false;
+      const session = state.snapshot?.navigationSession;
+      const sessionOpen = !!session && ['WAITING_FOR_PI', 'LOCALIZING', 'READY'].includes(session.state);
+      const open = sessionOpen && session.mapId === state.meta?.map_id;
+      $('navAssign').disabled ||= sessionOpen || state.meta?.navigation_reload_safe===false;
       $('navNormalize').disabled=!loaded||locked||state.meta?.navigation_reload_safe!==false;
-      $('navCloseSession').disabled=locked||!open;
+      $('navCloseSession').disabled=locked||!sessionOpen;
       $('navRecheck').disabled=state.busy;
       $('navSessionReadiness').textContent=state.busy?'Đang xử lý yêu cầu trên BE…':active()?
         'Robot đang có workflow/job. Theo dõi hoặc hủy ở phần Chạy workflow bên dưới.':
+        sessionOpen&&!open?'Robot đang mở phiên map khác. Bấm Đóng phiên map tạm trước khi mở map này.':
         !loaded?'Tải map để mở phiên.':open?'Phiên đang mở; dùng lệnh Pi bên dưới.':
         state.meta?.navigation_reload_safe===false?'Map cần sửa ô xám trước khi mở phiên.':
         state.map?.status!=='ACTIVE'?'Kích hoạt map trước khi mở phiên.':'Có thể mở phiên mới; phiên cũ đã đóng hoặc chưa có phiên.';

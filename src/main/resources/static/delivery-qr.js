@@ -3,7 +3,7 @@
 const $ = id => document.getElementById(id);
 const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 let token = '', jobId = '', selectedStep = null, action = null, qrUntil = 0;
-let generation = 0, timer, responseKey = '', pending = false, respondedStep = '';
+let generation = 0, timer, qrTimer, responseKey = '', pending = false, respondedStep = '';
 let staff = null, endpoints = [], catalogLoaded = false, catalogLoading = false, draft = null;
 
 async function api(path, body, key) {
@@ -165,6 +165,8 @@ $('sendDelivery').addEventListener('click', async event => {
 });
 
 function clearQr() {
+  clearTimeout(qrTimer);
+  qrTimer = undefined;
   qrUntil = 0;
   $('qrPanel').hidden = true;
   $('qr').width = 1;
@@ -226,10 +228,18 @@ async function refresh(epoch) {
     }
   } catch (error) {
     if (epoch !== generation) return;
-    clearQr();
-    $('showQr').hidden = $('confirm').hidden = true;
-    if (error.status === 401) { signOut(); message('Phiên đăng nhập đã hết hạn.'); return; }
-    message(error.message);
+    if ([401, 403, 404, 410].includes(error.status)) {
+      clearQr();
+      $('showQr').hidden = $('confirm').hidden = true;
+      if (error.status === 401) { signOut(); message('Phiên đăng nhập đã hết hạn.'); return; }
+      message(error.message);
+    } else {
+      // A failed poll is not evidence that a signed, unexpired QR was revoked.
+      // Its expiry timer and the next authoritative step update still clear it.
+      if (qrUntil && qrUntil <= Date.now()) clearQr();
+      $('showQr').disabled = $('confirm').disabled = true;
+      message('Đang kết nối lại trạng thái nhiệm vụ. QR còn hạn được giữ nguyên.');
+    }
   } finally {
     if (!finished && epoch === generation && token && jobId) timer = setTimeout(() => refresh(epoch), 2000);
   }
@@ -313,6 +323,12 @@ $('showQr').addEventListener('click', async () => {
       if (value === '1') context.fillRect(x * pixels, y * pixels, pixels, pixels);
     }));
     qrUntil = until;
+    clearTimeout(qrTimer);
+    qrTimer = setTimeout(() => {
+      if (epoch !== generation || qrUntil !== until) return;
+      clearQr();
+      message('QR đã hết hạn. Đang chờ cập nhật bước xác thực từ hệ thống.');
+    }, until - Date.now());
     $('qrExpiry').textContent = 'Đưa màn hình trước camera robot. Mã hết hạn lúc ' + new Date(until).toLocaleTimeString('vi-VN');
     $('qrPanel').hidden = false;
     $('showQr').hidden = true;

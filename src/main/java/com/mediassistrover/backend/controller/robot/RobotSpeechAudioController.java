@@ -49,9 +49,10 @@ public class RobotSpeechAudioController {
         var result=speech.request(input.text(),input.languageCode(),input.speedWpm()==null?150:input.speedWpm());
         if(result.audio()!=null)return ResponseEntity.ok().contentType(MediaType.parseMediaType("audio/wav"))
             .header("X-Audio-SHA256",OpenAiTtsService.sha256(result.audio())).header("X-TTS-Provider","openai")
+            .header("X-TTS-Revision",result.revision())
             .header("Cache-Control","no-store").body(result.audio());
         return ResponseEntity.status(result.state().equals("PENDING")?202:503)
-            .header("Retry-After","2").header("Cache-Control","no-store")
+            .header("Retry-After","1").header("Cache-Control","no-store")
             .body(Map.of("state",result.state(),"code",result.code()==null?"TTS_GENERATING":result.code()));
     }
 }

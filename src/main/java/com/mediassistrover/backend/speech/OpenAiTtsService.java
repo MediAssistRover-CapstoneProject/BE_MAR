@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 /** Bounded asynchronous synthesis: repeated requests share one provider call and disk cache. */
 @Service
 public class OpenAiTtsService implements AutoCloseable {
-    public record Result(String state, String code, byte[] audio) { }
+    public record Result(String state, String code, byte[] audio,String revision) { }
     private record Work(Future<byte[]> future, long created) { }
     private final boolean enabled;
     private final String apiKey, voice, model, instructions;
@@ -26,6 +26,7 @@ public class OpenAiTtsService implements AutoCloseable {
     private final URI endpoint;
     private final ObjectMapper json;
     private final com.mediassistrover.backend.storage.S3ObjectStorageService s3;
+    private final SpeechSettingsService settings;
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
         .followRedirects(HttpClient.Redirect.NEVER).build();
     private final ThreadPoolExecutor executor = new ThreadPoolExecutor(2,2,0,TimeUnit.SECONDS,
@@ -34,26 +35,30 @@ public class OpenAiTtsService implements AutoCloseable {
     private volatile long storageRetryAfter;
     private static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(OpenAiTtsService.class);
     static final int MAX_BYTES=4*1024*1024;
-    public record Configuration(boolean enabled,boolean configured,String model,String voice) { }
-    public Configuration configuration(){return new Configuration(enabled,!apiKey.isBlank(),model,voice);}
+    public record Configuration(boolean enabled,boolean configured,String model,String voice,double speedMultiplier,String revision) { }
+    public Configuration configuration(){var p=profile();return new Configuration(enabled,!apiKey.isBlank(),model,p.voice(),p.speedMultiplier(),p.revision());}
+    private SpeechSettingsService.Profile profile(){return settings==null?SpeechSettingsService.profile(voice,speed,instructions):settings.current();}
 
     @org.springframework.beans.factory.annotation.Autowired
     public OpenAiTtsService(@Value("${app.tts.enabled:false}") boolean enabled,
                            @Value("${app.tts.openai-api-key:}") String key,
                            @Value("${app.tts.voice:coral}") String voice,
-                           @Value("${app.tts.speed:1.0}") double speed,
+                           @Value("${app.tts.speed:1.25}") double speed,
                            @Value("${app.tts.model:gpt-4o-mini-tts}") String model,
                            @Value("${app.tts.instructions:Speak Vietnamese with a clear Northern Vietnamese accent and a calm adult female tone. Read only the supplied text.}") String instructions,
                            @Value("${app.tts.cache-dir:./data/speech}") String directory, ObjectMapper json,
-                           com.mediassistrover.backend.storage.S3ObjectStorageService s3) {
-        this(enabled,key,voice,speed,model,instructions,Path.of(directory),json,URI.create("https://api.openai.com/v1/audio/speech"),s3);
+                           com.mediassistrover.backend.storage.S3ObjectStorageService s3,SpeechSettingsService settings) {
+        this(enabled,key,voice,speed,model,instructions,Path.of(directory),json,URI.create("https://api.openai.com/v1/audio/speech"),s3,settings);
     }
     OpenAiTtsService(boolean enabled,String key,String voice,double speed,String model,String instructions,Path directory,ObjectMapper json,URI endpoint) {
         this(enabled,key,voice,speed,model,instructions,directory,json,endpoint,null);
     }
     OpenAiTtsService(boolean enabled,String key,String voice,double speed,String model,String instructions,Path directory,ObjectMapper json,URI endpoint,com.mediassistrover.backend.storage.S3ObjectStorageService s3) {
+        this(enabled,key,voice,speed,model,instructions,directory,json,endpoint,s3,null);
+    }
+    OpenAiTtsService(boolean enabled,String key,String voice,double speed,String model,String instructions,Path directory,ObjectMapper json,URI endpoint,com.mediassistrover.backend.storage.S3ObjectStorageService s3,SpeechSettingsService settings) {
         this.enabled=enabled;this.apiKey=key;this.voice=voice;this.speed=speed;this.directory=directory;
-        this.json=json;this.endpoint=endpoint;this.model=model;this.instructions=instructions;this.s3=s3;
+        this.json=json;this.endpoint=endpoint;this.model=model;this.instructions=instructions;this.s3=s3;this.settings=settings;
         if(!Set.of("alloy","ash","ballad","coral","echo","fable","nova","onyx","sage","shimmer","verse","marin","cedar").contains(voice)
                 ||!Double.isFinite(speed)||speed<0.25||speed>4.0||model.isBlank()||instructions.length()>1000)
             throw new IllegalArgumentException("Invalid OpenAI TTS configuration");
@@ -62,27 +67,28 @@ public class OpenAiTtsService implements AutoCloseable {
         return request(text,language,150);
     }
     public synchronized Result request(String text,String language,int speedWpm) {
-        if(!enabled)return new Result("FAILED","TTS_DISABLED",null);
-        if(apiKey.isBlank())return new Result("FAILED","TTS_API_KEY_MISSING",null);
-        if(!Set.of("vi","en").contains(language))return new Result("FAILED","TTS_LANGUAGE_UNSUPPORTED",null);
+        var profile=profile();String revision=profile.revision();
+        if(!enabled)return new Result("FAILED","TTS_DISABLED",null,revision);
+        if(apiKey.isBlank())return new Result("FAILED","TTS_API_KEY_MISSING",null,revision);
+        if(!Set.of("vi","en").contains(language))return new Result("FAILED","TTS_LANGUAGE_UNSUPPORTED",null,revision);
         if(text==null||text.isBlank()||text.length()<1||text.length()>500)
-            return new Result("FAILED","TTS_TEXT_INVALID",null);
-        if(speedWpm<80||speedWpm>220)return new Result("FAILED","TTS_SPEED_INVALID",null);
-        double renderSpeed=Math.max(0.25,Math.min(4.0,speed*speedWpm/150.0));
-        String id=sha256(("openai\n"+model+"\n"+voice+"\n"+renderSpeed+"\n"+language+"\n"+instructions+"\n"+text).getBytes(StandardCharsets.UTF_8));
+            return new Result("FAILED","TTS_TEXT_INVALID",null,revision);
+        if(speedWpm<80||speedWpm>220)return new Result("FAILED","TTS_SPEED_INVALID",null,revision);
+        double renderSpeed=Math.max(0.25,Math.min(4.0,profile.speedMultiplier()*speedWpm/150.0));
+        String id=sha256(("openai\n"+model+"\n"+profile.voice()+"\n"+renderSpeed+"\n"+language+"\n"+profile.instructions()+"\n"+text).getBytes(StandardCharsets.UTF_8));
         Path file=directory.resolve(id+".wav");
         try {
             if(Files.isRegularFile(file)) {
                 if(Files.size(file)>MAX_BYTES)Files.delete(file);
                 else {byte[] audio=Files.readAllBytes(file);if(wav(audio)){
                     Work cached=pending.get(id);if(cached!=null&&cached.future.isDone())pending.remove(id);
-                    return new Result("READY",null,audio);
+                    return new Result("READY",null,audio,revision);
                 }Files.delete(file);}
             }
             Work work=pending.get(id);
             if(work!=null&&work.future.isDone()) {
-                try {return new Result("READY",null,work.future.get());}
-                catch(Exception e){return new Result("FAILED",safeCode(e),null);}
+                try {return new Result("READY",null,work.future.get(),revision);}
+                catch(Exception e){return new Result("FAILED",safeCode(e),null,revision);}
                 finally {pending.remove(id);}
             }
             long now=System.currentTimeMillis();
@@ -93,20 +99,20 @@ public class OpenAiTtsService implements AutoCloseable {
                 // the credentials do not have ListBucket permission.
                 if(s3!=null&&now>=storageRetryAfter)try{
                     byte[] audio=s3.get(cacheKey(id),MAX_BYTES);
-                    if(wav(audio)){cacheLocal(file,audio);return new Result("READY",null,audio);}
+                    if(wav(audio)){cacheLocal(file,audio);return new Result("READY",null,audio,revision);}
                 }catch(com.mediassistrover.backend.exception.ResourceNotFoundException ignored){}
                 catch(com.mediassistrover.backend.exception.StorageUnavailableException unavailable){cacheUnavailable();}
-                if(pending.size()>=128)return new Result("FAILED","TTS_BUSY",null);
-                try {pending.put(id,new Work(executor.submit(()->generate(text,language,file,renderSpeed)),now));}
-                catch(RejectedExecutionException e){return new Result("FAILED","TTS_BUSY",null);}
+                if(pending.size()>=128)return new Result("FAILED","TTS_BUSY",null,revision);
+                try {pending.put(id,new Work(executor.submit(()->generate(text,language,file,renderSpeed,profile)),now));}
+                catch(RejectedExecutionException e){return new Result("FAILED","TTS_BUSY",null,revision);}
             }
-            return new Result("PENDING",null,null);
-        } catch(IOException e){return new Result("FAILED","TTS_CACHE_ERROR",null);}
+            return new Result("PENDING",null,null,revision);
+        } catch(IOException e){return new Result("FAILED","TTS_CACHE_ERROR",null,revision);}
     }
-    private byte[] generate(String text,String language,Path file,double renderSpeed) throws Exception {
-        var body=json.createObjectNode().put("model",model).put("voice",voice).put("input",text)
+    private byte[] generate(String text,String language,Path file,double renderSpeed,SpeechSettingsService.Profile profile) throws Exception {
+        var body=json.createObjectNode().put("model",model).put("voice",profile.voice()).put("input",text)
             .put("response_format","wav").put("speed",renderSpeed);
-        if(!Set.of("tts-1","tts-1-hd").contains(model))body.put("instructions",language.equals("vi")?instructions:"Speak clearly in English. Read only the supplied text.");
+        if(!Set.of("tts-1","tts-1-hd").contains(model))body.put("instructions",language.equals("vi")?profile.instructions():"Speak clearly in English. Read only the supplied text.");
         var request=HttpRequest.newBuilder(endpoint).timeout(Duration.ofSeconds(60))
             .header("Authorization","Bearer "+apiKey).header("Content-Type","application/json")
             .POST(HttpRequest.BodyPublishers.ofByteArray(json.writeValueAsBytes(body))).build();

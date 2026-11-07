@@ -26,6 +26,7 @@ public class NavigationGuidanceService {
     @Value("${app.navigation.guidance.simplify-cm:2.5}") private double simplifyCm;
     @Value("${app.navigation.guidance.turn-angle-deg:35}") private double turnAngle;
     @Value("${app.navigation.guidance.max-path-offset-cm:25}") private double maxOffsetCm;
+    @Value("${app.navigation.guidance.max-pose-age-ms:2000}") private long maxPoseAgeMs;
 
     private record Point(double x,double y,double distance) { }
     private record Projection(int segment,double fraction,double x,double y,double distance,double offset) { }
@@ -64,7 +65,7 @@ public class NavigationGuidanceService {
                 ||!session.getMap().getMapId().toString().equals(sample.path("mapId").asText())
                 ||!session.getMapAssetHash().equalsIgnoreCase(sample.path("mapAssetHash").asText())
                 ||session.getInitializationRevision()!=sample.path("initializationRevision").asLong(-1)
-                ||Instant.parse(sample.path("capturedAt").asText()).isBefore(now.minusMillis(1000)))return out;
+                ||Instant.parse(sample.path("capturedAt").asText()).isBefore(now.minusMillis(Math.max(500,maxPoseAgeMs))))return out;
         List<Point> points=new ArrayList<>();double length=0;
         for(JsonNode p:plan.path("points")){
             double x=p.path("xM").asDouble(),y=p.path("yM").asDouble();
@@ -84,17 +85,23 @@ public class NavigationGuidanceService {
         Projection position=project(points,pose.path("xM").asDouble(),pose.path("yM").asDouble(),pose.path("yawRad").asDouble());
         if(position.offset*100>Math.max(1,maxOffsetCm))return out.put("text","Đang cập nhật đường đi");
         out.put("state","TRACKING").put("capturedAt",sample.path("capturedAt").asText())
+                .put("planRevision",plan.path("plannedAt").asText())
                 .put("segmentIndex",position.segment).put("segmentFraction",position.fraction)
                 .put("remainingCm",Math.round(Math.max(0,length-position.distance)*100));
         out.putObject("projection").put("xM",position.x).put("yM",position.y);
         List<Integer> corners=new ArrayList<>();corners.add(0);
         simplify(points,0,points.size()-1,Math.max(.005,simplifyCm/100),corners);
         corners.add(points.size()-1);
+        Point straightStart=points.getFirst();
+        Point segmentStart=points.get(position.segment),segmentEnd=points.get(position.segment+1);
+        double heading=Math.atan2(segmentEnd.y-segmentStart.y,segmentEnd.x-segmentStart.x)-pose.path("yawRad").asDouble();
+        boolean facingPath=Math.abs(Math.atan2(Math.sin(heading),Math.cos(heading)))<=Math.PI/4;
         for(int i=1;i<corners.size()-1;i++){
             Point a=points.get(corners.get(i-1)),b=points.get(corners.get(i)),c=points.get(corners.get(i+1));
             double angle=Math.atan2(c.y-b.y,c.x-b.x)-Math.atan2(b.y-a.y,b.x-a.x);
             angle=Math.atan2(Math.sin(angle),Math.cos(angle));
-            if(Math.abs(Math.toDegrees(angle))<Math.max(15,turnAngle)||b.distance<=position.distance+.02)continue;
+            if(Math.abs(Math.toDegrees(angle))<Math.max(15,turnAngle))continue;
+            if(b.distance<=position.distance+.02){straightStart=b;continue;}
             String direction=Math.abs(angle)>Math.toRadians(150)?"UTURN":angle>0?"LEFT":"RIGHT";
             String instruction=switch(direction){case "LEFT"->"rẽ trái";case "RIGHT"->"rẽ phải";default->"quay lại";};
             long distance=Math.round((b.distance-position.distance)*100);
@@ -103,16 +110,28 @@ public class NavigationGuidanceService {
                     .put("text","Còn "+distance+" cm, "+instruction);
             out.putObject("turn").put("xM",b.x).put("yM",b.y);
             if(distance<=Math.max(1,announceCm)){
-                ObjectNode command=out.putObject("interaction").put("stepType","INTERACT")
-                        .put("parentJobStepId",step.getJobStepId().toString()).put("cueId",cue);
-                ObjectNode params=command.putObject("params").put("action","SPEAK").put("prompt_key","NAVIGATION_TURN");
-                params.putObject("data").put("text","Phía trước "+instruction).put("language_code","vi")
-                        .put("speed_wpm",150).put("volume",70);
-            }
+                speech(out,step.getJobStepId(),cue,direction,b,"Phía trước "+instruction);
+            }else if(facingPath)straight(out,step.getJobStepId(),straightStart);
             return out;
         }
-        return out.put("direction","STRAIGHT").put("distanceCm",out.path("remainingCm").asLong())
+        out.put("direction","STRAIGHT").put("distanceCm",out.path("remainingCm").asLong())
                 .put("text","Đi thẳng "+out.path("remainingCm").asLong()+" cm tới điểm đến");
+        if(facingPath&&out.path("remainingCm").asLong()>=25)straight(out,step.getJobStepId(),straightStart);
+        return out;
+    }
+
+    private void straight(ObjectNode out,UUID step,Point anchor){
+        String cue=step+":STRAIGHT:"+Math.round(anchor.x*5)+":"+Math.round(anchor.y*5);
+        speech(out,step,cue,"STRAIGHT",anchor,"Mời bạn đi thẳng theo tôi.");
+    }
+
+    private void speech(ObjectNode out,UUID step,String cue,String direction,Point anchor,String text){
+        out.put("cueId",cue);
+        ObjectNode command=out.putObject("interaction").put("stepType","INTERACT")
+                .put("parentJobStepId",step.toString()).put("cueId",cue).put("direction",direction);
+        command.putObject("anchor").put("xM",anchor.x).put("yM",anchor.y);
+        ObjectNode params=command.putObject("params").put("action","SPEAK").put("prompt_key","NAVIGATION_"+direction);
+        params.putObject("data").put("text",text).put("language_code","vi").put("speed_wpm",150).put("volume",70);
     }
 
     private Projection project(List<Point> points,double x,double y,double yaw){
