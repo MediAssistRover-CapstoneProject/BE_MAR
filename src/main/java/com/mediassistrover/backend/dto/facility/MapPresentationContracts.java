@@ -19,10 +19,18 @@ public final class MapPresentationContracts {
         @NotNull @DecimalMin("0.01") @DecimalMax("2") Double lineWidthM,
         @NotNull @DecimalMin("0.05") @DecimalMax("5") Double fontSizeM,
         UUID endpointId) { }
-    /** Coordinates in metres in the map's local grid, x right / y up, before origin/yaw. */
+    /** Coordinates stay in the map's local grid; rotation affects presentation only. */
     public record Document(@Min(1) @Max(1) int schemaVersion,
         @NotBlank @Pattern(regexp="#[0-9a-fA-F]{6}") String backgroundColor,
-        @NotNull @Size(max=500) List<@NotNull @Valid Feature> features) { }
+        @NotNull @Size(max=500) List<@NotNull @Valid Feature> features,
+        @DecimalMin("-180") @DecimalMax("180") Double rotationDegrees) {
+        public Document {
+            if(rotationDegrees==null) rotationDegrees=0.;
+        }
+        public Document(int schemaVersion,String backgroundColor,List<Feature> features) {
+            this(schemaVersion,backgroundColor,features,0.);
+        }
+    }
     public record Save(@Min(0) long expectedRevision,
         @NotBlank @Pattern(regexp="[a-fA-F0-9]{64}") String sourceAssetHash,
         @NotNull @Valid Document document) { }

@@ -58,6 +58,80 @@ class MapPresentationServiceTest {
         assertEquals(1,result.revision()); assertNull(result.published()); assertEquals(hash,map.getAssetHash());
         verify(maps,never()).save(any());
     }
+    @Test void rotationSurvivesSaveReadAndPublishWithoutChangingNavigationOrGeometry() {
+        map.setOriginXM(BigDecimal.valueOf(-2)); map.setOriginYM(BigDecimal.valueOf(-3));
+        map.setOriginYawRad(BigDecimal.valueOf(.5)); map.setResolutionMPerPixel(BigDecimal.valueOf(.05));
+        map.setMapFileUri("s3://maps/original.yaml");
+        var row=row(1);
+        var rotated=new Document(1,"#ffffff",List.of(room),-19.5);
+        var result=service.save(id,new Save(1,hash,rotated));
+        assertEquals(rotated,result.draft()); assertEquals(-19.5,row.getDraftJson().get("rotationDegrees").asDouble());
+        assertEquals(rotated,service.editor(id).draft());
+        result=service.publish(id,new Change(2));
+        assertEquals(-19.5,result.published().rotationDegrees());
+        assertEquals(rotated,service.published(id).document());
+        assertEquals(room.points(),result.published().features().getFirst().points());
+        assertEquals(source,result.source());
+        assertEquals(hash,map.getAssetHash()); assertEquals(BigDecimal.TEN,map.getWidthM()); assertEquals(BigDecimal.TEN,map.getHeightM());
+        assertEquals(BigDecimal.valueOf(-2),map.getOriginXM()); assertEquals(BigDecimal.valueOf(-3),map.getOriginYM());
+        assertEquals(BigDecimal.valueOf(.5),map.getOriginYawRad()); assertEquals(BigDecimal.valueOf(.05),map.getResolutionMPerPixel());
+        assertEquals("s3://maps/original.yaml",map.getMapFileUri());
+        verify(maps,never()).save(any()); verify(endpoints,never()).save(any());
+    }
+    @Test void laterRotationChangeDoesNotChangePublishedOrientation() {
+        draft=new Document(1,"#ffffff",List.of(room),-19.5);
+        row(1); service.publish(id,new Change(1));
+        var changed=new Document(1,"#ffffff",List.of(room),45.);
+        var result=service.save(id,new Save(2,hash,changed));
+        assertEquals(45.,result.draft().rotationDegrees());
+        assertEquals(-19.5,result.published().rotationDegrees());
+        assertEquals(-19.5,service.published(id).document().rotationDegrees());
+    }
+    @Test void rotationOnlyPresentationCanBePublishedBeforeDrawing() {
+        draft=new Document(1,"#ffffff",List.of(),-19.5);
+        row(1);
+        var result=service.publish(id,new Change(1));
+        assertEquals(2,result.revision()); assertEquals(draft,result.published());
+        assertEquals(-19.5,service.published(id).document().rotationDegrees());
+        assertTrue(result.published().features().isEmpty());
+        assertEquals(source,result.source()); verify(maps,never()).save(any());
+    }
+    @Test void emptyDefaultPresentationStillCannotBePublished() {
+        draft=new Document(1,"#ffffff",List.of());
+        var row=row(1);
+        assertThrows(BusinessRuleException.class,()->service.publish(id,new Change(1)));
+        assertEquals(1,row.getRevision()); assertNull(row.getPublishedJson());
+    }
+    @Test void publishedRotationOnlyMapCanBeResetToZeroAndPublishedAgain() {
+        draft=new Document(1,"#ffffff",List.of(),-19.5);
+        row(1); service.publish(id,new Change(1));
+        var reset=new Document(1,"#ffffff",List.of(),0.);
+        service.save(id,new Save(2,hash,reset));
+        var result=service.publish(id,new Change(3));
+        assertEquals(4,result.revision()); assertEquals(reset,result.published());
+        assertEquals(reset,service.published(id).document());
+        assertEquals(source,result.source()); verify(maps,never()).save(any());
+    }
+    @Test void missingOrNullLegacyRotationDefaultsToZero() throws Exception {
+        var oldJson=json.valueToTree(draft);
+        ((com.fasterxml.jackson.databind.node.ObjectNode)oldJson).remove("rotationDegrees");
+        assertEquals(0.,json.treeToValue(oldJson,Document.class).rotationDegrees());
+        var row=row(2); row.setDraftJson(oldJson); row.setPublishedJson(oldJson.deepCopy()); row.setPublishedRevision(2L);
+        assertEquals(0.,service.editor(id).draft().rotationDegrees());
+        assertEquals(0.,service.published(id).document().rotationDegrees());
+        ((com.fasterxml.jackson.databind.node.ObjectNode)oldJson).putNull("rotationDegrees");
+        assertEquals(0.,json.treeToValue(oldJson,Document.class).rotationDegrees());
+        assertEquals(0.,new Document(1,"#ffffff",List.of(room)).rotationDegrees());
+    }
+    @Test void nonFiniteAndOutOfRangeRotationCannotBeSavedEvenWithoutBeanValidation() {
+        for(double angle:new double[]{Double.NaN,Double.POSITIVE_INFINITY,Double.NEGATIVE_INFINITY,-180.01,180.01}) {
+            var invalid=new Document(1,"#ffffff",List.of(room),angle);
+            assertThrows(BusinessRuleException.class,()->service.save(id,new Save(0,hash,invalid)));
+        }
+        verify(rows,never()).save(any());
+        assertDoesNotThrow(()->service.validate(new Document(1,"#ffffff",List.of(room),-180.),source));
+        assertDoesNotThrow(()->service.validate(new Document(1,"#ffffff",List.of(room),180.),source));
+    }
     @Test void publishedSnapshotSurvivesLaterDraftSave() {
         var row=row(1); var result=service.publish(id,new Change(1));
         assertEquals(draft,result.published()); assertEquals(2,result.revision());
@@ -103,6 +177,8 @@ class MapPresentationServiceTest {
         try(var factory=Validation.buildDefaultValidatorFactory()) {
             var invalid=new Feature("label",FeatureType.LABEL,"Nhãn","url(https://example.com)",List.of(new Point(1.,1.)),99.,.3,null);
             assertFalse(factory.getValidator().validate(new Save(0,hash,new Document(1,"#ffffff",List.of(invalid)))).isEmpty());
+            assertFalse(factory.getValidator().validate(new Save(0,hash,new Document(1,"#ffffff",List.of(room),180.01))).isEmpty());
+            assertFalse(factory.getValidator().validate(new Save(0,hash,new Document(1,"#ffffff",List.of(room),-180.01))).isEmpty());
         }
     }
 }

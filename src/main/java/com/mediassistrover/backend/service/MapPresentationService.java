@@ -60,7 +60,8 @@ public class MapPresentationService {
         Source source=source(map);
         requireSource(row,map);
         Document draft=document(row.getDraftJson());
-        if(draft.features().isEmpty()) throw new BusinessRuleException("Thêm ít nhất một đối tượng trước khi xuất bản.");
+        if(draft.features().isEmpty() && draft.rotationDegrees()==0. && row.getPublishedJson()==null)
+            throw new BusinessRuleException("Thêm ít nhất một đối tượng hoặc căn góc bản đồ trước khi xuất bản.");
         validate(draft,source);
         row.setPublishedJson(row.getDraftJson().deepCopy());
         row.setRevision(row.getRevision()+1);
@@ -91,6 +92,8 @@ public class MapPresentationService {
     }
 
     void validate(Document document,Source source) {
+        if(!Double.isFinite(document.rotationDegrees()) || document.rotationDegrees() < -180 || document.rotationDegrees() > 180)
+            throw new BusinessRuleException("Góc xoay giao diện phải từ -180 đến 180 độ.");
         Set<String> ids=new HashSet<>();
         Set<UUID> linked=new HashSet<>();
         for(Feature feature:document.features()) {
