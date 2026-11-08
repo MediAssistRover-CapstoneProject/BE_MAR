@@ -646,6 +646,7 @@
       await snapshot();say('Đã đóng phiên. Dừng terminal navigation; robot.zsh run bình thường vẫn dùng cấu hình quét map ban đầu.');
     });
     $('navRecheck').onclick=()=>mutate(async()=>{
+      await options.refreshWorkflowState?.();
       if(!state.meta)await loadMap();
       await snapshot();
       clearTimeout(state.timer);state.timer=setTimeout(()=>poll(state.generation),1000);

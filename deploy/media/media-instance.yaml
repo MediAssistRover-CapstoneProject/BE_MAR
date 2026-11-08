@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: MAR dedicated ARM64 WebRTC media host, same VPC as BE; no DB or AI model.
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-0fcc28b2734d6e657
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Default: subnet-0ebcab3a2ab3f5945
+  BackendSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+    Default: sg-05d21a44214b0f35e
+  LaptopCidr:
+    Type: String
+    Description: Current public IPv4 /32 for SSH, for example 117.5.142.136/32.
+    AllowedPattern: '(\d{1,3}\.){3}\d{1,3}/32'
+  SshPublicKey:
+    Type: String
+    Description: Contents of mar-remote.pub, never the private key or its passphrase.
+    AllowedPattern: 'ssh-ed25519 [A-Za-z0-9+/=]+( [A-Za-z0-9@._-]+)?'
+  UbuntuAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/noble/stable/current/arm64/hvm/ebs-gp3/ami-id
+Resources:
+  MediaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+  MediaProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref MediaRole]
+  MediaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: MAR WebRTC; private control only from backend security group.
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - {IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Ref LaptopCidr}
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref BackendSecurityGroup
+        - {IpProtocol: udp, FromPort: 7882, ToPort: 7882, CidrIp: 0.0.0.0/0}
+        - {IpProtocol: tcp, FromPort: 7881, ToPort: 7881, CidrIp: 0.0.0.0/0}
+        - {IpProtocol: udp, FromPort: 3478, ToPort: 3478, CidrIp: 0.0.0.0/0}
+        - IpProtocol: tcp
+          FromPort: 7880
+          ToPort: 7880
+          SourceSecurityGroupId: !Ref BackendSecurityGroup
+      Tags: [{Key: Name, Value: mar-media}]
+  BackendMediaControlEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref BackendSecurityGroup
+      DestinationSecurityGroupId: !Ref MediaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 7880
+      ToPort: 7880
+      Description: MAR private LiveKit control and signaling
+  MediaInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t4g.medium
+      ImageId: !Ref UbuntuAmi
+      IamInstanceProfile: !Ref MediaProfile
+      MetadataOptions: {HttpTokens: required, HttpEndpoint: enabled, HttpPutResponseHopLimit: 1}
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          SubnetId: !Ref SubnetId
+          AssociatePublicIpAddress: true
+          GroupSet: [!Ref MediaSecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: {VolumeSize: 20, VolumeType: gp3, Encrypted: true, DeleteOnTermination: true}
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          install -d -m 700 -o ubuntu -g ubuntu /home/ubuntu/.ssh
+          printf '%s\n' '${SshPublicKey}' >> /home/ubuntu/.ssh/authorized_keys
+          chown ubuntu:ubuntu /home/ubuntu/.ssh/authorized_keys
+          chmod 600 /home/ubuntu/.ssh/authorized_keys
+      Tags: [{Key: Name, Value: mar-media-webrtc}, {Key: Project, Value: MediAssistRover}]
+  MediaIp:
+    Type: AWS::EC2::EIP
+    Properties: {Domain: vpc, Tags: [{Key: Name, Value: mar-media-webrtc}]}
+  MediaIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt MediaIp.AllocationId
+      InstanceId: !Ref MediaInstance
+Outputs:
+  InstanceId: {Value: !Ref MediaInstance}
+  PublicIp: {Value: !Ref MediaIp}
+  PrivateIp: {Value: !GetAtt MediaInstance.PrivateIp}
+  MediaSecurityGroup: {Value: !Ref MediaSecurityGroup}

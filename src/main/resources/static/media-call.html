@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="vi"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Camera và hỗ trợ SOS — MAR</title>
+<style>
+body{font:16px system-ui,sans-serif;max-width:1000px;margin:24px auto;padding:0 16px;background:#f6f8fb;color:#172334}section{background:white;padding:20px;margin:16px 0;border:1px solid #dce2ea;border-radius:8px}label{display:block;margin:12px 0}input,select{box-sizing:border-box;width:100%;padding:9px}button{padding:10px 14px;margin:5px 5px 5px 0;cursor:pointer}video{width:100%;background:#172334;max-height:65vh}small{color:#4c5d72}#status{white-space:pre-wrap}li{margin:10px 0}button:disabled{cursor:default;opacity:.55}.error{color:#b42318}
+</style>
+<h1>Camera và hỗ trợ SOS</h1>
+<section>
+<label>Access token Staff/Admin<input id="token" type="password" autocomplete="off" placeholder="Token chỉ giữ trong trang này"></label>
+<label>Robot ID<input id="robot" value="0e3f1083-2546-4f45-8004-5eda5cb75a6f"></label>
+<label>Incident ID — khi hỗ trợ SOS<input id="incident" placeholder="Admin có thể để trống khi thử"></label>
+<label>Chế độ<select id="mode"><option value="MONITOR">Xem camera — không bật micro/loa robot</option><option value="ASSIST">Hỗ trợ SOS — camera và thoại hai chiều</option></select></label>
+<label><input id="relay" type="checkbox" style="width:auto"> Dùng TURN relay — khi mạng chặn WebRTC/UDP</label>
+<button id="create">Mở phiên và kết nối</button><button id="refresh">Tải các phiên/SOS đang chờ</button>
+<small>Staff chỉ mở phiên cho sự cố thuộc phạm vi được phép. SOS ưu tiên micro/loa và dừng chuyển động của robot; phiên gọi hoạt động độc lập với AMCL.</small>
+<ol id="sessions"></ol>
+</section>
+<section>
+<video id="video" autoplay playsinline muted></video><div id="audio"></div>
+<p id="status" role="status">Chưa kết nối.</p>
+<button id="enableAudio" disabled>Bật âm thanh</button><button id="mic" disabled>Bật/tắt micro staff</button>
+<button id="end" disabled>Kết thúc phiên</button>
+<small>Camera robot gửi hình bệnh nhân tới staff. Chỉ micro staff được phát ngược lại loa robot. Không ghi âm/ghi hình mặc định.</small>
+</section>
+<script src="/vendor/livekit-client.umd.min.js"></script><script src="/media-call.js"></script>
+</html>

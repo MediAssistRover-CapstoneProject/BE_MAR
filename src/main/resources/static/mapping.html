@@ -360,7 +360,7 @@ async function prepareWorkflow(file,code,field){
 $('prepareMapping').onclick=async()=>{const b=$('prepareMapping');b.disabled=true;try{await prepareWorkflow('mapping-workflow.json','WF_MAPPING','workflow');notice('Workflow quét và lưu đã sẵn sàng.')}catch(e){notice(e.message)}finally{b.disabled=false}};
 $('prepareVoiceNavigation').onclick=async()=>{const b=$('prepareVoiceNavigation');b.disabled=true;try{await prepareWorkflow('voice-navigation-workflow.json','WF_VOICE_ENDPOINT_V1','voiceNavigationWorkflow');notice('Workflow voice đã sẵn sàng: MOVE thành công rồi robot mới báo đã tới nơi.')}catch(e){notice(e.message)}finally{b.disabled=false}};
 </script>
-<script src="/map-navigation.js?v=20261106-indoor-guidance"></script>
+<script src="/map-navigation.js?v=20261108-workflow-recheck"></script>
 <script>
 autoMapping=MappingAutonomy.mount({
   context:()=>({job,session,mapping,busy,jogActive:jog.active}),buttons,
@@ -373,7 +373,7 @@ autoMapping=MappingAutonomy.mount({
 <script src="/robot-test-workflow.js?v=20261105-stt-tts"></script>
 <script>
 let workflowRunner;
-const savedMapNavigation=SavedMapNavigation.mount({element:document.getElementById('mapNavigation'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,isMappingActive:()=>mapping||jog.active,getSavedMapId:()=>document.getElementById('savedMapId').value,isWorkflowActive:()=>workflowRunner?.isActive()||false,onContextChange:()=>workflowRunner?.refreshContext()});
+const savedMapNavigation=SavedMapNavigation.mount({element:document.getElementById('mapNavigation'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,isMappingActive:()=>mapping||jog.active,getSavedMapId:()=>document.getElementById('savedMapId').value,isWorkflowActive:()=>workflowRunner?.isActive()||false,refreshWorkflowState:()=>workflowRunner?.refresh(),onContextChange:()=>workflowRunner?.refreshContext()});
 workflowRunner=RobotTestWorkflow.mount({element:document.getElementById('robotTestWorkflow'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,getNavigation:()=>savedMapNavigation.state,isMappingActive:()=>mapping||jog.active});
 </script>
 </html>

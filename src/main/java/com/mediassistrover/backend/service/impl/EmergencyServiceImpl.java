@@ -34,6 +34,7 @@ public class EmergencyServiceImpl implements EmergencyService {
     private final com.mediassistrover.backend.validation.WorkflowExecutionReadiness readiness;
     private final com.mediassistrover.backend.validation.DeviceResourceScopePolicy deviceScope;
     private final com.mediassistrover.backend.storage.MediaReferenceValidator mediaReferences;
+    private final com.mediassistrover.backend.media.MediaSessionService mediaSessions;
     private final com.mediassistrover.backend.validation.StaffOperationalScopePolicy staffScope;
 
     @Override @Transactional public SosResponse createSos(PiEnvelope<SosPayload> e,DevicePrincipal actor,RequestMetadata md){
@@ -47,6 +48,8 @@ public class EmergencyServiceImpl implements EmergencyService {
                 .put("source_payload_hash",wire.canonicalHash(objectMapper.valueToTree(p)));if(endpoint!=null)data.put("endpoint_id",endpoint.getEndpointId().toString());
         Instant now=Instant.now(clock);ServiceRequest request=requestRepository.saveAndFlush(ServiceRequest.builder().requestedRobot(robot).relatedIncidentId(incident.getIncidentId()).requestCode(code("REQ")).requestType(ServiceRequestType.EMERGENCY_SOS).sourceType(RequestSourceType.ROBOT_UI).priority(p.severity()==EmergencyIncidentSeverity.CRITICAL?100:80).status(ServiceRequestStatus.SUBMITTED).requestNote(p.description()).requestDataJson(data).idempotencyKey(key).requestedAt(now).build());
         Alert alert=alertService.createSystemAlert(key,"SOS",p.severity()==EmergencyIncidentSeverity.CRITICAL?AlertSeverity.CRITICAL:AlertSeverity.WARNING,p.description(),data,incident,request,null,endpoint==null?null:endpoint.getZone(),true,AlertAckPolicy.ANY,now.plusSeconds(300));
+        UUID mediaSessionId=mediaSessions.openSos(incident);
+        if(mediaSessionId!=null)data.put("media_session_id",mediaSessionId.toString());
         Job job=null;if(robot.getStatus()==RobotStatus.IDLE && jobRepository.findByRobotRobotIdAndStatusIn(robot.getRobotId(),List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED)).isEmpty()
                 && canDispatch(robot)){job=jobExecutionService.createForRequest(request);request.setStatus(ServiceRequestStatus.QUEUED);}else{request.setStatus(ServiceRequestStatus.SUBMITTED);data.put("dispatch_pending",true);}
         auditService.record(null,"EMERGENCY_SOS_CREATED","EmergencyIncident",incident.getIncidentId(),null,Map.of("robotId",robot.getRobotId(),"serviceRequestId",request.getServiceRequestId()),md);return new SosResponse(response(incident),request.getServiceRequestId(),alert.getAlertId(),job==null?null:job.getJobId());
