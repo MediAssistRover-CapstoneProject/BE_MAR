@@ -39,6 +39,7 @@ class DeliveryEmailServiceTest {
         ReflectionTestUtils.setField(service, "enabled", true);
         ReflectionTestUtils.setField(service, "schedulingEnabled", true);
         ReflectionTestUtils.setField(service, "from", "robot@example.test");
+        when(gateway.available()).thenReturn(true);
     }
 
     @Test void queuesEmailOnlyForValidRecipient() {
@@ -58,6 +59,16 @@ class DeliveryEmailServiceTest {
     @Test void ignoresMissingAddress() {
         service.enqueue(alert("DELIVERY_CREATED"), Account.builder().accountId(accountId).role(Role.STAFF).build());
         verifyNoInteractions(jdbc, recipients);
+    }
+
+    @Test void ignoresEmailWhenSmtpIsNotConfigured() {
+        when(gateway.available()).thenReturn(false);
+        var account = Account.builder().accountId(accountId).email("receiver@example.test").role(Role.STAFF).build();
+
+        service.enqueue(alert("DELIVERY_CREATED"), account);
+        service.sendPending();
+
+        verifyNoInteractions(jdbc, recipients, claims);
     }
 
     @Test void deliversClaimedEmailAndRecordsRecipientStatus() throws Exception {

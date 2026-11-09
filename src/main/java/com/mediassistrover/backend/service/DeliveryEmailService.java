@@ -39,7 +39,7 @@ public class DeliveryEmailService {
 
     @Transactional
     public void enqueue(Alert alert, Account account) {
-        if (!enabled || !validAddress(account.getEmail())) return;
+        if (!enabled || !gateway.available() || !validAddress(account.getEmail())) return;
         AlertRecipient recipient = recipients.findByAlertAlertIdAndAccountAccountIdAndChannel(
                 alert.getAlertId(), account.getAccountId(), AlertChannel.EMAIL).orElseGet(() -> recipients.save(
                 AlertRecipient.builder().alert(alert).account(account).channel(AlertChannel.EMAIL)
@@ -59,7 +59,7 @@ public class DeliveryEmailService {
 
     @Scheduled(fixedDelay = 2000, scheduler = "deliveryEmailScheduler")
     public void sendPending() {
-        if (!enabled || from == null || from.isBlank() || !schedulingEnabled) return;
+        if (!enabled || !gateway.available() || from == null || from.isBlank() || !schedulingEnabled) return;
         for (int batch = 0; batch < 5; batch++) {
             Map<String, Object> row = claims.claim();
             if (row == null) return;
