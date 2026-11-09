@@ -34,3 +34,7 @@ Cấu hình `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION=ap-southea
 `AWS_S3_BUCKET=mediassistrover-media-2026`. Xem `docs/S3_MEDIA.md` để cấu hình IAM, bucket policy và test Swagger.
 
 Lệnh upload Pi, cấu hình HTTPS và script API nằm trong README duy nhất của gói MAR_OpenAI_Final_2026_10_20 trong Downloads. Source BE này đã được sửa; container đang chạy chỉ đổi sau khi recreate.
+
+## Staff delivery and attendance
+
+See [STAFF_DELIVERY.md](docs/STAFF_DELIVERY.md) for check-in/out, on-duty recipients, profile/S3 avatars, delivery notifications and SMTP email deployment.

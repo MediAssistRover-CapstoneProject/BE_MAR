@@ -10,6 +10,8 @@ import java.util.*;
 import java.time.Instant;
 public interface AlertRepository extends JpaRepository<Alert,UUID> {
     @Query("select a.jobStep.jobTask.job.jobId from Alert a where a.alertId=:id") Optional<UUID> findJobId(@Param("id") UUID id);
+    @Query("select distinct a from Alert a join AlertRecipient r on r.alert=a where r.account.accountId=:accountId and a.archivedAt is null and a.notificationType in ('DELIVERY_CREATED','DELIVERY_APPROACHING','DELIVERY_ARRIVED') order by a.createdAt desc")
+    List<Alert> findDeliveryInbox(@Param("accountId") UUID accountId, Pageable pageable);
     Optional<Alert> findByOperationKey(String operationKey);
     Page<Alert> findByStatus(AlertStatus status,Pageable pageable);
     List<Alert> findByIncidentIncidentId(UUID incidentId);

@@ -69,6 +69,9 @@ public class RequestJobInputSnapshotFactory {
                 .put("target_mode", d.getTargetMode().name()).put("compartment_id", "CART_MAIN");
         result.remove(Set.of("delivery_endpoint_id", "delivery_group_id", "sender_account_id", "receiver_account_id",
                 "expected_sender_account_id", "expected_receiver_account_id"));
+        result.remove("receiver_shift_id");
+        if(d.getReceiverShift()!=null) result.put("receiver_shift_id",d.getReceiverShift().getShiftId().toString());
+        if(d.getDeliveryRoom()!=null){result.put("delivery_room_id",d.getDeliveryRoom().getRoomId().toString());result.put("delivery_room_code",d.getDeliveryRoom().getRoomCode());}
         if (d.getDeliveryEndpoint() != null) result.put("delivery_endpoint_id", d.getDeliveryEndpoint().getEndpointId().toString());
         if (d.getDeliveryGroup() != null) result.put("delivery_group_id", d.getDeliveryGroup().getEndpointGroupId().toString());
         if (d.getSenderAccount() != null) result.put("sender_account_id", d.getSenderAccount().getAccountId().toString());

@@ -16,6 +16,14 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface ShiftRepository extends JpaRepository<Shift, UUID> {
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from Shift s where s.shiftId = :id")
+    Optional<Shift> lockAttendance(@Param("id") UUID id);
+
+    @EntityGraph(attributePaths = {"staffProfile", "staffProfile.account", "room", "room.floor", "room.defaultEndpointGroup"})
+    @Query("select s from Shift s where s.status = com.mediassistrover.backend.enums.ShiftStatus.ACTIVE and s.checkedInAt is not null and s.checkedOutAt is null and s.startsAt <= :now and s.endsAt > :now and s.staffProfile.active = true and s.staffProfile.account.status = com.mediassistrover.backend.enums.AccountStatus.ACTIVE and s.staffProfile.account.mustChangePassword = false and s.staffProfile.account.role = com.mediassistrover.backend.enums.Role.STAFF and s.room.active = true order by s.shiftCode")
+    List<Shift> findOnDuty(@Param("now") Instant now);
+
     boolean existsByShiftCodeIgnoreCase(String shiftCode);
 
     @EntityGraph(attributePaths = {"staffProfile", "room", "slots"})
@@ -37,7 +45,7 @@ public interface ShiftRepository extends JpaRepository<Shift, UUID> {
     @EntityGraph(attributePaths = {"staffProfile", "staffProfile.account", "room", "slots"})
     @Query("select distinct s from Shift s where s.staffProfile.account.accountId = :accountId " +
             "and s.status = com.mediassistrover.backend.enums.ShiftStatus.ACTIVE " +
-            "and s.startsAt <= :now and s.endsAt > :now order by s.startsAt, s.shiftCode")
+            "and s.checkedInAt is not null and s.checkedOutAt is null and s.startsAt <= :now and s.endsAt > :now order by s.startsAt, s.shiftCode")
     List<Shift> findEffectiveActiveByAccountId(@Param("accountId") UUID accountId, @Param("now") Instant now);
 
     @Query("select count(s) > 0 from Shift s where s.staffProfile.account.accountId = :accountId " +

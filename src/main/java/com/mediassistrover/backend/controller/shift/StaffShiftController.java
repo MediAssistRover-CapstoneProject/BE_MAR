@@ -26,6 +26,10 @@ import java.util.UUID;
 @Tag(name = "Staff Shifts", description = "Read-only access to the authenticated Staff member's assignments")
 public class StaffShiftController {
     private final ShiftService service;
+    private final com.mediassistrover.backend.service.StaffDutyService duty;
+    @PostMapping("/{id}/check-in") public Object checkIn(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor){return duty.attendance(id,actor,true);}
+    @PostMapping("/{id}/check-out") public Object checkOut(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor){return duty.attendance(id,actor,false);}
+
 
     @GetMapping
     public PageResponse<ShiftResponse> listOwn(@AuthenticationPrincipal AccountPrincipal actor,

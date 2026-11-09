@@ -134,6 +134,7 @@ public class MqttRuntimeEvents {
         return true;
     }
 
+    private final com.mediassistrover.backend.service.DeliveryNoticeService deliveryNotices;
     private void result(Job job,JobStep step,RobotCommandOutbox command,JsonNode p,Instant reportedAt) {
         if(step.getInterruptionReason()!=null && Set.of(JobStepStatus.SUCCEEDED,JobStepStatus.FAILED,JobStepStatus.TIMED_OUT,JobStepStatus.CANCELLED).contains(step.getStatus())) {
             if(!"SUCCEEDED".equals(p.path("status").asText()) || step.getStatus()!=JobStepStatus.SUCCEEDED || !p.path("physicalStopConfirmed").asBoolean())
@@ -153,7 +154,7 @@ public class MqttRuntimeEvents {
             safety.recovery(job,"Successful physical action has no confirmed stop");
         }
         if("MOVE".equals(step.getStepTypeSnapshot()) && job.getStatus()==JobStatus.RUNNING && step.getInterruptionReason()==null
-                && p.path("physicalStopConfirmed").asBoolean() && step.getResultJson().path("reached").asBoolean()) navigationTargets.reached(step);
+                && p.path("physicalStopConfirmed").asBoolean() && step.getResultJson().path("reached").asBoolean()) { navigationTargets.reached(step); deliveryNotices.arrived(step); }
         finishInterrupted(job,step,command,p);
     }
     private void error(Job job,JobStep step,RobotCommandOutbox command,JsonNode p,String status) {

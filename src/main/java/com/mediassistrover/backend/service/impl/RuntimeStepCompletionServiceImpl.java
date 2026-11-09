@@ -14,6 +14,7 @@ import java.util.*;
 public class RuntimeStepCompletionServiceImpl implements RuntimeStepCompletionService {
     private final JobRepository jobRepository; private final com.mediassistrover.backend.service.OrchestrationWorkService wakeups;
     private final StepResultContractValidator validator; private final JobStepRepository stepRepository;
+    private final org.springframework.context.ApplicationEventPublisher deliveryEvents;
     private final JobEventRepository eventRepository; private final Clock clock;
     private final com.mediassistrover.backend.validation.StepExecutionPolicy executionPolicy;
     @Override @org.springframework.transaction.annotation.Transactional public boolean complete(JobStep supplied,JsonNode result,Account actor,JobEventProducerType producer,String eventType,UUID eventId){
@@ -36,6 +37,7 @@ public class RuntimeStepCompletionServiceImpl implements RuntimeStepCompletionSe
         JobTask task=step.getJobTask();List<JobStep> taskSteps=stepRepository.findByJobId(task.getJob().getJobId()).stream().filter(s->s.getJobTask().getJobTaskId().equals(task.getJobTaskId())).toList();
         if(!job.isBeOrchestrated() && taskSteps.stream().allMatch(s->s.getJobStepId().equals(step.getJobStepId())||s.getStatus()==JobStepStatus.SUCCEEDED)){task.setStatus(JobTaskStatus.SUCCEEDED);task.setEndedAt(now);}
         eventRepository.save(JobEvent.builder().jobEventId(eventId==null?UUID.randomUUID():eventId).job(task.getJob()).robot(task.getJob().getRobot()).jobTask(task).jobStep(step).actorAccount(actor).producerType(producer).producerSessionId(UUID.randomUUID()).sequenceNo(1).eventType(eventType).previousStatus(JobStepStatus.RUNNING.name()).newStatus(JobStepStatus.SUCCEEDED.name()).statusScope("JOB_STEP").eventDataJson(result.deepCopy()).occurredAt(now).receivedAt(now).persistedAt(now).build());
+        if(!job.isBeOrchestrated()) deliveryEvents.publishEvent(new com.mediassistrover.backend.service.DeliveryNoticeService.Arrived(step));
         wakeups.request(job);
         return true;
     }

@@ -68,6 +68,10 @@ public class Shift {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @Version @Column(name = "row_version", nullable = false) private long rowVersion;
+    @Column(name = "checked_in_at") private Instant checkedInAt;
+    @Column(name = "checked_out_at") private Instant checkedOutAt;
+
     public void addSlot(Slot slot) {
         slots.add(slot);
         slot.setShift(this);

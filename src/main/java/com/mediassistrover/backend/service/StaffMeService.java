@@ -31,6 +31,35 @@ public class StaffMeService {
     private final AccountMapper accountMapper;
     private final ShiftMapper shiftMapper;
     private final Clock clock;
+    private final MediaService media;
+    private final com.mediassistrover.backend.storage.MediaFileValidator fileValidator;
+    public record Update(@jakarta.validation.constraints.Size(max=160) String fullName,
+        @jakarta.validation.constraints.Email @jakarta.validation.constraints.Size(max=254) String email,
+        @jakarta.validation.constraints.Size(max=32) String phone,@jakarta.validation.constraints.Size(max=32) String contactExtension) {}
+    @Transactional public StaffMeResponse update(AccountPrincipal principal,Update input){
+        get(principal);Account a=requireCurrentStaff(principal);var p=staffProfileRepository.findByAccountAccountId(a.getAccountId()).orElseThrow();
+        if(input.fullName()!=null){if(input.fullName().isBlank())throw new BusinessRuleException("Name is required");a.setFullName(input.fullName().trim());}
+        if(input.email()!=null){String email=input.email().trim().toLowerCase(java.util.Locale.ROOT);if(email.isBlank())throw new BusinessRuleException("Email is required");
+            if(!email.equalsIgnoreCase(a.getEmail())&&accountRepository.existsByEmailIgnoreCase(email))throw new com.mediassistrover.backend.exception.ConflictException("Email already exists");a.setEmail(email);}
+        if(input.phone()!=null){String phone=input.phone().trim().replaceAll("[ .-]", "");if(!phone.isBlank()&&!phone.equals(a.getPhone())&&accountRepository.existsByPhone(phone))throw new com.mediassistrover.backend.exception.ConflictException("Phone already exists");a.setPhone(phone.isBlank()?null:phone);}
+        if(input.contactExtension()!=null)p.setContactExtension(input.contactExtension().trim());
+        return get(principal);
+    }
+    @Transactional public StaffMeResponse avatar(AccountPrincipal principal,org.springframework.web.multipart.MultipartFile file){
+        get(principal);Account a=requireCurrentStaff(principal);var p=staffProfileRepository.findByAccountAccountId(a.getAccountId()).orElseThrow();
+        if(file==null)p.setUrl(null);
+        else {var validated=fileValidator.imageOrVideo(file);if(!"IMAGE".equals(validated.kind()))throw new BusinessRuleException("Avatar must be an image");p.setUrl(media.upload(file).url());}
+        return get(principal);
+    }
+
+
+    public StaffProfile requireActiveProfile(AccountPrincipal principal) {
+        Account account=requireCurrentStaff(principal);
+        StaffProfile profile=staffProfileRepository.findByAccountAccountId(account.getAccountId())
+            .orElseThrow(()->new BusinessRuleException("Staff account does not have a StaffProfile"));
+        if(!profile.isActive())throw new BusinessRuleException("StaffProfile is inactive");
+        return profile;
+    }
 
     public StaffMeResponse get(AccountPrincipal principal) {
         Account account = requireCurrentStaff(principal);
