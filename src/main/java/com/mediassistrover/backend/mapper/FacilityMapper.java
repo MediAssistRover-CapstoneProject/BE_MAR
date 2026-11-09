@@ -85,6 +85,9 @@ public interface FacilityMapper {
     void update(RoomRequest request, @MappingTarget Room entity);
     @Mapping(target = "endpointId", ignore = true) @Mapping(target = "map", ignore = true) @Mapping(target = "zone", ignore = true)
     @Mapping(target = "room", ignore = true) @Mapping(target = "createdAt", ignore = true) @Mapping(target = "updatedAt", ignore = true)
+    // Lombok's setXM/setYM expose bean properties XM/YM, unlike the request's xM/yM.
+    @Mapping(target = "XM", source = "xM")
+    @Mapping(target = "YM", source = "yM")
     void update(EndpointRequest request, @MappingTarget Endpoint entity);
     @Mapping(target = "endpointGroupId", ignore = true) @Mapping(target = "map", ignore = true)
     @Mapping(target = "createdAt", ignore = true) @Mapping(target = "updatedAt", ignore = true)
