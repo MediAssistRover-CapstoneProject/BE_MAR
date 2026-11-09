@@ -87,6 +87,8 @@ public class NavigationGuidanceService {
         out.put("state","TRACKING").put("capturedAt",sample.path("capturedAt").asText())
                 .put("planRevision",plan.path("plannedAt").asText())
                 .put("segmentIndex",position.segment).put("segmentFraction",position.fraction)
+                .put("goalDistanceCmExact",Math.hypot(points.getLast().x-pose.path("xM").asDouble(),points.getLast().y-pose.path("yM").asDouble())*100)
+                .put("remainingCmExact",Math.max(0,length-position.distance)*100)
                 .put("remainingCm",Math.round(Math.max(0,length-position.distance)*100));
         out.putObject("projection").put("xM",position.x).put("yM",position.y);
         List<Integer> corners=new ArrayList<>();corners.add(0);

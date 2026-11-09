@@ -13,6 +13,7 @@ public class DeliveryRequest {
     @MapsId @OneToOne(fetch=FetchType.LAZY,optional=false) @JoinColumn(name="service_request_id") private ServiceRequest serviceRequest;
     @ManyToOne(fetch=FetchType.LAZY,optional=false) @JoinColumn(name="map_id",nullable=false) private FacilityMap map;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="pickup_room_id") private Room pickupRoom;
+    @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="receiver_shift_id") private Shift receiverShift;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="delivery_room_id") private Room deliveryRoom;
     @ManyToOne(fetch=FetchType.LAZY,optional=false) @JoinColumn(name="pickup_endpoint_id",nullable=false) private Endpoint pickupEndpoint;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="delivery_endpoint_id") private Endpoint deliveryEndpoint;

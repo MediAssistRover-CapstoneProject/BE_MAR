@@ -35,12 +35,13 @@ async function allPages(path) {
 function updateDeliveryEndpoints() {
   const map = $('deliveryMap').value;
   const available = endpoints.filter(endpoint => endpoint.mapId === map);
-  for (const id of ['pickupEndpoint', 'deliveryEndpoint']) {
+  for (const id of ['pickupEndpoint']) {
     $(id).replaceChildren(new Option('Chọn endpoint', ''), ...available.map(endpoint =>
       new Option(endpoint.endpointCode + ' · ' + endpoint.endpointName, endpoint.endpointId)));
     $(id).disabled = !available.length;
   }
   $('createDeliveryButton').disabled = !available.length;
+  loadOnDuty().catch(error => deliveryMessage(error.message));
   deliveryMessage(map && !available.length ? 'Bản đồ này chưa có endpoint khả dụng.' : '');
 }
 
@@ -70,8 +71,8 @@ async function loadDeliveryCatalog() {
 function resetDeliveryForm() {
   draft = null;
   $('createDelivery').reset();
-  $('receiverId').value = staff?.accountId ?? '';
-  $('recipientName').value = staff?.fullName || staff?.username || '';
+  $('receiverShift').replaceChildren(new Option('Chọn staff đang trực', ''));
+  $('receiverAvatar').hidden = true;
   $('deliveryFields').disabled = false;
   $('sendDelivery').hidden = $('resetDelivery').hidden = true;
   $('sendDelivery').textContent = 'Gửi robot đi lấy hàng';
@@ -81,17 +82,12 @@ function resetDeliveryForm() {
 $('deliverySetup').addEventListener('toggle', loadDeliveryCatalog);
 $('deliveryMap').addEventListener('change', updateDeliveryEndpoints);
 $('resetDelivery').addEventListener('click', resetDeliveryForm);
-$('receiverId').addEventListener('input', () => {
-  const ownName = staff?.fullName || staff?.username || '';
-  if ($('receiverId').value.trim() !== staff?.accountId && $('recipientName').value === ownName)
-    $('recipientName').value = '';
-});
-
 $('createDelivery').addEventListener('submit', async event => {
   event.preventDefault();
   if (!staff || draft?.requestId || $('deliveryFields').disabled) return;
-  const receiver = $('receiverId').value.trim();
-  const name = $('recipientName').value.trim(), item = $('deliveryItem').value.trim();
+  const selected = dutyStaff.find(row => row.shiftId === $('receiverShift').value);
+  const receiver = selected?.accountId || '';
+  const name = selected?.fullName || '', item = $('deliveryItem').value.trim();
   const quantity = Number($('deliveryQuantity').value);
   if (!uuid.test(receiver) || !name || !item || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 2147483647) {
     deliveryMessage('Nhập ID staff hợp lệ, tên người nhận, tên hàng và số lượng.');
@@ -99,7 +95,7 @@ $('createDelivery').addEventListener('submit', async event => {
   }
   const body = {
     mapId: $('deliveryMap').value, pickupEndpointId: $('pickupEndpoint').value,
-    deliveryEndpointId: $('deliveryEndpoint').value, targetMode: 'ENDPOINT',
+    receiverShiftId: selected.shiftId, targetMode: 'ENDPOINT',
     expectedSenderAccountId: staff.accountId, expectedReceiverAccountId: receiver,
     recipientName: name, requiresConfirmation: true, priority: 50,
     items: [{itemCode: 'ITEM-01', itemName: item, itemCategory: 'GENERAL', quantity, unit: 'kiện', sensitive: false}]
@@ -262,6 +258,7 @@ $('login').addEventListener('submit', async event => {
     resetDeliveryForm();
     $('loginSection').hidden = true;
     $('jobSection').hidden = false;
+    startNotices();
     if (uuid.test($('jobId').value.trim())) followJob($('jobId').value.trim());
   } catch (error) {
     token = '';
@@ -355,11 +352,15 @@ $('confirm').addEventListener('click', async () => {
   }
 });
 
-function signOut() {
+async function signOut() {
+  stopNotices();
   generation++;
   clearTimeout(timer);
   token = jobId = responseKey = respondedStep = '';
   staff = null;
+  dutyStaff = [];
+  $('profileForm').reset();$('ownShifts').replaceChildren();$('profileAvatar').hidden=true;$('profileAvatar').removeAttribute('src');$('avatarFile').value='';
+  $('staffToolsMessage').textContent='';$('emailStatus').textContent='';
   endpoints = [];
   catalogLoaded = catalogLoading = false;
   $('deliverySetup').open = false;
@@ -375,3 +376,87 @@ function signOut() {
 $('signOut').addEventListener('click', signOut);
 const sharedJob = new URLSearchParams(location.search).get('jobId');
 if (sharedJob && uuid.test(sharedJob)) $('jobId').value = sharedJob;
+
+let dutyStaff = [], noticeAbort, noticeRetry, previewUrl;
+async function loadOnDuty() {
+  const map = $('deliveryMap').value, sessionToken = token;
+  if (!map || !staff) {dutyStaff=[];$('receiverShift').replaceChildren(new Option('Chọn staff đang trực',''));$('receiverAvatar').hidden=true;return;}
+  const rows = [];
+  for (let page = 0, pages = 1; page < pages; page++) {
+    const result = await api('/api/v1/staff/on-duty?mapId=' + encodeURIComponent(map) + '&size=100&page=' + page);
+    rows.push(...result.content); pages = result.totalPages;
+  }
+  if (token !== sessionToken || $('deliveryMap').value !== map) return;
+  dutyStaff = rows.filter(row => row.accountId !== staff.accountId);
+  const previous = $('receiverShift').value;
+  $('receiverShift').replaceChildren(new Option('Chọn staff đang trực', ''), ...dutyStaff.map(row => {
+    const option = new Option(row.fullName + ' · ' + row.roomCode + ' · đến ' + new Date(row.endsAt).toLocaleTimeString() + (row.deliverable ? '' : ' · ' + row.reason), row.shiftId);
+    option.disabled = !row.deliverable; return option;
+  }));
+  if (dutyStaff.some(row => row.shiftId === previous && row.deliverable)) $('receiverShift').value = previous;
+}
+$('receiverShift').onchange=()=>{const selected=dutyStaff.find(s=>s.shiftId===$('receiverShift').value);$('receiverAvatar').hidden=!selected?.avatarUrl;if(selected?.avatarUrl)$('receiverAvatar').src=selected.avatarUrl;};
+$('reloadStaff').onclick = () => loadOnDuty().catch(e => deliveryMessage(e.message));
+async function staffRequest(path, method, body) {
+  const requestToken = token;
+  const multipart = body instanceof FormData;
+  const response = await fetch(path, {method, headers: {Authorization: 'Bearer ' + token, ...(!multipart && body ? {'Content-Type':'application/json'} : {})}, body: body ? multipart ? body : JSON.stringify(body) : undefined});
+  const data = await response.json().catch(() => null);
+  if (token !== requestToken) throw new Error('Phiên đăng nhập đã thay đổi');
+  if (!response.ok) throw new Error(data?.message || 'Yêu cầu không thành công');
+  return data?.data ?? data;
+}
+function showProfile(data) {
+  staff = data.account; $('staffName').textContent = staff.fullName || staff.username;
+  $('profileName').value = data.account.fullName || '';
+  $('profileEmail').value = data.account.email || '';
+  $('profilePhone').value = data.account.phone || '';
+  $('profileExtension').value = data.staffProfile.contactExtension || '';
+  const url = data.staffProfile.url;
+  $('profileAvatar').hidden = !url;
+  if (url) $('profileAvatar').src = url; else $('profileAvatar').removeAttribute('src');
+}
+async function loadStaffTools() {
+  const requestToken=token;
+  const data=await api('/api/v1/staff/me');
+  const shifts = await allPages('/api/v1/staff/shifts');
+  if(token!==requestToken)return;
+  showProfile(data);
+  $('ownShifts').replaceChildren(...shifts.filter(s => ['PLANNED','ACTIVE'].includes(s.status)).map(s => {
+    const row = document.createElement('p'); row.textContent = s.shiftName + ' · ' + s.roomCode + ' · ' + new Date(s.startsAt).toLocaleString() + ' — ' + new Date(s.endsAt).toLocaleString() + ' ';
+    for (const [action, label] of [['check-in','Check-in'],['check-out','Check-out']]) {
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+      button.disabled = action === 'check-in' ? !!s.checkedInAt || !!s.checkedOutAt || Date.now() < Date.parse(s.startsAt) || Date.now() >= Date.parse(s.endsAt) : !s.checkedInAt || !!s.checkedOutAt;
+      button.onclick = async () => {button.disabled = true; try {await api('/api/v1/staff/shifts/' + s.shiftId + '/' + action, {}); $('staffToolsMessage').textContent = label + ' thành công'; await loadStaffTools(); await loadOnDuty();} catch(e) {$('staffToolsMessage').textContent = e.message;} finally {button.disabled = false;}};
+      row.append(button);
+    } return row;
+  }));
+}
+$('loadStaffTools').onclick = () => loadStaffTools().catch(e => $('staffToolsMessage').textContent = e.message);
+$('profileForm').onsubmit = async e => {e.preventDefault();try {
+  showProfile(await staffRequest('/api/v1/staff/me','PATCH',{fullName:$('profileName').value,email:$('profileEmail').value,phone:$('profilePhone').value,contactExtension:$('profileExtension').value}));
+  $('staffToolsMessage').textContent = 'Đã lưu hồ sơ';
+} catch(error) {$('staffToolsMessage').textContent = error.message;}};
+$('avatarFile').onchange = () => {if(previewUrl)URL.revokeObjectURL(previewUrl);const file=$('avatarFile').files[0];if(file){previewUrl=URL.createObjectURL(file);$('profileAvatar').src=previewUrl;$('profileAvatar').hidden=false;}};
+$('uploadAvatar').onclick = async () => {try {const file=$('avatarFile').files[0];if(!file)throw new Error('Chọn ảnh trước');const body=new FormData();body.append('file',file);showProfile(await staffRequest('/api/v1/staff/me/avatar','POST',body));$('staffToolsMessage').textContent='Đã lưu ảnh trên S3';}catch(e){$('staffToolsMessage').textContent=e.message;}};
+$('deleteAvatar').onclick = async () => {try{showProfile(await staffRequest('/api/v1/staff/me/avatar','DELETE'));}catch(e){$('staffToolsMessage').textContent=e.message;}};
+function renderNotices(rows) {
+  $('deliveryNotifications').replaceChildren(...rows.map(row => {
+    const li=document.createElement('li'), button=document.createElement('button');
+    button.type='button';button.textContent=row.message+' · '+new Date(row.createdAt).toLocaleString();
+    button.onclick=()=>{const id=row.dataJson?.jobId;if(uuid.test(id || ''))followJob(id);};li.append(button);return li;
+  }));
+}
+function stopNotices(){noticeAbort?.abort();clearTimeout(noticeRetry);$('deliveryNotifications').replaceChildren();}
+async function startNotices(){
+  stopNotices(); if(!token)return; const currentToken=token;noticeAbort=new AbortController();
+  try {
+    const response=await fetch('/api/v1/staff/notifications/events',{headers:{Authorization:'Bearer '+currentToken},signal:noticeAbort.signal});
+    if(!response.ok)throw new Error('Không kết nối được thông báo');
+    const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
+    while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true}).replace(/\r/g,'');let index;
+      while((index=buffer.indexOf('\n\n'))>=0){const event=buffer.slice(0,index);buffer=buffer.slice(index+2);const data=event.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5)).join('\n');if(data&&token===currentToken)renderNotices(JSON.parse(data));}
+    }
+  }catch(e){if(e.name==='AbortError')return;$('emailStatus').textContent='Đang kết nối lại thông báo…';}
+  if(token===currentToken&&token)noticeRetry=setTimeout(startNotices,3000);
+}

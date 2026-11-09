@@ -30,22 +30,33 @@ public class DeliveryServiceImpl implements DeliveryService {
     private final JobStepRepository jobStepRepository; private final RuntimeStepCompletionService completionService;
     private final JobRepository jobRepository;
     private final StaffOperationalScopePolicy staffScope;
+    private final StaffDutyService duty;
 
     @Override @Transactional public DeliveryResponse create(Create r,String key,AccountPrincipal actor,RequestMetadata md){
         staffScope.requireCurrentStaffOrAdmin(actor);validateKey(key);ServiceRequest existing=requestRepository.findByIdempotencyKey(key).orElse(null);
         if(existing!=null){checkOwner(existing,actor);if(existing.getRequestType()!=ServiceRequestType.DELIVERY)throw new ConflictException("Idempotency-Key was used for another request type");return response(delivery(existing.getServiceRequestId()));}
+        UUID receiverShiftId=r.receiverShiftId();Shift receiverShift=null;
+        if(receiverShiftId!=null){
+            if(actor.role()==Role.STAFF&&!actor.accountId().equals(r.expectedSenderAccountId()))throw new org.springframework.security.access.AccessDeniedException("The current staff member must be the sender");
+            Shift shift=duty.require(receiverShiftId,r.expectedReceiverAccountId());receiverShift=shift;Endpoint target=duty.target(shift,r.mapId());
+            r=new Create(r.mapId(),r.pickupRoomId(),shift.getRoom().getRoomId(),r.pickupEndpointId(),target.getEndpointId(),null,
+                r.expectedSenderAccountId(),r.expectedReceiverAccountId(),TargetMode.ENDPOINT,shift.getStaffProfile().getAccount().getFullName(),r.recipientContact(),r.requiresConfirmation(),
+                r.temperatureRequirement(),r.deliveryDeadline(),r.deliveryNote(),r.items(),r.priority(),r.note(),r.data(),receiverShiftId);
+        }
+        if(r.targetMode()==null||r.recipientName()==null||r.recipientName().isBlank())throw new BusinessRuleException("Delivery target and recipient name are required");
         FacilityMap map=map(r.mapId());Endpoint pickup=endpoint(r.pickupEndpointId());Endpoint destination=endpoint(r.deliveryEndpointId());EndpointGroup group=group(r.deliveryGroupId());
         validateMap(map,pickup,"Pickup endpoint");validateTarget(map,r.targetMode(),destination,group);
         Room pickupRoom=room(r.pickupRoomId());Room deliveryRoom=room(r.deliveryRoomId());validateRoomMap(map,pickupRoom);validateRoomMap(map,deliveryRoom);
         Account expectedSender=expectedStaff(r.expectedSenderAccountId(),"Expected sender");
         Account expectedReceiver=expectedStaff(r.expectedReceiverAccountId(),"Expected receiver");
         ObjectNode data=r.data()!=null&&r.data().isObject()?((ObjectNode)r.data().deepCopy()):objectMapper.createObjectNode();
+        data.remove("receiver_shift_id");if(receiverShiftId!=null)data.put("receiver_shift_id",receiverShiftId.toString());
         data.put("map_id",map.getMapId().toString());data.put("pickup_endpoint_id",pickup.getEndpointId().toString());data.put("target_mode",r.targetMode().name());
         if(destination!=null)data.put("delivery_endpoint_id",destination.getEndpointId().toString());if(group!=null)data.put("delivery_group_id",group.getEndpointGroupId().toString());
         Instant now=Instant.now(clock);Account account=account(actor.accountId());
         ServiceRequest parent=requestRepository.saveAndFlush(ServiceRequest.builder().requestedByAccount(account).requestCode(code("REQ")).requestType(ServiceRequestType.DELIVERY).sourceType(RequestSourceType.STAFF_UI).priority(r.priority()).status(ServiceRequestStatus.DRAFT).requestNote(r.note()).requestDataJson(data).idempotencyKey(key).requestedAt(now).build());
         data.put("service_request_id",parent.getServiceRequestId().toString());parent.setRequestDataJson(data);
-        DeliveryRequest delivery=deliveryRepository.save(DeliveryRequest.builder().serviceRequest(parent).map(map).pickupRoom(pickupRoom).deliveryRoom(deliveryRoom).pickupEndpoint(pickup).deliveryEndpoint(destination).deliveryGroup(group).expectedSenderAccount(expectedSender).expectedReceiverAccount(expectedReceiver).targetMode(r.targetMode()).recipientName(r.recipientName()).recipientContact(r.recipientContact()).requiresConfirmation(true).temperatureRequirement(r.temperatureRequirement()).deliveryDeadline(r.deliveryDeadline()).deliveryNote(r.deliveryNote()).build());
+        DeliveryRequest delivery=deliveryRepository.save(DeliveryRequest.builder().serviceRequest(parent).map(map).pickupRoom(pickupRoom).deliveryRoom(deliveryRoom).receiverShift(receiverShift).pickupEndpoint(pickup).deliveryEndpoint(destination).deliveryGroup(group).expectedSenderAccount(expectedSender).expectedReceiverAccount(expectedReceiver).targetMode(r.targetMode()).recipientName(r.recipientName()).recipientContact(r.recipientContact()).requiresConfirmation(true).temperatureRequirement(r.temperatureRequirement()).deliveryDeadline(r.deliveryDeadline()).deliveryNote(r.deliveryNote()).build());
         Set<String> codes=new HashSet<>();for(Item item:r.items()){String normalized=item.itemCode().trim().toUpperCase(Locale.ROOT);if(!codes.add(normalized))throw new BusinessRuleException("Duplicate delivery itemCode: "+normalized);itemRepository.save(DeliveryItem.builder().deliveryRequest(delivery).itemCode(normalized).itemName(item.itemName().trim()).itemCategory(item.itemCategory().trim().toUpperCase(Locale.ROOT)).quantity(item.quantity()).unit(item.unit().trim()).sensitive(item.sensitive()).handlingInstruction(item.handlingInstruction()).itemNote(item.itemNote()).build());}
         auditService.record(account,"DELIVERY_REQUEST_CREATED","DeliveryRequest",parent.getServiceRequestId(),null,Map.of("itemCount",r.items().size(),"expectedSenderAccountId",expectedSender.getAccountId(),"expectedReceiverAccountId",expectedReceiver.getAccountId()),md);return response(delivery);
     }

@@ -34,6 +34,8 @@ public final class ShiftResponses {
             String note,
             List<SlotResponse> slots,
             Instant createdAt,
-            Instant updatedAt
+            Instant updatedAt,
+            Instant checkedInAt,
+            Instant checkedOutAt
     ) { }
 }

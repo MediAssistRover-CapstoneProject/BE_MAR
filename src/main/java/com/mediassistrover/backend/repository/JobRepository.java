@@ -14,6 +14,8 @@ public interface JobRepository extends JpaRepository<Job,UUID> {
     interface StatusCount { JobStatus getStatus(); long getTotal(); }
     boolean existsByWorkflowWorkflowId(UUID workflowId);
     Page<Job> findByStatus(JobStatus status,Pageable pageable);
+    @Query("select j.jobId from Job j where j.status=com.mediassistrover.backend.enums.JobStatus.RUNNING and j.serviceRequest.requestType=com.mediassistrover.backend.enums.ServiceRequestType.DELIVERY order by j.jobId")
+    List<UUID> findRunningDeliveryIds();
     Page<Job> findByBeOrchestratedTrueAndStatus(JobStatus status,Pageable pageable);
     interface DeadlineCandidate {
         UUID getJobId(); Instant getStartedAt(); Integer getMaxDurationSec(); Instant getCancelRequestedAt();

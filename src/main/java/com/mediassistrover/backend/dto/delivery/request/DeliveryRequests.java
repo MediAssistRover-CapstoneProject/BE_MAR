@@ -17,11 +17,17 @@ public final class DeliveryRequests {
     public record Create(@NotNull UUID mapId,UUID pickupRoomId,UUID deliveryRoomId,
                          @NotNull UUID pickupEndpointId,UUID deliveryEndpointId,UUID deliveryGroupId,
                          @NotNull UUID expectedSenderAccountId,@NotNull UUID expectedReceiverAccountId,
-                         @NotNull TargetMode targetMode,@NotBlank @Size(max=160) String recipientName,
+                         TargetMode targetMode,@Size(max=160) String recipientName,
                          @Size(max=100) String recipientContact,@AssertTrue boolean requiresConfirmation,
                          @Size(max=4000) String temperatureRequirement,@Future Instant deliveryDeadline,
                          @Size(max=4000) String deliveryNote,@NotEmpty List<@Valid Item> items,
-                         @Min(0) @Max(100) int priority,@Size(max=4000) String note,JsonNode data) { }
+                         @Min(0) @Max(100) int priority,@Size(max=4000) String note,JsonNode data,UUID receiverShiftId) {
+        public Create(UUID mapId,UUID pickupRoomId,UUID deliveryRoomId,UUID pickupEndpointId,UUID deliveryEndpointId,UUID deliveryGroupId,
+            UUID expectedSenderAccountId,UUID expectedReceiverAccountId,TargetMode targetMode,String recipientName,String recipientContact,boolean requiresConfirmation,
+            String temperatureRequirement,Instant deliveryDeadline,String deliveryNote,List<Item> items,int priority,String note,JsonNode data){
+            this(mapId,pickupRoomId,deliveryRoomId,pickupEndpointId,deliveryEndpointId,deliveryGroupId,expectedSenderAccountId,expectedReceiverAccountId,targetMode,recipientName,recipientContact,requiresConfirmation,temperatureRequirement,deliveryDeadline,deliveryNote,items,priority,note,data,null);
+        }
+    }
     public record ConfirmedItem(@NotBlank @Size(max=80) String itemCode,@Min(1) int quantity) { }
     public record Confirm(@NotNull UUID verificationId,@NotNull UUID jobStepId,
                           @NotEmpty List<@Valid ConfirmedItem> items,

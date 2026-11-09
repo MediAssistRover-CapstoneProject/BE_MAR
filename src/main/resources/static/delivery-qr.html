@@ -29,18 +29,36 @@
   </section>
   <section id="jobSection" hidden>
     <p>Staff <span id="staffName"></span> · ID <code id="staffId"></code></p>
+    <details><summary>Ca trực và hồ sơ cá nhân</summary>
+      <button id="loadStaffTools" type="button">Tải hồ sơ và ca trực</button>
+      <div id="ownShifts"></div>
+      <form id="profileForm">
+        <label>Họ tên<input id="profileName" maxlength="160" required></label>
+        <label>Email<input id="profileEmail" type="email" required></label>
+        <label>Điện thoại<input id="profilePhone" maxlength="32"></label>
+        <label>Số nội bộ<input id="profileExtension" maxlength="32"></label>
+        <button>Lưu hồ sơ</button>
+      </form>
+      <img id="profileAvatar" alt="Ảnh staff" width="100" hidden>
+      <label>Ảnh đại diện<input id="avatarFile" type="file" accept="image/jpeg,image/png,image/webp"></label>
+      <button id="uploadAvatar" type="button">Upload ảnh S3</button>
+      <button id="deleteAvatar" type="button">Xóa ảnh đại diện</button>
+      <p id="staffToolsMessage" role="status"></p>
+    </details>
+    <details open><summary>Thông báo giao hàng</summary>
+      <p>Email được gửi tới địa chỉ trong hồ sơ staff. Thông báo cũng hiển thị tại đây.</p>
+      <p id="emailStatus" role="status"></p><ul id="deliveryNotifications"></ul>
+    </details>
     <details id="deliverySetup">
       <summary>Tạo yêu cầu giao hàng</summary>
       <form id="createDelivery">
         <fieldset id="deliveryFields">
           <label>Bản đồ đang hoạt động<select id="deliveryMap" required></select></label>
           <label>Điểm lấy hàng<select id="pickupEndpoint" required></select></label>
-          <label>Điểm giao hàng<select id="deliveryEndpoint" required></select></label>
-          <label>ID tài khoản staff nhận hàng
-            <input id="receiverId" maxlength="36" autocomplete="off" spellcheck="false" required aria-describedby="receiverHelp">
-          </label>
-          <p id="receiverHelp">Người giao là tài khoản đang đăng nhập. Dùng ID của bạn để thử cả hai chặng.</p>
-          <label>Tên người nhận<input id="recipientName" maxlength="160" required></label>
+          <label>Staff nhận đang trực<select id="receiverShift" required></select></label>
+          <img id="receiverAvatar" alt="Ảnh staff nhận" width="64" hidden>
+          <p id="receiverHelp">Chọn staff nhận. Server tự xác định phòng theo ca đã check-in.</p>
+          <button type="button" id="reloadStaff">Tải lại staff đang trực</button>
           <label>Tên hàng<input id="deliveryItem" maxlength="160" required></label>
           <label>Số lượng<input id="deliveryQuantity" type="number" min="1" step="1" value="1" required></label>
           <button id="createDeliveryButton" disabled>Tạo yêu cầu</button>

@@ -14,6 +14,7 @@ public interface AlertService {
     Alert createSystemAlert(String operationKey,String type,AlertSeverity severity,String message,JsonNode data,
                             EmergencyIncident incident,ServiceRequest request,JobStep step,Zone zone,
                             boolean requireAck,AlertAckPolicy policy,Instant expiresAt,JsonNode recipients);
+    java.util.List<AlertResponse> deliveryInbox(AccountPrincipal actor);
     AlertResponse get(UUID id,boolean includeDeleted,AccountPrincipal actor);
     Page<AlertResponse> list(AlertStatus status,AlertSeverity severity,String type,Instant from,Instant to,
                              boolean includeDeleted,AccountPrincipal actor,Pageable pageable);
