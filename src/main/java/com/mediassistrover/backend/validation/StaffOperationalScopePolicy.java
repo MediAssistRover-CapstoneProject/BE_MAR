@@ -121,6 +121,8 @@ public class StaffOperationalScopePolicy {
     }
 
     private boolean isAlertInScope(Alert alert, UUID accountId, Instant now) {
+        if (alert != null && alert.getIncident() != null && alert.getIncident().isRoutedSos())
+            return alert.getIncident().isSosResponder(accountId);
         boolean recipient = alert != null
                 && alertRecipientRepository.existsByAlertAlertIdAndAccountAccountId(alert.getAlertId(), accountId);
         boolean requestScope = alert != null && alert.getServiceRequest() != null
@@ -158,6 +160,7 @@ public class StaffOperationalScopePolicy {
 
     private boolean isIncidentInScope(EmergencyIncident incident, UUID accountId, Instant now) {
         if (incident == null) return false;
+        if (incident.isRoutedSos()) return incident.isSosResponder(accountId);
         if (incident.getAcknowledgedByAccount() != null
                 && Objects.equals(incident.getAcknowledgedByAccount().getAccountId(), accountId)) return true;
         if (incident.getResolvedByAccount() != null

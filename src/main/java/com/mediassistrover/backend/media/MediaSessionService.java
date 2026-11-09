@@ -55,6 +55,7 @@ public class MediaSessionService {
         if(incidentId!=null) {
             incident=incidents.findById(incidentId).orElseThrow(()->new ResourceNotFoundException("Incident not found"));
             staffScope.requireIncidentAccess(incident,actor);incidentOpen(incident);
+            requireSosResponder(incident, actor);
             if(incident.getRobot()==null||!robotId.equals(incident.getRobot().getRobotId()))
                 throw new BusinessRuleException("MEDIA_INCIDENT_ROBOT_MISMATCH");
         } else if(actor.role()!=Role.ADMIN) throw new AccessDeniedException("Staff media sessions require an accessible incident");
@@ -72,11 +73,17 @@ public class MediaSessionService {
     /** Shares the existing SOS transaction; never contacts the media server here. */
     public UUID openSos(EmergencyIncident incident) {
         if(!properties.isEnabled()||incident.getRobot()==null)return null;
+        if(incident.isRoutedSos()&&incident.getSosResponder()==null)return null;
         var robot=incident.getRobot();
         if(!events.isListening(robot.getRobotId()))return null;
         var current=sessions.findByActiveRobotId(robot.getRobotId());
         if(current.isPresent()) {
-            if(current.get().getMode()==MediaSession.Mode.ASSIST)return current.get().getSessionId();
+            if(current.get().getMode()==MediaSession.Mode.ASSIST) {
+                var existing=current.get();
+                return existing.getIncident()!=null
+                        && Objects.equals(existing.getIncident().getIncidentId(),incident.getIncidentId())
+                        ? existing.getSessionId() : null;
+            }
             finish(current.get(),ENDED,"SOS_PREEMPTED_MONITOR");sessions.flush();
         }
         var s=newSession(robot,incident,MediaSession.Mode.ASSIST);
@@ -85,6 +92,7 @@ public class MediaSessionService {
     public View accept(UUID id,AccountPrincipal actor) {
         livekit.ready();var staff=staffScope.requireCurrentStaffOrAdmin(actor);
         var s=locked(id);requireRead(s,actor);requireOpen(s);
+        requireSosResponder(s.getIncident(),actor);
         if(s.getStaff()!=null&&!s.getStaff().getAccountId().equals(staff.getAccountId()))
             throw new ConflictException("MEDIA_ALREADY_ACCEPTED_BY_ANOTHER_STAFF");
         if(s.getState()==RINGING) {
@@ -95,6 +103,7 @@ public class MediaSessionService {
     }
     public Credentials staffToken(UUID id,AccountPrincipal actor) {
         var s=locked(id);requireRead(s,actor);requireOpen(s);
+        requireSosResponder(s.getIncident(),actor);
         if(s.getStaff()==null||!s.getStaff().getAccountId().equals(actor.accountId()))
             throw new AccessDeniedException("Accept this session before joining");
         return credentials(s,"staff-"+actor.accountId(),false);
@@ -195,8 +204,16 @@ public class MediaSessionService {
     }
     private boolean canRead(MediaSession s,AccountPrincipal actor) {
         if(actor.role()==Role.ADMIN)return true;
+        if(s.getIncident()!=null&&s.getIncident().isRoutedSos())
+            return s.getIncident().isSosResponder(actor.accountId());
         return s.getStaff()!=null&&s.getStaff().getAccountId().equals(actor.accountId())
                 || s.getIncident()!=null&&staffScope.canAccessIncident(s.getIncident(),actor);
+    }
+    private void requireSosResponder(EmergencyIncident incident, AccountPrincipal actor) {
+        if (incident == null || !incident.isRoutedSos()) return;
+        boolean allowed = incident.getSosResponder() == null ? actor.role() == Role.ADMIN
+                : incident.isSosResponder(actor.accountId());
+        if (!allowed) throw new AccessDeniedException("Only the designated SOS responder can take this call");
     }
     private void requireRead(MediaSession s,AccountPrincipal actor) {
         staffScope.requireCurrentStaffOrAdmin(actor);

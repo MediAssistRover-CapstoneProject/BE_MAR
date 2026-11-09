@@ -31,7 +31,19 @@ public class AlertServiceImpl implements AlertService {
     }
     @Override @Transactional public Alert createSystemAlert(String key,String type,AlertSeverity severity,String message,JsonNode data,EmergencyIncident incident,ServiceRequest request,JobStep step,Zone zone,boolean requireAck,AlertAckPolicy policy,Instant expiresAt,JsonNode requested){
         Alert found=alertRepository.findByOperationKey(key).orElse(null);if(found!=null)return found;Instant now=Instant.now(clock);
-        List<Account> eligible=accountRepository.findByStatusAndRoleInOrderByAccountCodeAsc(AccountStatus.ACTIVE,List.of(Role.ADMIN,Role.STAFF));List<Account> recipients=resolveRecipients(eligible,requested);if(recipients.isEmpty())throw new BusinessRuleException("NOTIFY has no active eligible recipient");
+        List<Account> recipients;
+        if (incident != null && incident.isRoutedSos()) {
+            // Every NOTIFY for the same SOS inherits its designated responder.
+            var responder = incident.getSosResponder();
+            recipients = responder != null && responder.getRole() == Role.STAFF
+                    && responder.getStatus() == AccountStatus.ACTIVE && !responder.isMustChangePassword()
+                    ? List.of(responder) : List.of();
+        } else {
+            List<Account> eligible = accountRepository.findByStatusAndRoleInOrderByAccountCodeAsc(
+                    AccountStatus.ACTIVE, List.of(Role.ADMIN, Role.STAFF));
+            recipients = resolveRecipients(eligible, requested);
+            if (recipients.isEmpty()) throw new BusinessRuleException("NOTIFY has no active eligible recipient");
+        }
         Alert alert=alertRepository.saveAndFlush(Alert.builder().incident(incident).jobStep(step).serviceRequest(request).zone(zone).notificationType(type).severity(severity).status(AlertStatus.OPEN).message(message).dataJson(data==null?objectMapper.createObjectNode():data.deepCopy()).requestedRecipientsJson(objectMapper.valueToTree(recipients.stream().map(Account::getAccountId).toList())).requireAck(requireAck).ackPolicy(policy).operationKey(key).createdAt(now).expiresAt(expiresAt).build());
         for(Account account:recipients)recipientRepository.save(AlertRecipient.builder().alert(alert).account(account).channel(AlertChannel.WEB).recipientAddressSnapshot(account.getUsername()).resolvedRoleSnapshot(account.getRole().name()).deliveryStatus(AlertDeliveryStatus.PENDING).createdAt(now).build());
         return alert;
@@ -47,7 +59,54 @@ public class AlertServiceImpl implements AlertService {
         List<AlertResponse> content=scoped.subList(start,end).stream().map(a->{Alert current=lockForMutation(a.getAlertId());markDelivered(current,actor);return response(current,actor);}).toList();
         return new PageImpl<>(content,pageable,scoped.size());
     }
-    @Override @Transactional(isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED) public AlertResponse acknowledge(UUID id,AccountPrincipal actor,RequestMetadata md){Account account=requireCurrentActor(actor);Alert alert=lockForMutation(id);Instant now=Instant.now(clock);if(!alert.isRequireAck())throw new BusinessRuleException("Alert does not require acknowledgement");if(alert.getExpiresAt()!=null&&!alert.getExpiresAt().isAfter(now))throw new BusinessRuleException("Alert acknowledgement window has expired");if(alert.getStatus()==AlertStatus.RESOLVED||alert.getStatus()==AlertStatus.CLOSED)throw new BusinessRuleException("Resolved or closed Alert cannot be acknowledged");Optional<AlertRecipient> assigned=recipientRepository.lockRecipient(id,actor.accountId());if(assigned.isEmpty()){if(actor.role()!=Role.STAFF)throw new org.springframework.security.access.AccessDeniedException("Alert is not assigned to this account or an authorized Staff delegate");scopePolicy.requireAlertAccess(alert,actor);}AlertRecipient recipient=assigned.orElseGet(()->recipientRepository.saveAndFlush(AlertRecipient.builder().alert(alert).account(account).channel(AlertChannel.WEB).recipientAddressSnapshot(account.getUsername()).resolvedRoleSnapshot(account.getRole().name()).deliveryStatus(AlertDeliveryStatus.DELIVERED).sentAt(now).deliveredAt(now).createdAt(now).build()));deliver(recipient,now);boolean newAck=recipient.getAcknowledgedAt()==null;if(newAck)recipient.setAcknowledgedAt(now);long acked=recipientRepository.countByAlertAlertIdAndAcknowledgedAtIsNotNull(id);long total=recipientRepository.countByAlertAlertId(id);boolean becameAcknowledged=alert.getStatus()!=AlertStatus.ACKNOWLEDGED&&(alert.getAckPolicy()==AlertAckPolicy.ANY||acked>=total);if(becameAcknowledged){alert.setStatus(AlertStatus.ACKNOWLEDGED);if(alert.getJobStep()!=null && alert.getJobStep().getJobTask().getJob().getSchemaVersion()==3)workflowEvents.publishAlertAcknowledged(alert,account,now,acked,total);else completeNotify(alert,true);}if(newAck)audit(actor,"ALERT_ACKNOWLEDGED",alert,md);return response(alert,actor);}
+    @Override
+    @Transactional(isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public AlertResponse acknowledge(UUID id,AccountPrincipal actor,RequestMetadata md){
+        Account account=requireCurrentActor(actor);
+        Alert alert=lockForMutation(id);
+        Instant now=Instant.now(clock);
+        var incident=alert.getIncident();
+        boolean unassignedSos=actor.role()==Role.ADMIN && incident!=null && incident.isRoutedSos()
+                && incident.getSosResponder()==null;
+        if(!alert.isRequireAck())throw new BusinessRuleException("Alert does not require acknowledgement");
+        if(!unassignedSos && alert.getExpiresAt()!=null && !alert.getExpiresAt().isAfter(now))
+            throw new BusinessRuleException("Alert acknowledgement window has expired");
+        if(alert.getStatus()==AlertStatus.RESOLVED||alert.getStatus()==AlertStatus.CLOSED)
+            throw new BusinessRuleException("Resolved or closed Alert cannot be acknowledged");
+        if(unassignedSos){
+            // Record manual triage without inventing a delivery to a staff member.
+            if(alert.getStatus()!=AlertStatus.ACKNOWLEDGED){
+                alert.setStatus(AlertStatus.ACKNOWLEDGED);
+                audit(actor,"UNASSIGNED_SOS_ACKNOWLEDGED",alert,md);
+            }
+            return response(alert,actor);
+        }
+        Optional<AlertRecipient> assigned=recipientRepository.lockRecipient(id,actor.accountId());
+        if(assigned.isEmpty()){
+            if(actor.role()!=Role.STAFF)throw new org.springframework.security.access.AccessDeniedException(
+                    "Alert is not assigned to this account or an authorized Staff delegate");
+            scopePolicy.requireAlertAccess(alert,actor);
+        }
+        AlertRecipient recipient=assigned.orElseGet(()->recipientRepository.saveAndFlush(AlertRecipient.builder()
+                .alert(alert).account(account).channel(AlertChannel.WEB).recipientAddressSnapshot(account.getUsername())
+                .resolvedRoleSnapshot(account.getRole().name()).deliveryStatus(AlertDeliveryStatus.DELIVERED)
+                .sentAt(now).deliveredAt(now).createdAt(now).build()));
+        deliver(recipient,now);
+        boolean newAck=recipient.getAcknowledgedAt()==null;
+        if(newAck)recipient.setAcknowledgedAt(now);
+        long acked=recipientRepository.countByAlertAlertIdAndAcknowledgedAtIsNotNull(id);
+        long total=recipientRepository.countByAlertAlertId(id);
+        boolean becameAcknowledged=alert.getStatus()!=AlertStatus.ACKNOWLEDGED
+                &&(alert.getAckPolicy()==AlertAckPolicy.ANY||acked>=total);
+        if(becameAcknowledged){
+            alert.setStatus(AlertStatus.ACKNOWLEDGED);
+            if(alert.getJobStep()!=null && alert.getJobStep().getJobTask().getJob().getSchemaVersion()==3)
+                workflowEvents.publishAlertAcknowledged(alert,account,now,acked,total);
+            else completeNotify(alert,true);
+        }
+        if(newAck)audit(actor,"ALERT_ACKNOWLEDGED",alert,md);
+        return response(alert,actor);
+    }
     @Override @Transactional public AlertResponse resolve(UUID id,AccountPrincipal actor,RequestMetadata md){requireCurrentActor(actor);Alert alert=lockForMutation(id);scopePolicy.requireAlertAccess(alert,actor);if(alert.getStatus()!=AlertStatus.ACKNOWLEDGED)throw new BusinessRuleException("Only ACKNOWLEDGED Alert can be resolved");if(alert.getIncident()!=null&&!Set.of(EmergencyIncidentStatus.RESOLVED,EmergencyIncidentStatus.CLOSED,EmergencyIncidentStatus.FALSE_ALARM).contains(alert.getIncident().getStatus()))throw new BusinessRuleException("Resolve the linked incident before resolving its Alert");alert.setStatus(AlertStatus.RESOLVED);audit(actor,"ALERT_RESOLVED",alert,md);return response(alert,actor);}
     @Override @Transactional public AlertResponse close(UUID id,AccountPrincipal actor,RequestMetadata md){requireCurrentActor(actor);Alert alert=lockForMutation(id);scopePolicy.requireAlertAccess(alert,actor);if(alert.getStatus()!=AlertStatus.RESOLVED)throw new BusinessRuleException("Only RESOLVED Alert can be closed");if(alert.getIncident()!=null&&!Set.of(EmergencyIncidentStatus.CLOSED,EmergencyIncidentStatus.FALSE_ALARM).contains(alert.getIncident().getStatus()))throw new BusinessRuleException("Close the linked incident before closing its Alert");alert.setStatus(AlertStatus.CLOSED);audit(actor,"ALERT_CLOSED",alert,md);return response(alert,actor);}
     @Override @Transactional public AlertResponse archive(UUID id,String reason,AccountPrincipal actor,RequestMetadata md){requireCurrentActor(actor);Alert alert=lockForMutation(id);scopePolicy.requireAlertAccess(alert,actor);if(alert.getStatus()!=AlertStatus.CLOSED)throw new BusinessRuleException("Only CLOSED Alert can be archived");alert.setArchivedAt(Instant.now(clock));auditService.record(accountRepository.findById(actor.accountId()).orElseThrow(),"ALERT_ARCHIVED","Alert",id,null,Map.of("reason",reason),md);return response(alert,actor);}

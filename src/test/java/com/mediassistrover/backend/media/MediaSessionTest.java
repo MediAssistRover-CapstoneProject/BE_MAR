@@ -7,6 +7,16 @@ import com.mediassistrover.backend.exception.*;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.*;
 import com.mediassistrover.backend.service.OrchestrationWorkService;
+import com.mediassistrover.backend.service.RuntimeSettingService;
+import com.mediassistrover.backend.service.SosResponderRouting;
+import com.mediassistrover.backend.service.AuditService;
+import com.mediassistrover.backend.service.RuntimeStepCompletionService;
+import com.mediassistrover.backend.service.WorkflowEventService;
+import com.mediassistrover.backend.service.impl.AlertServiceImpl;
+import jakarta.persistence.EntityManager;
+import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.data.domain.PageRequest;
 import com.mediassistrover.backend.validation.*;
 import io.jsonwebtoken.Jwts;
 import org.junit.jupiter.api.Test;
@@ -74,6 +84,95 @@ class MediaSessionTest {
         assertThrows(ConflictException.class,()->service.accept(s.getSessionId(),actor));
         assertNotEquals(second.getAccountId(),s.getStaff().getAccountId());
     }
+    @Test void routedSosRingsAndIssuesCredentialsOnlyForDesignatedResponder() {
+        var session = session();
+        var responder = session.getStaff();
+        var target = actor(responder);
+        var other = actor(Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).build());
+        var admin = actor(Account.builder().accountId(UUID.randomUUID()).role(Role.ADMIN).build());
+        var incident = EmergencyIncident.builder().robot(session.getRobot()).status(EmergencyIncidentStatus.OPEN)
+                .sosRoutingStatus(EmergencyIncident.SosRoutingStatus.ASSIGNED).sosResponder(responder).build();
+        session.setIncident(incident);
+        session.setStaff(null);
+        session.setState(MediaSession.State.RINGING);
+        when(sessions.findTop100ByActiveRobotIdIsNotNullOrderByCreatedAtDesc()).thenReturn(List.of(session));
+        when(events.isListening(session.getRobot().getRobotId())).thenReturn(true);
+        when(staff.canAccessIncident(incident, other)).thenReturn(true);
+
+        assertTrue(service.list(other).isEmpty());
+        assertEquals(session.getSessionId(), service.list(target).getFirst().sessionId());
+        assertThrows(AccessDeniedException.class, () -> service.accept(session.getSessionId(), other));
+        assertThrows(AccessDeniedException.class, () -> service.accept(session.getSessionId(), admin));
+        assertThrows(AccessDeniedException.class, () -> service.staffToken(session.getSessionId(), target));
+        assertEquals(MediaSession.State.CONNECTING, service.accept(session.getSessionId(), target).state());
+        assertThrows(AccessDeniedException.class, () -> service.staffToken(session.getSessionId(), other));
+        assertEquals("staff-" + responder.getAccountId(), service.staffToken(session.getSessionId(), target).identity());
+    }
+
+    @Test void noSingleOnDutyStaffKeepsSosUnassigned() {
+        var settings = mock(RuntimeSettingService.class);
+        var shifts = mock(ShiftRepository.class);
+        var rooms = mock(RoomRepository.class);
+        var room = Room.builder().roomId(UUID.randomUUID()).active(true).floor(Floor.builder().active(true).build()).build();
+        var incident = EmergencyIncident.builder().robot(Robot.builder().robotId(UUID.randomUUID()).build()).build();
+        var routing = new SosResponderRouting(settings, rooms, shifts);
+        when(settings.getString(SosResponderRouting.MONITORING_ROOM_SETTING, "")).thenReturn(room.getRoomId().toString());
+        when(rooms.findById(room.getRoomId())).thenReturn(Optional.of(room));
+        var responder = Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).build();
+        when(shifts.findOnDutySosResponders(room.getRoomId(), instant, PageRequest.of(0, 2)))
+                .thenReturn(List.of(), List.of(responder, Account.builder().accountId(UUID.randomUUID()).build()), List.of(responder));
+
+        routing.assign(incident, instant);
+        assertEquals(EmergencyIncident.SosRoutingStatus.NO_ACTIVE_SHIFT, incident.getSosRoutingStatus());
+        assertNull(incident.getSosResponder());
+        routing.assign(incident, instant);
+        assertEquals(EmergencyIncident.SosRoutingStatus.AMBIGUOUS_SHIFT, incident.getSosRoutingStatus());
+        assertNull(incident.getSosResponder());
+        properties.setEnabled(true);
+        when(events.isListening(incident.getRobot().getRobotId())).thenReturn(true);
+        assertNull(service.openSos(incident));
+
+        routing.assign(incident, instant);
+        assertEquals(EmergencyIncident.SosRoutingStatus.ASSIGNED, incident.getSosRoutingStatus());
+        assertEquals(responder, incident.getSosResponder());
+    }
+
+    @Test void sosNotifyOverridesBroadWorkflowRecipientsAndSupportsManualTriageWithoutBroadcast() {
+        var alerts = mock(AlertRepository.class);
+        var recipients = mock(AlertRecipientRepository.class);
+        var accounts = mock(AccountRepository.class);
+        var json = new ObjectMapper();
+        var service = new AlertServiceImpl(alerts, recipients, accounts, mock(AuditService.class), json, clock,
+                mock(RuntimeStepCompletionService.class), jobs, mock(WorkflowEventService.class), staff);
+        ReflectionTestUtils.setField(service, "em", mock(EntityManager.class));
+        when(alerts.saveAndFlush(any())).thenAnswer(call -> {
+            var alert = call.<Alert>getArgument(0);
+            alert.setAlertId(UUID.randomUUID());
+            return alert;
+        });
+
+        var responder = Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).status(AccountStatus.ACTIVE).build();
+        var assigned = EmergencyIncident.builder().sosResponder(responder)
+                .sosRoutingStatus(EmergencyIncident.SosRoutingStatus.ASSIGNED).build();
+        service.createSystemAlert("assigned", "SOS", AlertSeverity.CRITICAL, "Help", null, assigned,
+                null, null, null, true, AlertAckPolicy.ANY, instant.plusSeconds(60),
+                json.createArrayNode().add("STAFF").add("ADMIN"));
+        var delivered = ArgumentCaptor.forClass(AlertRecipient.class);
+        verify(recipients).save(delivered.capture());
+        assertEquals(responder, delivered.getValue().getAccount());
+        verifyNoInteractions(accounts);
+
+        var unassigned = EmergencyIncident.builder().sosRoutingStatus(EmergencyIncident.SosRoutingStatus.NO_ACTIVE_SHIFT).build();
+        var alert = service.createSystemAlert("unassigned", "SOS", AlertSeverity.CRITICAL, "Help", null, unassigned,
+                null, null, null, true, AlertAckPolicy.ANY, instant.minusSeconds(1));
+        when(alerts.lockById(alert.getAlertId())).thenReturn(Optional.of(alert));
+        var supervisor = Account.builder().accountId(UUID.randomUUID()).role(Role.ADMIN).status(AccountStatus.ACTIVE).build();
+        when(accounts.findById(supervisor.getAccountId())).thenReturn(Optional.of(supervisor));
+        assertEquals(AlertStatus.ACKNOWLEDGED, service.acknowledge(alert.getAlertId(), actor(supervisor), null).status());
+        verify(recipients, times(1)).save(any());
+        verify(recipients, never()).saveAndFlush(any());
+    }
+
     @Test void endingCallDoesNotResolveEmergencyIncident() {
         var s=session();var incident=new EmergencyIncident();incident.setStatus(EmergencyIncidentStatus.OPEN);s.setIncident(incident);
         var actor=actor(s.getStaff());service.end(s.getSessionId(),"STAFF_ENDED",actor);

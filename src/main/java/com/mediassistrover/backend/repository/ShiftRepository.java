@@ -1,5 +1,6 @@
 package com.mediassistrover.backend.repository;
 
+import com.mediassistrover.backend.entity.Account;
 import com.mediassistrover.backend.entity.Shift;
 import com.mediassistrover.backend.enums.ShiftStatus;
 import org.springframework.data.domain.Page;
@@ -48,6 +49,18 @@ public interface ShiftRepository extends JpaRepository<Shift, UUID> {
     boolean existsEffectiveActiveInRoom(@Param("accountId") UUID accountId,
                                         @Param("roomId") UUID roomId,
                                         @Param("now") Instant now);
+
+    @Query("""
+            select distinct a from Shift s join s.staffProfile p join p.account a
+            where s.room.roomId = :roomId and p.active = true
+              and a.status = com.mediassistrover.backend.enums.AccountStatus.ACTIVE
+              and a.role = com.mediassistrover.backend.enums.Role.STAFF
+              and a.mustChangePassword = false
+              and s.status = com.mediassistrover.backend.enums.ShiftStatus.ACTIVE
+              and s.startsAt <= :now and s.endsAt > :now
+            order by a.accountCode
+            """)
+    List<Account> findOnDutySosResponders(@Param("roomId") UUID roomId, @Param("now") Instant now, Pageable pageable);
 
     @Query("select count(s) > 0 from Shift s where s.staffProfile.staffProfileId = :staffId " +
             "and s.status <> com.mediassistrover.backend.enums.ShiftStatus.CANCELLED " +

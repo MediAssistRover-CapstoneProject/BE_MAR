@@ -6,12 +6,31 @@ body{font:16px system-ui,sans-serif;max-width:1000px;margin:24px auto;padding:0 
 </style>
 <h1>Camera và hỗ trợ SOS</h1>
 <section>
-<label>Access token Staff/Admin<input id="token" type="password" autocomplete="off" placeholder="Token chỉ giữ trong trang này"></label>
-<label>Robot ID<input id="robot" value="0e3f1083-2546-4f45-8004-5eda5cb75a6f"></label>
-<label>Incident ID — khi hỗ trợ SOS<input id="incident" placeholder="Admin có thể để trống khi thử"></label>
-<label>Chế độ<select id="mode"><option value="MONITOR">Xem camera — không bật micro/loa robot</option><option value="ASSIST">Hỗ trợ SOS — camera và thoại hai chiều</option></select></label>
+<form id="staffLogin">
+  <label>Tài khoản Staff/Admin<input id="username" autocomplete="username" maxlength="100" required></label>
+  <label>Mật khẩu<input id="password" type="password" autocomplete="current-password" maxlength="128" required></label>
+  <button id="loginButton">Đăng nhập</button>
+</form>
+<details id="tokenTools">
+  <summary>Dùng access token để test</summary>
+  <label>Access token<input id="token" type="password" autocomplete="off"></label>
+  <button id="tokenSignIn">Dùng token</button>
+</details>
+<p id="authStatus" role="status"></p>
+<button id="signOut" hidden>Thoát trang SOS</button>
+</section>
+<section id="callPanel" hidden>
+<h2>Phiên đang chờ</h2>
+<small>Danh sách cập nhật khi trang đang mở. Bấm Nhận / Kết nối để trả lời.</small>
+<button id="refresh">Tải lại danh sách</button>
 <label><input id="relay" type="checkbox" style="width:auto"> Dùng TURN relay — khi mạng chặn WebRTC/UDP</label>
-<button id="create">Mở phiên và kết nối</button><button id="refresh">Tải các phiên/SOS đang chờ</button>
+<details id="manualCall">
+  <summary>Mở phiên thủ công</summary>
+  <label>Robot ID<input id="robot" value="0e3f1083-2546-4f45-8004-5eda5cb75a6f"></label>
+  <label>Incident ID — khi hỗ trợ SOS<input id="incident" placeholder="Admin có thể để trống khi thử"></label>
+  <label>Chế độ<select id="mode"><option value="MONITOR">Xem camera — không bật micro/loa robot</option><option value="ASSIST">Hỗ trợ SOS — camera và thoại hai chiều</option></select></label>
+  <button id="create">Mở phiên và kết nối</button>
+</details>
 <small>Staff chỉ mở phiên cho sự cố thuộc phạm vi được phép. SOS ưu tiên micro/loa và dừng chuyển động của robot; phiên gọi hoạt động độc lập với AMCL.</small>
 <ol id="sessions"></ol>
 </section>

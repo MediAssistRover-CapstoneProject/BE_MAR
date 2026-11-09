@@ -163,6 +163,7 @@ server {
         proxy_connect_timeout 3s;
         proxy_read_timeout 3600s;
     }
+    include /etc/nginx/mar-voice-ai/*.conf;
     location / { return 404; }
 }
 EOF
