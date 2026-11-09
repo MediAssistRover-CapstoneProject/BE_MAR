@@ -33,6 +33,10 @@ public class StaffQrDeliveryWorkflowFactory {
         List<GraphStepRequest> steps = new ArrayList<>();
         addHandover(steps, "SENDER", "pickup_endpoint_id", "LOAD");
         addHandover(steps, "RECEIVER", "delivery_endpoint_id", "UNLOAD");
+        var announcement = json.createObjectNode().put("action", "SPEAK").put("prompt_key", "DELIVERY_COMPLETED");
+        announcement.putObject("data").put("text", "Đã giao vật phẩm thành công.").put("language_code", "vi");
+        add(steps, "RECEIVER", "ANNOUNCE", StepType.INTERACT, "Thông báo giao hàng thành công", 60,
+                announcement, json.createObjectNode());
         List<GraphTransitionRequest> transitions = transitions(steps);
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase(java.util.Locale.ROOT);
         var workflow = new WorkflowUpsertRequest("WF_STAFF_QR_DELIVERY_" + suffix, 1, "Giao hàng A → B bằng QR staff",
@@ -77,6 +81,12 @@ public class StaffQrDeliveryWorkflowFactory {
         for (int i = 0; i < steps.size(); i++) {
             GraphStepRequest step = steps.get(i);
             String from = step.stepCode();
+            if ("ANNOUNCE_RECEIVER".equals(from)) {
+                // The handover is already confirmed. Speech failure does not reopen it.
+                for (var outcome : List.of(TransitionOutcome.SUCCESS, TransitionOutcome.FAILURE, TransitionOutcome.TIMEOUT))
+                    result.add(new GraphTransitionRequest(from, null, outcome, null, 1, true, TerminalStatus.SUCCEEDED));
+                continue;
+            }
             String next = i + 1 < steps.size() ? steps.get(i + 1).stepCode() : null;
             TerminalStatus terminal = next == null ? TerminalStatus.SUCCEEDED : null;
             String required = switch (step.stepType()) {
