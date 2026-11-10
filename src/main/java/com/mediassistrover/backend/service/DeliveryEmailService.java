@@ -19,6 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
@@ -66,7 +67,7 @@ public class DeliveryEmailService {
             int attempts = ((Number) row.get("attempts")).intValue() + 1;
             Instant expiresAt = ((Timestamp) row.get("expires_at")).toInstant();
             var job = jobs.findById(UUID.fromString(row.get("job_id").toString())).orElse(null);
-            String eventType = row.get("event_type").toString();
+            String eventType = Objects.toString(row.get("event_type"), "");
             if (expiresAt.isBefore(Instant.now()) || job == null || job.getCancelRequestedAt() != null
                     || Set.of(JobStatus.CANCELLED, JobStatus.FAILED).contains(job.getStatus())
                     || (job.getStatus() == JobStatus.SUCCEEDED && "DELIVERY_APPROACHING".equals(eventType))) {

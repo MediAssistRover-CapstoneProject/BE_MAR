@@ -61,14 +61,19 @@ class DeliveryEmailServiceTest {
         verifyNoInteractions(jdbc, recipients);
     }
 
-    @Test void ignoresEmailWhenSmtpIsNotConfigured() {
+    @Test void queuesEmailWhenSmtpIsNotConfiguredForLaterRetry() {
         when(gateway.available()).thenReturn(false);
         var account = Account.builder().accountId(accountId).email("receiver@example.test").role(Role.STAFF).build();
+        var alert = alert("DELIVERY_CREATED");
+        var recipient = AlertRecipient.builder().alertRecipientId(recipientId).build();
+        when(recipients.findByAlertAlertIdAndAccountAccountIdAndChannel(alertId, accountId, AlertChannel.EMAIL)).thenReturn(Optional.empty());
+        when(recipients.save(any())).thenReturn(recipient);
 
-        service.enqueue(alert("DELIVERY_CREATED"), account);
+        service.enqueue(alert, account);
         service.sendPending();
 
-        verifyNoInteractions(jdbc, recipients, claims);
+        verify(jdbc).update(startsWith("insert ignore into delivery_email_outbox"), any(Object[].class));
+        verifyNoInteractions(claims);
     }
 
     @Test void deliversClaimedEmailAndRecordsRecipientStatus() throws Exception {
@@ -102,7 +107,8 @@ class DeliveryEmailServiceTest {
     private Map<String, Object> row() {
         return Map.of("id", UUID.randomUUID().toString(), "lease_token", UUID.randomUUID().toString(), "attempts", 0,
                 "expires_at", Timestamp.from(Instant.now().plusSeconds(60)), "job_id", jobId.toString(),
-                "recipient_id", recipientId.toString(), "recipient_email", "receiver@example.test", "subject", "Giao hàng", "body", "Mở nhiệm vụ: /jobs/1");
+                "recipient_id", recipientId.toString(), "recipient_email", "receiver@example.test", "event_type", "DELIVERY_CREATED",
+                "subject", "Giao hàng", "body", "Mở nhiệm vụ: /jobs/1");
     }
 
     private void claimOneRow() {
