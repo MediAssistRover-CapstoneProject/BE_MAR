@@ -104,7 +104,13 @@ public class MqttSessionRegistry {
                 ObjectNode payload=((ObjectNode)command.getPayloadJson()).deepCopy();payload.put("transportSessionId",e.transportSessionId().toString());command.setPayloadJson(payload);
             }
         }
-        for (Job job:active) if (!job.isBeOrchestrated() || job.getStatus()==JobStatus.RECOVERY_REQUIRED) {reconciled=false;reason="Robot is held by a legacy or recovery Job";}
+        for (Job job : active) {
+            if (prior!=null && (prior.isClosed() || mappingProcessChanged) && job.getStatus()==JobStatus.RECOVERY_REQUIRED
+                    && !mapping.open(job.getJobId())) safety.failSettledRecovery(job);
+            if (!job.isBeOrchestrated() || job.getStatus()==JobStatus.RECOVERY_REQUIRED) {
+                reconciled=false;reason="Robot is held by a legacy or recovery Job";
+            }
+        }
         if (!reconciled) for (Job job:active) safety.recovery(job,reason);
         session.setRobotId(e.robotId());session.setTransportSessionId(e.transportSessionId());session.setProducerSessionId(e.producerSessionId());
         session.setOwnerInstanceId(connection.instanceId());session.setConnectionId(currentConnection);
@@ -261,8 +267,16 @@ public class MqttSessionRegistry {
     private void close(RobotMqttSession session,List<Job> active) {
         applicationEvents.publishEvent(new NavigationLivePoseService.Closed(session.getRobotId()));
         session.setClosed(true);session.setDispatchReady(false);session.setFailureReason("MQTT session offline");
-        for (Job job:active) if (mapping.open(job.getJobId()) || commands.findByRobotIdAndStateIn(session.getRobotId(),List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED")).stream().anyMatch(c->c.getJobId().equals(job.getJobId())))
-            safety.recovery(job,"MQTT disconnected with an in-flight operation");
+        if (!active.isEmpty()) {
+            var inFlight=commands.findByRobotIdAndStateIn(session.getRobotId(),List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED"));
+            for (Job job : active) {
+                if (mapping.open(job.getJobId()) || inFlight.stream().anyMatch(c->c.getJobId().equals(job.getJobId()))) {
+                    safety.recovery(job,"MQTT disconnected with an in-flight operation");
+                } else {
+                    safety.failSettledRecovery(job);
+                }
+            }
+        }
         applicationEvents.publishEvent(new com.mediassistrover.backend.service.RobotRealtimeEventStream.Changed(session.getRobotId()));
     }
     public void camera(UUID robotId,UUID transport,JsonNode payload) {

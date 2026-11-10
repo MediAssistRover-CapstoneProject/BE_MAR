@@ -19,6 +19,7 @@ public class MqttStepDispatchService {
     private final MqttSessionRegistry registry;
     private final RobotMqttSessionRepository sessions;
     private final RobotCommandOutboxRepository commands;
+    private final RobotTestSubmissionRepository robotTests;
     private final RobotRepository robots;
     private final StepInputContractValidator inputs;
     private final StepInputScopeValidator scope;
@@ -82,8 +83,15 @@ public class MqttStepDispatchService {
         robots.findByIdForUpdate(job.getRobot().getRobotId()).orElseThrow();
         RobotMqttSession session=sessions.lock(job.getRobot().getRobotId()).orElse(null);
         if (!registry.fresh(session)) return;
-        if(commissioning && !"COMMISSIONING_ONLY".equals(session.getHelloJson().path("unlockPolicy").asText()))
+        if(commissioning && !HardwareCommissioningWorkflow.piSupportsUnlock(session.getHelloJson()))
             throw new BusinessRuleException("Commissioning UNLOCK must be enabled on both BE and Pi");
+        boolean mixedCommissioning=commissioning
+                && !"COMMISSIONING_ONLY".equals(session.getHelloJson().path("unlockPolicy").asText());
+        if (mixedCommissioning && (!"ROBOT_TEST".equals(job.getWorkflow().getServiceType())
+                || robotTests.findById(job.getInputJson().path("test_request_key").asText())
+                        .map(RobotTestSubmission::getJobId).filter(job.getJobId()::equals).isEmpty())) {
+            throw new BusinessRuleException("Commissioning UNLOCK alongside staff QR requires an administrator robot test");
+        }
         if(unlock && !commissioning && (!"STAFF_VERIFIED".equals(session.getHelloJson().path("unlockPolicy").asText())
                 || !hasCapability(session.getHelloJson(),"secure-unlock-v1")))
             throw new BusinessRuleException("Official UNLOCK requires Pi STAFF_VERIFIED and secure-unlock-v1");
@@ -120,6 +128,9 @@ public class MqttStepDispatchService {
                 .put("commandId",commandId.toString()).put("correlationId",commandId.toString()).put("robotId",session.getRobotId().toString())
                 .put("transportSessionId",session.getTransportSessionId().toString()).put("commandType","EXECUTE_STEP")
                 .put("expiresAt",expiresAt.toString());
+        if (mixedCommissioning) {
+            command.put("commissioningUnlock", true);
+        }
         ObjectNode action=command.putObject("step").put("jobId",job.getJobId().toString()).put("jobStepId",step.getJobStepId().toString())
                 .put("stepId",step.getStep().getStepId().toString()).put("stepCode",step.getStepCodeSnapshot()).put("stepType",step.getStepTypeSnapshot())
                 .put("visitNo",step.getVisitNo()).put("operationKey",step.getOperationKey()).put("timeoutSec",step.getTimeoutSecSnapshot());action.set("params",params);

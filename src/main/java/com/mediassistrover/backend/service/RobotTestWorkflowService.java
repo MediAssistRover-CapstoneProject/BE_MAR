@@ -9,6 +9,7 @@ import com.mediassistrover.backend.exception.*;
 import com.mediassistrover.backend.mqtt.*;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.AccountPrincipal;
+import com.mediassistrover.backend.validation.HardwareCommissioningWorkflow;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import lombok.RequiredArgsConstructor;
@@ -213,7 +214,8 @@ public class RobotTestWorkflowService {
         robots.findById(robotId).orElseThrow(()->new ResourceNotFoundException("Robot not found"));
         var link=links.findById(robotId).orElse(null);JsonNode hello=link==null||link.getHelloJson()==null?json.createObjectNode():link.getHelloJson();
         ObjectNode result=json.createObjectNode().put("robotId",robotId.toString()).put("commissioningUnlockEnabled",mqtt.isAllowCommissioningUnlock())
-                .put("piUnlockPolicy",hello.path("unlockPolicy").asText("UNKNOWN"));
+                .put("piUnlockPolicy",hello.path("unlockPolicy").asText("UNKNOWN"))
+                .put("piCommissioningUnlockEnabled",HardwareCommissioningWorkflow.piSupportsUnlock(hello));
         result.set("beEnabledStepTypes",json.valueToTree(mqtt.getEnabledStepTypes()));result.set("piEnabledStepTypes",hello.path("enabledStepTypes"));
         result.putObject("servoContract").put("model","MG996R").put("port","S6").put("rosId",4)
                 .put("openRaw",2400).put("closeRaw",1500).put("physicalFeedbackAvailable",false);

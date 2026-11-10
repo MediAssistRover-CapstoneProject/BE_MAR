@@ -216,7 +216,7 @@
     }
     $('testConfig').onclick=()=>mutate(async()=>{
       const [cfg,snapshot]=await Promise.all([api('/api/v1/robots/'+robot()+'/test-configuration'),api('/api/v1/robots/'+robot()+'/snapshot')]);
-      $('testConfigStatus').textContent='BE mở thử: '+(cfg.commissioningUnlockEnabled?'bật':'tắt')+' · Pi unlock: '+cfg.piUnlockPolicy+' · MQTT: '+(snapshot.mqttConnected?'đã nối':'chưa nối')+' · Robot: '+snapshot.robot.status+' · S6/ID4 · mở 2400 / đóng 1500.';
+      $('testConfigStatus').textContent='BE mở thử: '+(cfg.commissioningUnlockEnabled?'bật':'tắt')+' · Pi mở thử: '+(cfg.piCommissioningUnlockEnabled?'bật':'tắt')+' · Pi unlock: '+cfg.piUnlockPolicy+' · MQTT: '+(snapshot.mqttConnected?'đã nối':'chưa nối')+' · Robot: '+snapshot.robot.status+' · S6/ID4 · mở 2400 / đóng 1500.';
       $('testJson').textContent=JSON.stringify(cfg,null,2);
     });
     $('testLoadEndpoints').onclick=()=>mutate(loadEndpoints);

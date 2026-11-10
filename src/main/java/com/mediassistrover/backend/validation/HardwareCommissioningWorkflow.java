@@ -1,12 +1,24 @@
 package com.mediassistrover.backend.validation;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.mediassistrover.backend.entity.Step;
 import com.mediassistrover.backend.enums.StepType;
 import java.util.Set;
 
 /** Explicit administrator-authored bench flow; never inferred from request data. */
 public final class HardwareCommissioningWorkflow {
+    public static final String PI_CAPABILITY = "commissioning-unlock-v1";
+
     private HardwareCommissioningWorkflow() { }
+
+    public static boolean piSupportsUnlock(JsonNode hello) {
+        if ("COMMISSIONING_ONLY".equals(hello.path("unlockPolicy").asText())) return true;
+        for (JsonNode capability : hello.path("capabilities")) {
+            if (PI_CAPABILITY.equals(capability.asText())) return true;
+        }
+        return false;
+    }
+
     public static boolean unlockWithoutGrant(Step step) {
         var workflow=step.getWorkflow();
         return workflow!=null && workflow.getSchemaVersion()==3

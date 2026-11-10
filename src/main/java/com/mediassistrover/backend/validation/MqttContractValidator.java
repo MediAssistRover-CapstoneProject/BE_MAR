@@ -10,6 +10,14 @@ public class MqttContractValidator {
     public void inbound(JsonNode node) { schemas.validateRoot("mqtt-pi-message.schema.json",node); }
     public void command(JsonNode node) {
         schemas.validateRoot("mqtt-command.schema.json",node);
+        if (node.path("commissioningUnlock").asBoolean()) {
+            JsonNode step=node.path("step"), params=step.path("params");
+            if (!"CONTROL_HARDWARE".equals(step.path("stepType").asText())
+                    || !"UNLOCK_COMPARTMENT".equals(params.path("action").asText())
+                    || params.has("authorization")) {
+                throw new BusinessRuleException("Commissioning marker requires a grantless CONTROL_HARDWARE UNLOCK");
+            }
+        }
         rejectUnresolvedReferences(node,"$");
     }
     public void response(JsonNode node) { schemas.validateRoot("mqtt-be-response.schema.json",node); }
