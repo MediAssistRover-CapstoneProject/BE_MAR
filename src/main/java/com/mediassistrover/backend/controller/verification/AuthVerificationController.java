@@ -42,7 +42,8 @@ public class AuthVerificationController {
 
     @PostMapping("/jobs/{jobId}/staff-phone-qr")
     @PreAuthorize("hasRole('STAFF')")
-    @io.swagger.v3.oas.annotations.Operation(summary="Show the assigned staff member's one-time QR for the robot camera")
+    @io.swagger.v3.oas.annotations.Operation(summary="Show the assigned staff member's one-time QR for the robot camera",
+            description="Requires the assigned staff and an active AUTHENTICATE challenge. QR display does not require camera streaming or a ready Pi scan session; the Pi session is validated when submitting the scan.")
     public ResponseEntity<StaffPhoneQr> staffPhoneQr(@PathVariable UUID jobId,
             @AuthenticationPrincipal AccountPrincipal actor) throws WriterException {
         var code = qrService.issueForStaffPhone(jobId, actor);

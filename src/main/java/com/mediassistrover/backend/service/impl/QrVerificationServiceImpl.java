@@ -179,7 +179,8 @@ public class QrVerificationServiceImpl implements QrVerificationService {
         Account expected = requireExpectedAccount(job, challenge);
         if (!expected.getAccountId().equals(account.getAccountId()))
             throw new AccessDeniedException("QR challenge belongs to another Staff account");
-        requireScanSession(job, null);
+        // Display depends on the assigned staff and active challenge. The Pi's
+        // scan session is checked when submitting a scan, independently of video.
         return new StaffCode(step.getJobStepId(), challenge.getPurpose(), challenge.getExpiresAt(),
                 staffPhoneProof(challenge, expected));
     }
