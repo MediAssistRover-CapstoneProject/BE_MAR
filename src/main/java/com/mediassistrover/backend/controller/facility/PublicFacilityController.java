@@ -52,10 +52,11 @@ public class PublicFacilityController {
             @RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size){return PageResponse.from(service.zones(mapId,zoneType,q,page(page,size,"zoneCode")));}
     @GetMapping("/zones/{id}") public Zone zone(@PathVariable UUID id){return service.zone(id);}
 
-    @GetMapping("/rooms") public PageResponse<Room> rooms(@RequestParam(required=false) UUID floorId,
+    @GetMapping("/rooms") public PageResponse<Room> rooms(@RequestParam(required=false) UUID mapId,
+            @RequestParam(required=false) UUID floorId,
             @RequestParam(required=false) String roomType,@RequestParam(required=false) String departmentCode,
             @RequestParam(required=false) String q,@RequestParam(defaultValue="0")@Min(0)int page,
-            @RequestParam(defaultValue="20")@Min(1)@Max(100)int size){return PageResponse.from(service.rooms(floorId,roomType,departmentCode,q,page(page,size,"roomCode")));}
+            @RequestParam(defaultValue="20")@Min(1)@Max(100)int size){return PageResponse.from(service.rooms(mapId,floorId,roomType,departmentCode,q,page(page,size,"roomCode")));}
     @GetMapping("/rooms/{id}") public Room room(@PathVariable UUID id){return service.room(id);}
 
     @GetMapping("/endpoints") public PageResponse<Endpoint> endpoints(@RequestParam(required=false) UUID mapId,

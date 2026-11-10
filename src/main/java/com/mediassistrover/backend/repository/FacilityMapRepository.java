@@ -17,6 +17,7 @@ import java.util.UUID;
 public interface FacilityMapRepository extends JpaRepository<FacilityMap, UUID> {
     boolean existsByMapCodeIgnoreCaseAndVersionNo(String mapCode, int versionNo);
     Optional<FacilityMap> findByFloorFloorIdAndStatus(UUID floorId, MapStatus status);
+    Optional<FacilityMap> findByMapIdAndStatus(UUID mapId, MapStatus status);
     List<FacilityMap> findAllByFloorFloorIdAndStatus(UUID floorId, MapStatus status);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select m from FacilityMap m where m.floor.floorId = :floorId and m.status = :status")

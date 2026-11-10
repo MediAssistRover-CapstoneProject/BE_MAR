@@ -3,6 +3,7 @@ package com.mediassistrover.backend.service.impl;
 import com.mediassistrover.backend.dto.facility.response.PublicFacilityResponses.*;
 import com.mediassistrover.backend.enums.EndpointType;
 import com.mediassistrover.backend.enums.HospitalInformationStatus;
+import com.mediassistrover.backend.enums.MapStatus;
 import com.mediassistrover.backend.enums.ZoneType;
 import com.mediassistrover.backend.exception.ResourceNotFoundException;
 import com.mediassistrover.backend.mapper.FacilityMapper;
@@ -27,6 +28,7 @@ public class PublicFacilityCatalogServiceImpl implements PublicFacilityCatalogSe
     private final FloorRepository floors;
     private final ZoneRepository zones;
     private final RoomRepository rooms;
+    private final FacilityMapRepository maps;
     private final EndpointRepository endpoints;
     private final EndpointGroupRepository groups;
     private final EndpointGroupMemberRepository members;
@@ -46,7 +48,12 @@ public class PublicFacilityCatalogServiceImpl implements PublicFacilityCatalogSe
     @Override public Floor floor(UUID id) { return mapper.toPublicResponse(floors.findPublicById(id, now()).orElseThrow(() -> missing("Floor", id))); }
     @Override public Page<Zone> zones(UUID mapId, ZoneType type, String q, Pageable p) { return zones.searchPublic(mapId, type, clean(q), p).map(mapper::toPublicResponse); }
     @Override public Zone zone(UUID id) { return mapper.toPublicResponse(zones.findByZoneIdAndActiveTrueAndPublicVisibleTrue(id).orElseThrow(() -> missing("Zone", id))); }
-    @Override public Page<Room> rooms(UUID floorId, String type, String department, String q, Pageable p) { return rooms.searchPublic(floorId, clean(type), clean(department), clean(q), p).map(mapper::toPublicResponse); }
+    @Override public Page<Room> rooms(UUID mapId, UUID floorId, String type, String department, String q, Pageable p) {
+        if (mapId != null) {
+            maps.findByMapIdAndStatus(mapId, MapStatus.ACTIVE).orElseThrow(() -> missing("Active map", mapId));
+        }
+        return rooms.searchPublic(mapId, floorId, clean(type), clean(department), clean(q), p).map(mapper::toPublicResponse);
+    }
     @Override public Room room(UUID id) { return mapper.toPublicResponse(rooms.findByRoomIdAndActiveTrueAndPublicVisibleTrue(id).orElseThrow(() -> missing("Room", id))); }
     @Override public Page<Endpoint> endpoints(UUID mapId, UUID roomId, EndpointType type, Boolean accessible, String q, Pageable p) { return endpoints.searchPublic(mapId, roomId, type, accessible, clean(q), p).map(mapper::toPublicResponse); }
     @Override public Endpoint endpoint(UUID id) { return mapper.toPublicResponse(endpoints.findByEndpointIdAndActiveTrueAndPublicVisibleTrue(id).orElseThrow(() -> missing("Endpoint", id))); }

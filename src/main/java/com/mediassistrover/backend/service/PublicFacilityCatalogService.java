@@ -17,7 +17,7 @@ public interface PublicFacilityCatalogService {
     Floor floor(UUID id);
     Page<Zone> zones(UUID mapId, ZoneType zoneType, String q, Pageable pageable);
     Zone zone(UUID id);
-    Page<Room> rooms(UUID floorId, String roomType, String departmentCode, String q, Pageable pageable);
+    Page<Room> rooms(UUID mapId, UUID floorId, String roomType, String departmentCode, String q, Pageable pageable);
     Room room(UUID id);
     Page<Endpoint> endpoints(UUID mapId, UUID roomId, EndpointType endpointType, Boolean accessible,
                              String q, Pageable pageable);
