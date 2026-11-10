@@ -7,13 +7,18 @@ import jakarta.persistence.LockModeType;
 import java.util.*;
 public interface AlertRecipientRepository extends JpaRepository<AlertRecipient,UUID> {
     List<AlertRecipient> findByAlertAlertIdOrderByCreatedAtAsc(UUID alertId);
-    Optional<AlertRecipient> findByAlertAlertIdAndAccountAccountId(UUID alertId,UUID accountId);
     Optional<AlertRecipient> findByAlertAlertIdAndAccountAccountIdAndChannel(UUID alertId,UUID accountId,
             com.mediassistrover.backend.enums.AlertChannel channel);
     boolean existsByAlertAlertIdAndAccountAccountId(UUID alertId, UUID accountId);
     long countByAlertAlertId(UUID alertId);
     long countByAlertAlertIdAndAcknowledgedAtIsNotNull(UUID alertId);
-    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select r from AlertRecipient r where r.alert.alertId=:alertId and r.account.accountId=:accountId") Optional<AlertRecipient> lockRecipient(@Param("alertId") UUID alertId,@Param("accountId") UUID accountId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from AlertRecipient r where r.alert.alertId=:alertId and r.account.accountId=:accountId and r.channel=:channel")
+    Optional<AlertRecipient> lockRecipient(@Param("alertId") UUID alertId,@Param("accountId") UUID accountId,
+            @Param("channel") com.mediassistrover.backend.enums.AlertChannel channel);
+    long countByAlertAlertIdAndChannel(UUID alertId,com.mediassistrover.backend.enums.AlertChannel channel);
+    long countByAlertAlertIdAndChannelAndAcknowledgedAtIsNotNull(UUID alertId,
+            com.mediassistrover.backend.enums.AlertChannel channel);
     long countByAlertAlertIdAndDeliveryStatus(UUID alertId,com.mediassistrover.backend.enums.AlertDeliveryStatus status);
     long deleteByAlertAlertId(UUID alertId);
 }

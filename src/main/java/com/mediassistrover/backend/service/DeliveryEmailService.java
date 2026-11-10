@@ -17,7 +17,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
@@ -39,7 +38,7 @@ public class DeliveryEmailService {
 
     @Transactional
     public void enqueue(Alert alert, Account account) {
-        if (!enabled || !gateway.available() || !validAddress(account.getEmail())) return;
+        if (!enabled || !validAddress(account.getEmail())) return;
         AlertRecipient recipient = recipients.findByAlertAlertIdAndAccountAccountIdAndChannel(
                 alert.getAlertId(), account.getAccountId(), AlertChannel.EMAIL).orElseGet(() -> recipients.save(
                 AlertRecipient.builder().alert(alert).account(account).channel(AlertChannel.EMAIL)
@@ -67,8 +66,10 @@ public class DeliveryEmailService {
             int attempts = ((Number) row.get("attempts")).intValue() + 1;
             Instant expiresAt = ((Timestamp) row.get("expires_at")).toInstant();
             var job = jobs.findById(UUID.fromString(row.get("job_id").toString())).orElse(null);
+            String eventType = row.get("event_type").toString();
             if (expiresAt.isBefore(Instant.now()) || job == null || job.getCancelRequestedAt() != null
-                    || Set.of(JobStatus.CANCELLED, JobStatus.FAILED, JobStatus.SUCCEEDED).contains(job.getStatus())) {
+                    || Set.of(JobStatus.CANCELLED, JobStatus.FAILED).contains(job.getStatus())
+                    || (job.getStatus() == JobStatus.SUCCEEDED && "DELIVERY_APPROACHING".equals(eventType))) {
                 expire(id, lease, row.get("recipient_id").toString(), "EXPIRED");
                 continue;
             }
@@ -89,10 +90,10 @@ public class DeliveryEmailService {
     }
 
     private void expire(String id, String lease, String recipientId, String reason) {
-        jdbc.update("update delivery_email_outbox set state='EXPIRED',last_error=? where id=? and state='SENDING' and lease_token=?", reason, id, lease);
+        jdbc.update("update delivery_email_outbox set state='EXPIRED',last_error=coalesce(last_error,?) where id=? and state='SENDING' and lease_token=?", reason, id, lease);
         recipients.findById(UUID.fromString(recipientId)).ifPresent(recipient -> {
             recipient.setDeliveryStatus(AlertDeliveryStatus.FAILED);
-            recipient.setErrorCode(reason);
+            if (recipient.getErrorCode() == null || recipient.getErrorCode().isBlank()) recipient.setErrorCode(reason);
             recipients.save(recipient);
         });
     }

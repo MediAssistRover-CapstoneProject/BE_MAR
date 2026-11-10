@@ -88,7 +88,7 @@ public class AlertServiceImpl implements AlertService {
             }
             return response(alert,actor);
         }
-        Optional<AlertRecipient> assigned=recipientRepository.lockRecipient(id,actor.accountId());
+        Optional<AlertRecipient> assigned=recipientRepository.lockRecipient(id,actor.accountId(),AlertChannel.WEB);
         if(assigned.isEmpty()){
             if(actor.role()!=Role.STAFF)throw new org.springframework.security.access.AccessDeniedException(
                     "Alert is not assigned to this account or an authorized Staff delegate");
@@ -101,8 +101,8 @@ public class AlertServiceImpl implements AlertService {
         deliver(recipient,now);
         boolean newAck=recipient.getAcknowledgedAt()==null;
         if(newAck)recipient.setAcknowledgedAt(now);
-        long acked=recipientRepository.countByAlertAlertIdAndAcknowledgedAtIsNotNull(id);
-        long total=recipientRepository.countByAlertAlertId(id);
+        long acked=recipientRepository.countByAlertAlertIdAndChannelAndAcknowledgedAtIsNotNull(id,AlertChannel.WEB);
+        long total=recipientRepository.countByAlertAlertIdAndChannel(id,AlertChannel.WEB);
         boolean becameAcknowledged=alert.getStatus()!=AlertStatus.ACKNOWLEDGED
                 &&(alert.getAckPolicy()==AlertAckPolicy.ANY||acked>=total);
         if(becameAcknowledged){
@@ -120,7 +120,7 @@ public class AlertServiceImpl implements AlertService {
     @Override public com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id,AccountPrincipal actor){requireCurrentActor(actor);if(actor.role()!=Role.ADMIN)throw new org.springframework.security.access.AccessDeniedException("Only ADMIN can inspect Alert deletion impact");Alert a=alert(id);boolean can=a.getStatus()==AlertStatus.CLOSED;return new com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse(id,"Alert",can,can?List.of():List.of("Only CLOSED Alert can be hard-deleted"),Map.of("alertRecipients",recipientRepository.countByAlertAlertId(id)));}
     @Override @Transactional public com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,AccountPrincipal actor,RequestMetadata md){requireCurrentActor(actor);if(actor.role()!=Role.ADMIN)throw new org.springframework.security.access.AccessDeniedException("Only ADMIN can hard-delete Alert");var impact=deletionImpact(id,actor);if(!impact.canHardDelete())throw new BusinessRuleException(String.join(", ",impact.blockers()));Alert a=lockForMutation(id);long recipients=recipientRepository.deleteByAlertAlertId(id);alertRepository.delete(a);auditService.record(accountRepository.findById(actor.accountId()).orElseThrow(),"ALERT_FORCE_DELETED","Alert",id,null,Map.of("reason",reason,"deleted",Map.of("AlertRecipient",recipients)),md);return new com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse(id,"Alert",Map.of("Alert",1L,"AlertRecipient",recipients));}
     private AlertResponse response(Alert a,AccountPrincipal actor){List<RecipientResponse> recipients=recipientRepository.findByAlertAlertIdOrderByCreatedAtAsc(a.getAlertId()).stream().filter(r->actor.role()==Role.ADMIN||r.getAccount().getAccountId().equals(actor.accountId())).map(r->new RecipientResponse(r.getAlertRecipientId(),r.getAccount().getAccountId(),r.getChannel(),r.getDeliveryStatus(),r.getSentAt(),r.getDeliveredAt(),r.getAcknowledgedAt(),r.getErrorCode())).toList();return new AlertResponse(a.getAlertId(),a.getIncident()==null?null:a.getIncident().getIncidentId(),a.getJobStep()==null?null:a.getJobStep().getJobStepId(),a.getServiceRequest()==null?null:a.getServiceRequest().getServiceRequestId(),a.getZone()==null?null:a.getZone().getZoneId(),a.getNotificationType(),a.getSeverity(),a.getStatus(),a.getMessage(),a.getDataJson(),a.isRequireAck(),a.getAckPolicy(),a.getCreatedAt(),a.getExpiresAt(),a.getRowVersion(),recipients);}
-    private void markDelivered(Alert alert,AccountPrincipal actor){recipientRepository.findByAlertAlertIdAndAccountAccountId(alert.getAlertId(),actor.accountId()).ifPresent(r->{deliver(r,Instant.now(clock));if(!alert.isRequireAck())completeNotify(alert,false);});}
+    private void markDelivered(Alert alert,AccountPrincipal actor){recipientRepository.findByAlertAlertIdAndAccountAccountIdAndChannel(alert.getAlertId(),actor.accountId(),AlertChannel.WEB).ifPresent(r->{deliver(r,Instant.now(clock));if(!alert.isRequireAck())completeNotify(alert,false);});}
     private void deliver(AlertRecipient r,Instant now){if(r.getDeliveryStatus()==AlertDeliveryStatus.PENDING){r.setDeliveryStatus(AlertDeliveryStatus.DELIVERED);r.setSentAt(now);r.setDeliveredAt(now);}}
     private void completeNotify(Alert alert,boolean acked){if(alert.getJobStep()==null || !"NOTIFY".equals(alert.getJobStep().getStepTypeSnapshot()) || alert.getJobStep().getJobTask().getJob().getSchemaVersion()==3)return;long delivered=recipientRepository.countByAlertAlertIdAndDeliveryStatus(alert.getAlertId(),AlertDeliveryStatus.DELIVERED);if(delivered==0)return;var result=objectMapper.createObjectNode().put("notification_id",alert.getAlertId().toString()).put("delivered",true).put("acked",acked);completionService.complete(alert.getJobStep(),result,null,JobEventProducerType.SERVER,acked?"NOTIFY_ACK_COMPLETED":"NOTIFY_DELIVERED",null);}
     private List<Account> resolveRecipients(List<Account> eligible,JsonNode requested){if(requested==null||!requested.isArray()||requested.isEmpty())return eligible;Set<String> selectors=new HashSet<>();requested.forEach(n->{if(n.isTextual())selectors.add(n.asText());});return eligible.stream().filter(a->selectors.contains(a.getAccountId().toString())||selectors.contains(a.getRole().name())).toList();}
