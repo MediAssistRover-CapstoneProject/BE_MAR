@@ -13,6 +13,8 @@
     fieldset{border:0;padding:0;margin:0}summary{cursor:pointer;font-weight:650}
     details{border-bottom:1px solid #dae2eb;padding-bottom:.8rem}code{overflow-wrap:anywhere}
     p{line-height:1.5}canvas{display:block;width:min(100%,19rem);height:auto;margin:1rem auto;image-rendering:pixelated}
+    .qr-frame{max-width:23rem;margin:1rem auto;padding:1rem;background:#fff;border:3px solid #005ea3;border-radius:12px}
+    .qr-frame canvas{margin:0 auto}.qr-frame p{margin:.8rem 0 0;text-align:center;color:#183b59}
     [hidden]{display:none!important}#message{min-height:1.5em;color:#4f2430}#stage{font-weight:650}
   </style>
   <script src="/delivery-qr.js" defer></script>
@@ -76,7 +78,10 @@
     <p id="stage" role="status"></p>
     <button id="showQr" hidden>Hiện QR để robot quét</button>
     <div id="qrPanel" hidden>
-      <canvas id="qr" aria-label="Mã QR cho camera robot"></canvas>
+      <div class="qr-frame">
+        <canvas id="qr" aria-label="Mã QR cho camera robot"></canvas>
+        <p>Đưa toàn bộ mã và viền trắng vào camera MAR, giữ điện thoại thẳng và yên.</p>
+      </div>
       <p id="qrExpiry"></p>
     </div>
     <ul id="items" hidden></ul>
