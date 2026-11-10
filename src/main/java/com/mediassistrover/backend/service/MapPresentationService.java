@@ -18,6 +18,7 @@ public class MapPresentationService {
     private final MapPresentationRepository presentations;
     private final FacilityMapRepository maps;
     private final EndpointRepository endpoints;
+    private final RoomRepository rooms;
     private final SavedMapImageService images;
     private final ObjectMapper json;
     private final EntityManager entityManager;
@@ -63,6 +64,8 @@ public class MapPresentationService {
         if(draft.features().isEmpty() && draft.rotationDegrees()==0. && row.getPublishedJson()==null)
             throw new BusinessRuleException("Thêm ít nhất một đối tượng hoặc căn góc bản đồ trước khi xuất bản.");
         validate(draft,source);
+        Document synchronizedDraft=syncRooms(draft,map);
+        row.setDraftJson(json.valueToTree(synchronizedDraft));
         row.setPublishedJson(row.getDraftJson().deepCopy());
         row.setRevision(row.getRevision()+1);
         row.setPublishedRevision(row.getRevision());
@@ -121,6 +124,58 @@ public class MapPresentationService {
         if(found.size()!=linked.size() || found.stream().anyMatch(e->!e.getMap().getMapId().equals(source.mapId()) || !e.isActive() || !e.isAccessible()))
             throw new BusinessRuleException("Điểm liên kết phải đang hoạt động, có thể tiếp cận và thuộc map này.");
     }
+    private Document syncRooms(Document document,FacilityMap map) {
+        List<Feature> result=new ArrayList<>(document.features().size());
+        Set<UUID> endpointIds=new HashSet<>();
+        Set<UUID> roomIds=new HashSet<>();
+        Set<String> roomCodes=new HashSet<>();
+        for(Feature feature:document.features()) {
+            if(feature.type()!=FeatureType.ROOM || feature.endpointId()==null) { result.add(feature); continue; }
+            if(!endpointIds.add(feature.endpointId()))
+                throw new BusinessRuleException("Mỗi điểm đích chỉ được gắn với một phòng trên bản đồ.");
+            Endpoint endpoint=endpoints.findById(feature.endpointId()).orElseThrow(()->new ResourceNotFoundException("Điểm đích không tồn tại: "+feature.endpointId()));
+            if(!endpoint.getMap().getMapId().equals(map.getMapId()) || !endpoint.isActive() || !endpoint.isAccessible())
+                throw new BusinessRuleException("Điểm liên kết phải đang hoạt động, có thể tiếp cận và thuộc map này.");
+            String code=roomCode(feature,map), normalized=code.toLowerCase(Locale.ROOT);
+            if(!roomCodes.add(normalized)) throw new BusinessRuleException("Mã phòng bị trùng trong bản đồ: "+code);
+            String name=text(feature.roomName(),feature.label());
+            if(name==null) throw new BusinessRuleException("Phòng gắn điểm đích phải có tên phòng.");
+            String type=text(feature.roomType(),"GENERAL");
+            Room room=resolveRoom(feature,code,map);
+            if(room.getRoomId()!=null && !roomIds.add(room.getRoomId()))
+                throw new BusinessRuleException("Một phòng trong database chỉ được gắn với một hình phòng trên bản đồ.");
+            Optional<Room> codeOwner=rooms.findByRoomCodeIgnoreCase(code);
+            if(codeOwner.isPresent() && !codeOwner.get().getRoomId().equals(room.getRoomId()))
+                throw new ConflictException("Mã phòng đã được sử dụng: "+code);
+            if(endpoint.getRoom()!=null && !endpoint.getRoom().getRoomId().equals(room.getRoomId()))
+                throw new ConflictException("Điểm đích đã liên kết với phòng khác: "+endpoint.getEndpointName());
+            boolean visible=feature.roomPublicVisible()==null || feature.roomPublicVisible();
+            room.setFloor(map.getFloor()); room.setRoomCode(code); room.setRoomName(name); room.setRoomType(type);
+            room.setDepartmentCode(clean(feature.departmentCode())); room.setDescription(clean(feature.roomDescription()));
+            room.setActive(true); room.setPublicVisible(visible); room=rooms.save(room);
+            endpoint.setRoom(room);
+            if(visible) endpoint.setPublicVisible(true);
+            endpoints.save(endpoint);
+            result.add(feature.withRoom(room.getRoomId(),code,name,type,clean(feature.departmentCode()),clean(feature.roomDescription()),visible));
+        }
+        return new Document(document.schemaVersion(),document.backgroundColor(),result,document.rotationDegrees());
+    }
+    private Room resolveRoom(Feature feature,String code,FacilityMap map) {
+        Room room;
+        if(feature.roomId()!=null) room=rooms.findById(feature.roomId()).orElseThrow(()->new ResourceNotFoundException("Phòng không tồn tại: "+feature.roomId()));
+        else room=rooms.findByRoomCodeIgnoreCase(code).orElseGet(Room::new);
+        if(room.getFloor()!=null && !room.getFloor().getFloorId().equals(map.getFloor().getFloorId()))
+            throw new BusinessRuleException("Phòng và bản đồ phải thuộc cùng một tầng.");
+        return room;
+    }
+    private String roomCode(Feature feature,FacilityMap map) {
+        String supplied=clean(feature.roomCode());
+        if(supplied!=null) return supplied;
+        String generated=(map.getMapCode()+"_"+feature.id()).toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9._-]","_");
+        return generated.substring(0,Math.min(64,generated.length()));
+    }
+    private String text(String value,String fallback) { String cleaned=clean(value); return cleaned==null?clean(fallback):cleaned; }
+    private String clean(String value) { return value==null||value.isBlank()?null:value.trim(); }
     private Source source(FacilityMap map) {
         var m=images.metadata(map.getMapId());
         return new Source(map.getMapId(),m.path("asset_hash").asText(),m.path("width_m").asDouble(),m.path("height_m").asDouble(),

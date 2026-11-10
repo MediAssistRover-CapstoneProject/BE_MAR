@@ -18,7 +18,22 @@ public final class MapPresentationContracts {
         @NotNull @Size(min=1,max=128) List<@NotNull @Valid Point> points,
         @NotNull @DecimalMin("0.01") @DecimalMax("2") Double lineWidthM,
         @NotNull @DecimalMin("0.05") @DecimalMax("5") Double fontSizeM,
-        UUID endpointId) { }
+        UUID endpointId,
+        UUID roomId,
+        @Size(max=64) String roomCode,
+        @Size(max=160) String roomName,
+        @Size(max=64) String roomType,
+        @Size(max=64) String departmentCode,
+        String roomDescription,
+        Boolean roomPublicVisible) {
+        public Feature(String id,FeatureType type,String label,String color,List<Point> points,
+                       Double lineWidthM,Double fontSizeM,UUID endpointId) {
+            this(id,type,label,color,points,lineWidthM,fontSizeM,endpointId,null,null,null,null,null,null,null);
+        }
+        public Feature withRoom(UUID value,String code,String name,String type,String department,String description,boolean visible) {
+            return new Feature(id,this.type,label,color,points,lineWidthM,fontSizeM,endpointId,value,code,name,type,department,description,visible);
+        }
+    }
     /** Coordinates stay in the map's local grid; rotation affects presentation only. */
     public record Document(@Min(1) @Max(1) int schemaVersion,
         @NotBlank @Pattern(regexp="#[0-9a-fA-F]{6}") String backgroundColor,

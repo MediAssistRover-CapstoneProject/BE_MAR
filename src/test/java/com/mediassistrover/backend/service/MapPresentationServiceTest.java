@@ -23,17 +23,19 @@ class MapPresentationServiceTest {
     final MapPresentationRepository rows=mock(MapPresentationRepository.class);
     final FacilityMapRepository maps=mock(FacilityMapRepository.class);
     final EndpointRepository endpoints=mock(EndpointRepository.class);
+    final RoomRepository rooms=mock(RoomRepository.class);
     final SavedMapImageService images=mock(SavedMapImageService.class);
     final EntityManager em=mock(EntityManager.class);
     final Clock clock=Clock.fixed(Instant.parse("2026-11-06T00:00:00Z"),ZoneOffset.UTC);
-    final MapPresentationService service=new MapPresentationService(rows,maps,endpoints,images,json,em,clock);
+    final MapPresentationService service=new MapPresentationService(rows,maps,endpoints,rooms,images,json,em,clock);
     FacilityMap map;
     Source source;
     Feature room;
     Document draft;
 
     @BeforeEach void setup() {
-        map=FacilityMap.builder().mapId(id).assetHash(hash).widthM(BigDecimal.TEN).heightM(BigDecimal.TEN).build();
+        map=FacilityMap.builder().mapId(id).mapCode("MAP_A").floor(Floor.builder().floorId(UUID.randomUUID()).build())
+            .assetHash(hash).widthM(BigDecimal.TEN).heightM(BigDecimal.TEN).build();
         source=new Source(id,hash,10,10,.05,-2,-3,.5,"map",200,200);
         room=new Feature("room-1",FeatureType.ROOM,"Phòng A","#dbeafe",List.of(new Point(1.,1.),new Point(3.,1.),new Point(3.,3.),new Point(1.,3.)),.05,.3,null);
         draft=new Document(1,"#ffffff",List.of(room));
@@ -172,6 +174,24 @@ class MapPresentationServiceTest {
         var endpoint=Endpoint.builder().endpointId(endpointId).map(FacilityMap.builder().mapId(UUID.randomUUID()).build()).active(true).accessible(true).build();
         when(endpoints.findAllById(Set.of(endpointId))).thenReturn(List.of(endpoint));
         assertThrows(BusinessRuleException.class,()->service.validate(new Document(1,"#ffffff",List.of(feature)),source));
+    }
+    @Test void publishCreatesRoomAndLinksEndpointInSameDocument() {
+        UUID endpointId=UUID.randomUUID(),roomId=UUID.randomUUID();
+        var endpoint=Endpoint.builder().endpointId(endpointId).map(map).endpointName("Cửa phòng 01").active(true).accessible(true).build();
+        var feature=new Feature("room-01",FeatureType.ROOM,"Phòng 01","#ffffff",room.points(),.1,.3,endpointId,
+            null,"ROOM_01","Phòng 01","PATIENT_ROOM","WARD_A","Phòng nội trú",true);
+        draft=new Document(1,"#ffffff",List.of(feature)); row(1);
+        when(endpoints.findAllById(Set.of(endpointId))).thenReturn(List.of(endpoint));
+        when(endpoints.findById(endpointId)).thenReturn(Optional.of(endpoint));
+        when(rooms.findByRoomCodeIgnoreCase("ROOM_01")).thenReturn(Optional.empty());
+        when(rooms.save(any(Room.class))).thenAnswer(invocation->{Room value=invocation.getArgument(0);value.setRoomId(roomId);return value;});
+
+        var result=service.publish(id,new Change(1));
+
+        assertEquals(roomId,result.published().features().getFirst().roomId());
+        assertEquals(roomId,endpoint.getRoom().getRoomId());
+        assertTrue(endpoint.isPublicVisible());
+        verify(endpoints).save(endpoint);
     }
     @Test void validationRejectsUnboundedStyleAndExecutableColorText() {
         try(var factory=Validation.buildDefaultValidatorFactory()) {

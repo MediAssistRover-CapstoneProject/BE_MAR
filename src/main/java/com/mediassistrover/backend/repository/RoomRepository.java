@@ -8,9 +8,11 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.UUID;
+import java.util.Optional;
 
 public interface RoomRepository extends JpaRepository<Room, UUID> {
     boolean existsByRoomCodeIgnoreCase(String roomCode);
+    Optional<Room> findByRoomCodeIgnoreCase(String roomCode);
     Page<Room> findByActiveTrueAndPublicVisibleTrue(Pageable pageable);
     Page<Room> findByActiveTrue(Pageable pageable);
     @Query("""
