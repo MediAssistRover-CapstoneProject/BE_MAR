@@ -1,7 +1,7 @@
 {
   "workflow": {
     "workflowCode": "WF_VOICE_ENDPOINT_V1",
-    "versionNo": 1,
+    "versionNo": 3,
     "workflowName": "Voice: di toi endpoint roi thong bao",
     "serviceType": "NAVIGATION",
     "description": "Trusted parameterized MOVE then arrival SPEAK. Endpoint/map come from BE; no arrival announcement on MOVE failure.",
@@ -21,12 +21,12 @@
           "format": "uuid"
         },
         "max_speed_mps": {
-          "type": "number",
+          "type": ["number", "null"],
           "minimum": 0.1,
-          "maximum": 0.3
+          "maximum": 0.35
         },
         "arrival_text": {
-          "type": "string",
+          "type": ["string", "null"],
           "minLength": 1,
           "maxLength": 500
         }
@@ -34,14 +34,14 @@
       "required": [
         "map_id",
         "target_mode",
-        "endpoint_id",
-        "max_speed_mps",
-        "arrival_text"
+        "endpoint_id"
       ],
       "additionalProperties": true
     },
     "inputUiJson": {},
-    "defaultInputsJson": {},
+    "defaultInputsJson": {
+      "max_speed_mps": 0.35
+    },
     "outputMappingJson": {
       "move_result": {
         "$ref": "/outputs/MOVE_TO_ENDPOINT"
@@ -77,7 +77,7 @@
         "sequenceNo": 1,
         "paramsJson": {
           "mode": "NORMAL",
-          "max_speed_mps": 0.2
+          "max_speed_mps": 0.35
         },
         "inputMappingJson": {
           "map_id": {

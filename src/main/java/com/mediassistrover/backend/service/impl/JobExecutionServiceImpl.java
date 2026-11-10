@@ -53,7 +53,7 @@ public class JobExecutionServiceImpl implements JobExecutionService {
         if(!mappingSessions.findByRobotIdAndPotentiallyOpenTrue(robotId).isEmpty())throw new BusinessRuleException("Finish mapping before a test workflow");
         if(move)navigationSessions.pinReadyContextForLockedRoute(robotId,sessionId,mapId);
         FacilityMap map=move?mapRepository.findById(mapId).orElseThrow(()->new ResourceNotFoundException("Map not found")):null;
-        return create(workflow,null,null,robot,map,50,merge(workflow.getDefaultInputsJson(),input),null,null);
+        return create(workflow,null,null,robot,map,50,inputSnapshots.forWorkflow(workflow,input),null,null);
     }
     static boolean testStepSupported(Step step){
         if(Set.of(StepType.MOVE,StepType.WAIT,StepType.CONTROL_HARDWARE).contains(step.getStepType()))return true;
@@ -78,7 +78,7 @@ public class JobExecutionServiceImpl implements JobExecutionService {
             throw new BusinessRuleException("Speech requires 1-500 characters and languageCode vi or en");
         Robot robot=selectPinnedRobotId(robotId);
         if(!mappingSessions.findByRobotIdAndPotentiallyOpenTrue(robotId).isEmpty())throw new BusinessRuleException("Robot holds an open mapping session");
-        var input=merge(workflow.getDefaultInputsJson(),objectMapper.createObjectNode().put("speech_text",text).put("language_code",languageCode));
+        var input=inputSnapshots.forWorkflow(workflow,objectMapper.createObjectNode().put("speech_text",text).put("language_code",languageCode));
         return create(workflow,null,null,robot,null,1,input,null,null);
     }
 
@@ -111,7 +111,7 @@ public class JobExecutionServiceImpl implements JobExecutionService {
         if(sessionPinned){if(request.getRequestedRobot()==null||map==null)throw new BusinessRuleException("Navigation session requires its selected robot/map");
             navigationSessions.requireReadyContext(request.getRequestedRobot().getRobotId(),UUID.fromString(request.getRequestDataJson().path("navigation_session_id").asText()),map.getMapId());}
         Robot robot=ROBOT_PINNED.contains(request.getRequestType())||sessionPinned?selectPinnedRobot(request.getRequestedRobot()):selectRobot(request.getRequestedRobot(),map,workflow);JsonNode input=inputSnapshots.forRequest(workflow,request);Job job=create(workflow,request,null,robot,map,request.getPriority(),input,null,null);job.setRecoveryOfJob(recoverySource(request));return job;}
-    @Override public Job createForSchedule(Schedule schedule,Instant fireAt,JsonNode input){var policy=rollout.lockForRuntimeCreation();if(jobRepository.existsByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(schedule.getScheduleId(),fireAt,"DEFAULT"))return jobRepository.findAll().stream().filter(j->j.getSchedule()!=null&&j.getSchedule().getScheduleId().equals(schedule.getScheduleId())&&fireAt.equals(j.getScheduleFireAt())).findFirst().orElseThrow();Workflow w=schedule.getWorkflow();rollout.requireSchema(policy,w.getSchemaVersion());if(w.getStatus()!=WorkflowStatus.PUBLISHED||!w.isAcceptsNewJobs())throw new BusinessRuleException("Schedule workflow does not accept new jobs");Robot robot=selectRobot(schedule.getRobot(),null,w);return create(w,null,schedule,robot,robot==null?null:robot.getCurrentMap(),schedule.getPriority(),merge(w.getDefaultInputsJson(),input),fireAt,"DEFAULT");}
+    @Override public Job createForSchedule(Schedule schedule,Instant fireAt,JsonNode input){var policy=rollout.lockForRuntimeCreation();if(jobRepository.existsByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(schedule.getScheduleId(),fireAt,"DEFAULT"))return jobRepository.findAll().stream().filter(j->j.getSchedule()!=null&&j.getSchedule().getScheduleId().equals(schedule.getScheduleId())&&fireAt.equals(j.getScheduleFireAt())).findFirst().orElseThrow();Workflow w=schedule.getWorkflow();rollout.requireSchema(policy,w.getSchemaVersion());if(w.getStatus()!=WorkflowStatus.PUBLISHED||!w.isAcceptsNewJobs())throw new BusinessRuleException("Schedule workflow does not accept new jobs");Robot robot=selectRobot(schedule.getRobot(),null,w);return create(w,null,schedule,robot,robot==null?null:robot.getCurrentMap(),schedule.getPriority(),inputSnapshots.forWorkflow(w,input),fireAt,"DEFAULT");}
 
     private Job create(Workflow workflow,ServiceRequest request,Schedule schedule,Robot robot,FacilityMap map,int priority,JsonNode input,Instant fireAt,String itemKey){
         if(robot!=null && !readiness.acceptsRobot(workflow,robot))throw new BusinessRuleException("Selected robot does not support this workflow transport; enrolled MQTT robots require schema 3");
@@ -157,7 +157,6 @@ public class JobExecutionServiceImpl implements JobExecutionService {
         try{return jobRepository.findById(UUID.fromString(value.asText())).orElseThrow(()->new ResourceNotFoundException("Recovery source Job not found"));}
         catch(IllegalArgumentException ex){throw new BusinessRuleException("recovery_of_job_id must be a UUID");}
     }
-    private JsonNode merge(JsonNode defaults,JsonNode runtime){return inputSnapshots.merged(defaults,runtime);}
     private JsonNode copy(JsonNode n){return n==null?objectMapper.createObjectNode():n.deepCopy();}
     private void event(Job job,String type,String previous,String next,JsonNode data){Instant now=Instant.now(clock);eventRepository.save(JobEvent.builder().jobEventId(UUID.randomUUID()).job(job).robot(job.getRobot()).producerType(JobEventProducerType.SERVER).producerSessionId(UUID.randomUUID()).sequenceNo(1).eventType(type).previousStatus(previous).newStatus(next).statusScope("JOB").eventDataJson(data).occurredAt(now).receivedAt(now).persistedAt(now).build());}
 }

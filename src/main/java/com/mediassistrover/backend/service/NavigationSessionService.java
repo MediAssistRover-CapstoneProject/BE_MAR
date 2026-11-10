@@ -62,8 +62,17 @@ public class NavigationSessionService {
     @Transactional(readOnly=true)
     public ObjectNode status(UUID robotId){if(!robots.existsById(robotId))throw new ResourceNotFoundException("Robot not found");var row=rows.findById(robotId).orElse(null);return row==null?wire.object().put("state","NONE"):describe(row);}
     @Transactional(readOnly=true)
-    public ObjectNode device(DevicePrincipal principal){requireDevice(principal);var row=current(principal.robotId());
-        if(row==null)throw new BusinessRuleException("NAVIGATION_SESSION_CLOSED_OR_EXPIRED");return describe(row);}
+    public ObjectNode device(DevicePrincipal principal){
+        requireDevice(principal);
+        var row=current(principal.robotId());
+        if(row==null)throw new BusinessRuleException("NAVIGATION_SESSION_CLOSED_OR_EXPIRED");
+        var result=describe(row);
+        var floor=row.getMap().getFloor();
+        if(floor!=null&&floor.getHospitalInformation()!=null){
+            result.put("hospitalInformationId",floor.getHospitalInformation().getHospitalInformationId().toString());
+        }
+        return result;
+    }
     @Transactional
     public ObjectNode initialize(UUID robotId,Initialize request){
         idle(robotId);var row=required(robotId,request.sessionId());

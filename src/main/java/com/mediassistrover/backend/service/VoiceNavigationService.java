@@ -3,6 +3,7 @@ package com.mediassistrover.backend.service;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mediassistrover.backend.dto.request.request.ServiceRequestRequests.NavigationCreateRequest;
 import com.mediassistrover.backend.dto.request.response.ServiceRequestResponses.DeviceRequestDetailResponse;
+import com.mediassistrover.backend.entity.Endpoint;
 import com.mediassistrover.backend.enums.*;
 import com.mediassistrover.backend.exception.*;
 import com.mediassistrover.backend.mqtt.MqttWire;
@@ -19,8 +20,9 @@ import java.util.*;
 @Service @RequiredArgsConstructor @Transactional(readOnly=true)
 public class VoiceNavigationService {
     public static final String WORKFLOW_CODE="WF_VOICE_ENDPOINT_V1";
+    public static final double DEFAULT_SPEED_MPS = 0.35;
     public record Create(@NotNull UUID navigationSessionId,@NotNull UUID endpointId,
-        @DecimalMin("0.10") @DecimalMax("0.30") Double maxSpeedMps,UUID voiceInteractionId) { }
+        @DecimalMin("0.10") @DecimalMax("0.35") Double maxSpeedMps,UUID voiceInteractionId) { }
     private final NavigationSessionService sessions;
     private final DeviceResourceScopePolicy scope;
     private final EndpointRepository endpoints;
@@ -44,7 +46,8 @@ public class VoiceNavigationService {
         var points=result.putArray("endpoints");
         endpoints.findByMapMapIdOrderByEndpointCodeAsc(mapId).stream().filter(e->e.isActive()&&e.isAccessible()).forEach(e->{
             var p=points.addObject().put("endpointId",e.getEndpointId().toString()).put("mapId",mapId.toString())
-                .put("endpointCode",e.getEndpointCode()).put("endpointName",e.getEndpointName());
+                .put("endpointCode",e.getEndpointCode()).put("endpointName",e.getEndpointName())
+                .put("spokenLabel",spokenDestination(e));
             if(e.getRoom()!=null&&e.getRoom().isActive())p.put("roomCode",e.getRoom().getRoomCode()).put("roomName",e.getRoom().getRoomName());
         });
         return result;
@@ -53,8 +56,9 @@ public class VoiceNavigationService {
     @Transactional public DeviceRequestDetailResponse create(Create input,String key,DevicePrincipal device,RequestMetadata metadata) {
         scope.requireCurrentDevice(device);
         if(key==null||key.isBlank()||key.length()>150)throw new BusinessRuleException("Idempotency-Key is required, at most 150 characters");
-        double speed=input.maxSpeedMps()==null?.2:input.maxSpeedMps();
-        if(!Double.isFinite(speed)||speed<.1||speed>.3)throw new BusinessRuleException("Voice navigation speed must be 0.10..0.30 m/s");
+        double speed = input.maxSpeedMps() == null ? DEFAULT_SPEED_MPS : input.maxSpeedMps();
+        if (!Double.isFinite(speed) || speed < 0.10 || speed > 0.35)
+            throw new BusinessRuleException("Voice navigation speed must be 0.10..0.35 m/s");
         var prior=rows.findByIdempotencyKey(key).orElse(null);
         if(prior!=null){
             if(prior.getRequestedRobot()==null||!prior.getRequestedRobot().getRobotId().equals(device.robotId())
@@ -76,14 +80,28 @@ public class VoiceNavigationService {
             throw new BusinessRuleException("Voice destination must be an active accessible endpoint in this session map");
         var workflow=workflows.findFirstByWorkflowCodeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(WORKFLOW_CODE,WorkflowStatus.PUBLISHED)
             .orElseThrow(()->new BusinessRuleException("VOICE_NAVIGATION_WORKFLOW_NOT_PREPARED: prepare WF_VOICE_ENDPOINT_V1 on mapping.html"));
-        String name=target.getEndpointName().isBlank()?target.getEndpointCode():target.getEndpointName();
         var data=wire.object().put("voice_navigation",true).put("max_speed_mps",speed)
-            .put("arrival_text","Tôi đã tới điểm "+name+". Nhiệm vụ đã hoàn tất.");
+            .put("arrival_text",arrivalText(target));
         if(input.voiceInteractionId()!=null)data.put("voice_interaction_id",input.voiceInteractionId().toString());
         var body=new NavigationCreateRequest(mapId,workflow.getWorkflowId(),null,null,target.getEndpointId(),null,
             TargetMode.ENDPOINT,NavigationMode.STANDARD,null,1,null,50,"Confirmed voice destination: "+target.getEndpointCode(),
             data,device.robotId(),input.navigationSessionId());
         var created=requests.createDeviceNavigation(body,key,device,metadata);
         return requests.getDeviceRequest(created.request().serviceRequestId(),device);
+    }
+
+    public static String arrivalText(Endpoint endpoint) {
+        return "Đã đến " + spokenDestination(endpoint) + " rồi ạ.";
+    }
+
+    private static String spokenDestination(Endpoint endpoint){
+        String code=endpoint.getEndpointCode().strip();
+        String name=endpoint.getEndpointName().isBlank()?code:endpoint.getEndpointName().strip();
+        var room=endpoint.getRoom();
+        if(room!=null&&room.isActive()&&!room.getRoomName().isBlank()){
+            String roomName=room.getRoomName().strip();
+            return name.equalsIgnoreCase(code)||name.equalsIgnoreCase(roomName)?roomName:name+", "+roomName;
+        }
+        return name.matches("[A-Za-z]|[0-9]+")?"điểm "+name.toUpperCase(Locale.ROOT):name;
     }
 }

@@ -8,6 +8,7 @@ import com.mediassistrover.backend.entity.*;
 import com.mediassistrover.backend.enums.ServiceRequestType;
 import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.repository.*;
+import com.mediassistrover.backend.service.VoiceNavigationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -42,6 +43,7 @@ public class RequestJobInputSnapshotFactory {
             if (n.getOriginEndpoint() != null) result.put("origin_endpoint_id", n.getOriginEndpoint().getEndpointId().toString());
             if (n.getDestinationEndpoint() != null) result.put("endpoint_id", n.getDestinationEndpoint().getEndpointId().toString());
             if (n.getDestinationGroup() != null) result.put("endpoint_group_id", n.getDestinationGroup().getEndpointGroupId().toString());
+            applyVoiceNavigationDefaults(workflow, result, n.getDestinationEndpoint());
         } else if (request.getRequestType() == ServiceRequestType.ESCORT) {
             EscortRequest e = escorts.findById(request.getServiceRequestId()).orElseThrow(() -> new BusinessRuleException("Escort request detail is missing"));
             result.put("map_id", e.getMap().getMapId().toString()).put("target_mode", e.getTargetMode().name());
@@ -52,6 +54,26 @@ public class RequestJobInputSnapshotFactory {
             if (e.getDestinationGroup() != null) result.put("endpoint_group_id", e.getDestinationGroup().getEndpointGroupId().toString());
         }
         return result;
+    }
+
+    public ObjectNode forWorkflow(Workflow workflow, JsonNode clientData) {
+        ObjectNode result = merged(workflow.getDefaultInputsJson(), clientData);
+        applyVoiceNavigationDefaults(workflow, result, null);
+        return result;
+    }
+
+    private void applyVoiceNavigationDefaults(Workflow workflow, ObjectNode input, Endpoint destination) {
+        if (!VoiceNavigationService.WORKFLOW_CODE.equalsIgnoreCase(workflow.getWorkflowCode())) return;
+        if (!input.hasNonNull("max_speed_mps")) {
+            double defaultSpeed = workflow.getDefaultInputsJson().path("max_speed_mps")
+                    .asDouble(VoiceNavigationService.DEFAULT_SPEED_MPS);
+            double speedLimit = workflow.getInputSchemaJson().at("/properties/max_speed_mps/maximum")
+                    .asDouble(VoiceNavigationService.DEFAULT_SPEED_MPS);
+            input.put("max_speed_mps", Math.min(defaultSpeed, speedLimit));
+        }
+        if (!input.hasNonNull("arrival_text")) {
+            input.put("arrival_text", destination == null ? "Đã đến nơi rồi ạ." : VoiceNavigationService.arrivalText(destination));
+        }
     }
 
     public ObjectNode merged(JsonNode defaults, JsonNode clientData) {

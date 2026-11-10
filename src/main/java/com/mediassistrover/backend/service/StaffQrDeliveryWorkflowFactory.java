@@ -51,7 +51,7 @@ public class StaffQrDeliveryWorkflowFactory {
     private void addHandover(List<GraphStepRequest> steps, String stage, String endpoint, String payloadAction) {
         String purpose = "DELIVERY_" + stage;
         add(steps, stage, "MOVE", StepType.MOVE, "Đi tới điểm giao nhận", 180,
-                json.createObjectNode().put("mode", "NORMAL").put("max_speed_mps", .2),
+                json.createObjectNode().put("mode", "NORMAL").put("max_speed_mps", 0.35),
                 inputs(Map.of("map_id", "map_id", "endpoint_id", endpoint)));
         add(steps, stage, "AUTH", StepType.AUTHENTICATE, "Xác thực QR staff", 120,
                 json.createObjectNode().put("method", "QR_CODE").put("purpose", purpose),
