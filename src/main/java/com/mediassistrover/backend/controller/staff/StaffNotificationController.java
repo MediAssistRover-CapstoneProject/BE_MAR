@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import jakarta.servlet.http.HttpServletResponse;
 
 @RestController
 @RequiredArgsConstructor
@@ -18,7 +19,9 @@ public class StaffNotificationController {
     private final StaffNoticeStream stream;
 
     @GetMapping(value = "/events", produces = "text/event-stream")
-    public SseEmitter events(@AuthenticationPrincipal AccountPrincipal actor) {
+    public SseEmitter events(@AuthenticationPrincipal AccountPrincipal actor, HttpServletResponse response) {
+        response.setHeader("X-Accel-Buffering", "no");
+        response.setHeader("Cache-Control", "no-store");
         return stream.subscribe(actor);
     }
 }
