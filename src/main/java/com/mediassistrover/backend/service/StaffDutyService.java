@@ -36,7 +36,11 @@ public class StaffDutyService {
             s.setStatus(ShiftStatus.ACTIVE);
         } else {
             if(s.getCheckedInAt()==null)throw new BusinessRuleException("Check in before checking out");
-            if(s.getCheckedOutAt()==null)s.setCheckedOutAt(now);
+            if(s.getCheckedOutAt()==null) {
+                if(now.isBefore(s.getEndsAt()))
+                    throw new BusinessRuleException("Checkout is only allowed after the assigned shift ends");
+                s.setCheckedOutAt(now);
+            }
         }
         var out=new LinkedHashMap<String,Object>();out.put("shiftId",id);out.put("checkedInAt",s.getCheckedInAt());out.put("checkedOutAt",s.getCheckedOutAt());return out;
     }
