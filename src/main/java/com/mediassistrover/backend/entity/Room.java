@@ -19,6 +19,8 @@ public class Room {
     @Column(name = "room_code", nullable = false, length = 64, unique = true) private String roomCode;
     @Column(name = "room_name", nullable = false, length = 160) private String roomName;
     @Column(name = "room_type", nullable = false, length = 64) private String roomType;
+    @Column(name = "sos_original_room_name", length = 160) private String sosOriginalRoomName;
+    @Column(name = "sos_original_room_type", length = 64) private String sosOriginalRoomType;
     @Column(name = "department_code", length = 64) private String departmentCode;
     @Column(name = "description", columnDefinition = "TEXT") private String description;
     @Column(name = "is_active", nullable = false) private boolean active;

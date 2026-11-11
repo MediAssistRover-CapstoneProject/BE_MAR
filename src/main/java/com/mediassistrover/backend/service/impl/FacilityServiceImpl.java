@@ -15,6 +15,7 @@ import com.mediassistrover.backend.service.AuditService;
 import com.mediassistrover.backend.service.FacilityService;
 import com.mediassistrover.backend.service.FacilityDeletionResource;
 import com.mediassistrover.backend.service.RequestMetadata;
+import com.mediassistrover.backend.service.SosMonitoringRoomService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -46,6 +47,7 @@ public class FacilityServiceImpl implements FacilityService {
     private final HospitalHardDeleteService hospitalDelete;
     private final FloorHardDeleteService floorDelete;
     private final FacilityCatalogHardDeleteService catalogDelete;
+    private final SosMonitoringRoomService sosRooms;
 
     @Override @Transactional
     public HospitalInformationResponse createHospitalInformation(HospitalInformationRequest r, UUID actorId, RequestMetadata md) {
@@ -164,22 +166,25 @@ public class FacilityServiceImpl implements FacilityService {
 
     @Override @Transactional public RoomResponse createRoom(RoomRequest r,UUID a,RequestMetadata md){
         if(roomRepository.existsByRoomCodeIgnoreCase(r.roomCode()))throw new ConflictException("Room code already exists");
-        Room e=mapper.toEntity(r);bindRoom(e,r);e=roomRepository.save(e);audit(account(a),"ROOM_CREATED","Room",e.getRoomId(),md);return mapper.toResponse(e);}
+        Account actor=account(a);Room e=mapper.toEntity(r);bindRoom(e,r);e=roomRepository.save(e);
+        sosRooms.reconcile(e,r.roomName(),"GENERAL",actor);audit(actor,"ROOM_CREATED","Room",e.getRoomId(),md);return mapper.toResponse(e);}
     @Override @Transactional public RoomResponse updateRoom(UUID id,RoomRequest r,UUID a,RequestMetadata md){Room e=room(id);
         if(!e.getRoomCode().equalsIgnoreCase(r.roomCode())&&roomRepository.existsByRoomCodeIgnoreCase(r.roomCode()))throw new ConflictException("Room code already exists");
-        mapper.update(r,e);bindRoom(e,r);audit(account(a),"ROOM_UPDATED","Room",id,md);return mapper.toResponse(e);}
-    @Override @Transactional public RoomResponse setRoomActive(UUID id,boolean active,String reason,UUID a,RequestMetadata md){Room e=room(id);boolean before=e.isActive();e.setActive(active);auditService.record(account(a),active?"ROOM_ACTIVATED":"ROOM_DEACTIVATED","Room",id,Map.of("active",before),Map.of("active",active,"reason",reason),md);return mapper.toResponse(e);}
+        String oldName=e.getRoomName(),oldType=e.getRoomType();Account actor=account(a);
+        mapper.update(r,e);bindRoom(e,r);sosRooms.reconcile(e,oldName,oldType,actor);audit(actor,"ROOM_UPDATED","Room",id,md);return mapper.toResponse(e);}
+    @Override @Transactional public RoomResponse setRoomActive(UUID id,boolean active,String reason,UUID a,RequestMetadata md){Room e=room(id);boolean before=e.isActive();String oldName=e.getRoomName(),oldType=e.getRoomType();Account actor=account(a);e.setActive(active);sosRooms.reconcile(e,oldName,oldType,actor);auditService.record(actor,active?"ROOM_ACTIVATED":"ROOM_DEACTIVATED","Room",id,Map.of("active",before),Map.of("active",active,"reason",reason),md);return mapper.toResponse(e);}
     @Override public Page<RoomResponse> listRooms(boolean includeDeleted,Pageable p){return(includeDeleted?roomRepository.findAll(p):roomRepository.findByActiveTrue(p)).map(mapper::toResponse);}
     @Override public RoomResponse getRoom(UUID id,boolean includeDeleted){Room e=room(id);if(!includeDeleted&&!e.isActive())throw notFound("Room",id);return mapper.toResponse(e);}
     @Override public DeletionImpactResponse roomDeletionImpact(UUID id){return catalogDelete.impact(FacilityDeletionResource.ROOM,id);}
-    @Override @Transactional public HardDeleteResponse forceDeleteRoom(UUID id,String reason,UUID actorId,RequestMetadata md){return forceCatalog(FacilityDeletionResource.ROOM,id,reason,actorId,md);}
+    @Override @Transactional public HardDeleteResponse forceDeleteRoom(UUID id,String reason,UUID actorId,RequestMetadata md){Account actor=account(actorId);sosRooms.releaseIfConfigured(room(id),actor);HardDeleteResponse result=catalogDelete.delete(FacilityDeletionResource.ROOM,id);auditService.record(actor,"ROOM_FORCE_DELETED","ROOM",id,null,Map.of("reason",reason,"deleted",result.deleted()),md);return result;}
 
     @Override @Transactional public EndpointResponse createEndpoint(EndpointRequest r,UUID a,RequestMetadata md){
         if(endpointRepository.existsByMapMapIdAndEndpointCodeIgnoreCase(r.mapId(),r.endpointCode()))throw new ConflictException("Endpoint code already exists in this map");
-        Endpoint e=mapper.toEntity(r);bindEndpoint(e,r);e=endpointRepository.save(e);audit(account(a),"ENDPOINT_CREATED","Endpoint",e.getEndpointId(),md);return mapper.toResponse(e);}
+        Endpoint e=mapper.toEntity(r);bindEndpoint(e,r);e=endpointRepository.save(e);sosRooms.captureCreatedEndpoint(e);audit(account(a),"ENDPOINT_CREATED","Endpoint",e.getEndpointId(),md);return mapper.toResponse(e);}
     @Override @Transactional public EndpointResponse updateEndpoint(UUID id,EndpointRequest r,UUID a,RequestMetadata md){Endpoint e=endpoint(id);
         if((!e.getMap().getMapId().equals(r.mapId())||!e.getEndpointCode().equalsIgnoreCase(r.endpointCode()))&&endpointRepository.existsByMapMapIdAndEndpointCodeIgnoreCase(r.mapId(),r.endpointCode()))throw new ConflictException("Endpoint code already exists in this map");
-        mapper.update(r,e);bindEndpoint(e,r);audit(account(a),"ENDPOINT_UPDATED","Endpoint",id,md);return mapper.toResponse(e);}
+        Room nextRoom=r.roomId()==null?null:room(r.roomId());var transition=sosRooms.prepareEndpointChange(e,nextRoom);
+        mapper.update(r,e);bindEndpoint(e,r);sosRooms.finishEndpointChange(e,transition);audit(account(a),"ENDPOINT_UPDATED","Endpoint",id,md);return mapper.toResponse(e);}
     @Override @Transactional public EndpointResponse setEndpointActive(UUID id,boolean active,String reason,UUID a,RequestMetadata md){Endpoint e=endpoint(id);boolean before=e.isActive();e.setActive(active);auditService.record(account(a),active?"ENDPOINT_ACTIVATED":"ENDPOINT_DEACTIVATED","Endpoint",id,Map.of("active",before),Map.of("active",active,"reason",reason),md);return mapper.toResponse(e);}
     @Override public Page<EndpointResponse> listEndpoints(boolean includeDeleted,Pageable p){return(includeDeleted?endpointRepository.findAll(p):endpointRepository.findByActiveTrue(p)).map(mapper::toResponse);}
     @Override public EndpointResponse getEndpoint(UUID id,boolean includeDeleted){Endpoint e=endpoint(id);if(!includeDeleted&&!e.isActive())throw notFound("Endpoint",id);return mapper.toResponse(e);}

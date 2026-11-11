@@ -23,6 +23,7 @@ public class MapPresentationService {
     private final ObjectMapper json;
     private final EntityManager entityManager;
     private final Clock clock;
+    private final SosMonitoringRoomService sosMonitoringRooms;
 
     @Transactional(readOnly=true)
     public Editor editor(UUID id) {
@@ -97,6 +98,9 @@ public class MapPresentationService {
     void validate(Document document,Source source) {
         if(!Double.isFinite(document.rotationDegrees()) || document.rotationDegrees() < -180 || document.rotationDegrees() > 180)
             throw new BusinessRuleException("Góc xoay giao diện phải từ -180 đến 180 độ.");
+        long sosRoomCount=document.features().stream().filter(feature->feature.type()==FeatureType.ROOM
+                && sosMonitoringRooms.isSosType(feature.roomType())).count();
+        if(sosRoomCount>1) throw new BusinessRuleException("Mỗi bản đồ chỉ được khai báo một phòng SOS.");
         Set<String> ids=new HashSet<>();
         Set<UUID> linked=new HashSet<>();
         for(Feature feature:document.features()) {
@@ -142,6 +146,9 @@ public class MapPresentationService {
             if(name==null) throw new BusinessRuleException("Phòng gắn điểm đích phải có tên phòng.");
             String type=text(feature.roomType(),"GENERAL");
             Room room=resolveRoom(feature,code,map);
+            boolean created=room.getRoomId()==null;
+            String previousName=created?name:room.getRoomName();
+            String previousType=created?"GENERAL":room.getRoomType();
             if(room.getRoomId()!=null && !roomIds.add(room.getRoomId()))
                 throw new BusinessRuleException("Một phòng trong database chỉ được gắn với một hình phòng trên bản đồ.");
             Optional<Room> codeOwner=rooms.findByRoomCodeIgnoreCase(code);
@@ -156,7 +163,9 @@ public class MapPresentationService {
             endpoint.setRoom(room);
             if(visible) endpoint.setPublicVisible(true);
             endpoints.save(endpoint);
-            result.add(feature.withRoom(room.getRoomId(),code,name,type,clean(feature.departmentCode()),clean(feature.roomDescription()),visible));
+            sosMonitoringRooms.reconcile(room,previousName,previousType,null);
+            result.add(feature.withRoom(room.getRoomId(),room.getRoomCode(),room.getRoomName(),room.getRoomType(),
+                    room.getDepartmentCode(),room.getDescription(),room.isPublicVisible()));
         }
         return new Document(document.schemaVersion(),document.backgroundColor(),result,document.rotationDegrees());
     }

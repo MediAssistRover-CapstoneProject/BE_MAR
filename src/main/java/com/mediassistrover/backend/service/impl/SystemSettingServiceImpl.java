@@ -14,6 +14,7 @@ import com.mediassistrover.backend.repository.SystemSettingRepository;
 import com.mediassistrover.backend.service.AuditService;
 import com.mediassistrover.backend.service.RequestMetadata;
 import com.mediassistrover.backend.service.SystemSettingService;
+import com.mediassistrover.backend.service.SosMonitoringRoomService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -37,6 +38,7 @@ public class SystemSettingServiceImpl implements SystemSettingService {
     @Override
     @Transactional
     public SystemSettingResponse create(Create request, UUID actorId, RequestMetadata metadata) {
+        requireNotManaged(request.settingKey());
         if (repository.existsBySettingKey(request.settingKey())) throw new ConflictException("Setting key already exists");
         validateValue(request.dataType(), request.settingValue());
         Account actor = account(actorId);
@@ -54,6 +56,7 @@ public class SystemSettingServiceImpl implements SystemSettingService {
     public SystemSettingResponse update(UUID id, Update request, UUID actorId, RequestMetadata metadata) {
         validateValue(request.dataType(), request.settingValue());
         SystemSetting setting = setting(id);
+        requireNotManaged(setting.getSettingKey());
         Map<String, Object> before = auditData(setting);
         Account actor = account(actorId);
         setting.setSettingValue(request.settingValue());
@@ -79,14 +82,15 @@ public class SystemSettingServiceImpl implements SystemSettingService {
     @Transactional
     public SystemSettingResponse delete(UUID id,String reason, UUID actorId, RequestMetadata metadata) {
         SystemSetting setting = setting(id);
+        requireNotManaged(setting.getSettingKey());
         Account actor = account(actorId);
         Map<String, Object> before = auditData(setting);
         setting.setActive(false);setting.setUpdatedBy(actor);setting.setUpdatedAt(Instant.now(clock));
         auditService.record(actor, "SYSTEM_SETTING_RETIRED", "SystemSetting", id, before, Map.of("active",false,"reason",reason), metadata);return toResponse(setting);
     }
-    @Override @Transactional public SystemSettingResponse restore(UUID id,String reason,UUID actorId,RequestMetadata metadata){SystemSetting s=setting(id);if(s.isActive())throw new BusinessRuleException("SystemSetting is already active");Account actor=account(actorId);s.setActive(true);s.setUpdatedBy(actor);s.setUpdatedAt(Instant.now(clock));auditService.record(actor,"SYSTEM_SETTING_RESTORED","SystemSetting",id,Map.of("active",false),Map.of("active",true,"reason",reason),metadata);return toResponse(s);}
-    @Override public com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id){setting(id);return new com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse(id,"SystemSetting",true,java.util.List.of(),Map.of());}
-    @Override @Transactional public com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,UUID actorId,RequestMetadata metadata){SystemSetting s=setting(id);Account actor=account(actorId);repository.delete(s);var result=new com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse(id,"SystemSetting",Map.of("SystemSetting",1L));auditService.record(actor,"SYSTEM_SETTING_FORCE_DELETED","SystemSetting",id,auditData(s),Map.of("reason",reason),metadata);return result;}
+    @Override @Transactional public SystemSettingResponse restore(UUID id,String reason,UUID actorId,RequestMetadata metadata){SystemSetting s=setting(id);requireNotManaged(s.getSettingKey());if(s.isActive())throw new BusinessRuleException("SystemSetting is already active");Account actor=account(actorId);s.setActive(true);s.setUpdatedBy(actor);s.setUpdatedAt(Instant.now(clock));auditService.record(actor,"SYSTEM_SETTING_RESTORED","SystemSetting",id,Map.of("active",false),Map.of("active",true,"reason",reason),metadata);return toResponse(s);}
+    @Override public com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id){SystemSetting s=setting(id);boolean managed=SosMonitoringRoomService.SETTING_KEY.equalsIgnoreCase(s.getSettingKey());return new com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse(id,"SystemSetting",!managed,managed?java.util.List.of("Setting is managed by the Room API"):java.util.List.of(),Map.of());}
+    @Override @Transactional public com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,UUID actorId,RequestMetadata metadata){SystemSetting s=setting(id);requireNotManaged(s.getSettingKey());Account actor=account(actorId);repository.delete(s);var result=new com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse(id,"SystemSetting",Map.of("SystemSetting",1L));auditService.record(actor,"SYSTEM_SETTING_FORCE_DELETED","SystemSetting",id,auditData(s),Map.of("reason",reason),metadata);return result;}
 
     private void validateValue(SystemSettingDataType type, Map<String, Object> value) {
         Object scalar = value.get("value");
@@ -98,6 +102,11 @@ public class SystemSettingServiceImpl implements SystemSettingService {
             case ARRAY -> scalar instanceof Iterable<?>;
         };
         if (!valid) throw new BusinessRuleException("settingValue.value does not match dataType " + type);
+    }
+
+    private void requireNotManaged(String key) {
+        if (SosMonitoringRoomService.SETTING_KEY.equalsIgnoreCase(key))
+            throw new BusinessRuleException("sos.monitoring-room-id is managed by the Room API");
     }
 
     private SystemSetting setting(UUID id) {

@@ -5,12 +5,17 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.repository.query.Param;
+import jakarta.persistence.LockModeType;
 
 import java.util.UUID;
 import java.util.Optional;
 
 public interface RoomRepository extends JpaRepository<Room, UUID> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from Room r where r.roomId = :id")
+    Optional<Room> lockById(@Param("id") UUID id);
     boolean existsByRoomCodeIgnoreCase(String roomCode);
     Optional<Room> findByRoomCodeIgnoreCase(String roomCode);
     Page<Room> findByActiveTrueAndPublicVisibleTrue(Pageable pageable);

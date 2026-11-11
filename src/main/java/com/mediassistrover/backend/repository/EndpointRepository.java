@@ -16,6 +16,7 @@ public interface EndpointRepository extends JpaRepository<Endpoint, UUID> {
     Page<Endpoint> findByActiveTrueAndPublicVisibleTrue(Pageable pageable);
     Page<Endpoint> findByActiveTrue(Pageable pageable);
     List<Endpoint> findByMapMapIdOrderByEndpointCodeAsc(UUID mapId);
+    List<Endpoint> findByRoomRoomIdOrderByEndpointCodeAsc(UUID roomId);
     List<Endpoint> findByZoneZoneId(UUID zoneId);
     @Query("""
             select e from Endpoint e where e.active = true and e.publicVisible = true

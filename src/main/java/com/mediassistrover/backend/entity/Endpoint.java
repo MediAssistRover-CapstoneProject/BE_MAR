@@ -21,6 +21,7 @@ public class Endpoint {
     @ManyToOne(fetch = FetchType.LAZY) @JoinColumn(name = "room_id") private Room room;
     @Column(name = "endpoint_code", nullable = false, length = 64) private String endpointCode;
     @Column(name = "endpoint_name", nullable = false, length = 160) private String endpointName;
+    @Column(name = "sos_original_endpoint_name", length = 160) private String sosOriginalEndpointName;
     @Enumerated(EnumType.STRING) @Column(name = "endpoint_type", nullable = false, length = 32) private EndpointType endpointType;
     @Column(name = "x_m", nullable = false, precision = 12, scale = 4) private BigDecimal xM;
     @Column(name = "y_m", nullable = false, precision = 12, scale = 4) private BigDecimal yM;
