@@ -114,7 +114,7 @@ public class PahoMqttTransport implements SmartLifecycle {
     }
     /** Preserve the broker's retain flag; ignore stored retained messages when subscribing. */
     public static MqttSubscription[] subscriptions() {
-        String[] lanes={"events","heartbeat","presence","map-preview","mapping/preview","profile-acks","mapping/control-acks","camera/preview","navigation/pose"};
+        String[] lanes={"events","heartbeat","presence","map-preview","mapping/preview","profile-acks","mapping/control-acks","camera/preview","navigation/pose","vision/detections"};
         MqttSubscription[] subscriptions=new MqttSubscription[lanes.length];
         for(int i=0;i<lanes.length;i++) {
             var value=new MqttSubscription("mar/robots/+/"+lanes[i],java.util.Set.of("heartbeat","map-preview","mapping/preview","camera/preview","navigation/pose").contains(lanes[i])?0:1);

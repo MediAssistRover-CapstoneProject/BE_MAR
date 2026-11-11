@@ -20,6 +20,7 @@ public class MqttInboundRouter {
     private final com.mediassistrover.backend.service.NavigationProfileService navigationProfiles;
     private final com.mediassistrover.backend.mapping.MappingControlService mappingControl;
     private final NavigationLivePoseService livePoses;
+    private final com.mediassistrover.backend.ai.VisionDetectionIngestionService visionDetections;
     public void receive(String topic,byte[] bytes,int qos,boolean retained) {
         try {route(topic,bytes,qos,retained);}
         catch (BusinessRuleException | IllegalArgumentException ex) {log.warn("MQTT inbound rejected on {}: {}",topic,ex.getMessage());}
@@ -29,6 +30,13 @@ public class MqttInboundRouter {
         MqttTopics.Topic lane=MqttTopics.parse(topic);
         if (!properties.manages(lane.robotId())) throw new BusinessRuleException("MQTT robot is not enrolled");
         ObjectNode raw=wire.parse(bytes);
+        if("vision/detections".equals(lane.lane())) {
+            if(retained||qos!=1)throw new BusinessRuleException("Vision detections require QoS 1 and retain=false");
+            var result=visionDetections.ingest(lane.robotId(),raw);
+            log.info("Vision detection accepted: robot={} detection={} incident={} duplicate={}",lane.robotId(),
+                    result.detectionEventId(),result.incidentId(),result.duplicate());
+            return;
+        }
         boolean live=Set.of("mapping/control-acks","camera/preview","navigation/pose").contains(lane.lane());
         if(live)contracts.live(raw);else contracts.inbound(raw);
         if (!lane.robotId().equals(UUID.fromString(raw.path("robotId").asText()))) throw new BusinessRuleException("MQTT robotId differs from topic identity");

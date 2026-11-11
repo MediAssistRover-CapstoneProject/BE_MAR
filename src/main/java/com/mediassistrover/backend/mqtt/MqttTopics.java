@@ -11,7 +11,7 @@ public final class MqttTopics {
             throw new IllegalArgumentException("Invalid inbound MQTT topic");
         String lane=String.join("/",Arrays.copyOfRange(parts,3,parts.length));
         if (lane.equals("map-preview")) lane="mapping/preview";
-        if (!Set.of("events","heartbeat","presence","mapping/preview","profile-acks","mapping/control-acks","camera/preview","navigation/pose").contains(lane))
+        if (!Set.of("events","heartbeat","presence","mapping/preview","profile-acks","mapping/control-acks","camera/preview","navigation/pose","vision/detections").contains(lane))
             throw new IllegalArgumentException("Invalid inbound MQTT topic");
         UUID id=UUID.fromString(parts[2]);
         if (!id.toString().equals(parts[2])) throw new IllegalArgumentException("Topic robot ID must be a canonical lowercase UUID");

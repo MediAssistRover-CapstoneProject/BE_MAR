@@ -25,18 +25,15 @@ public class EmergencyServiceImpl implements EmergencyService {
     private final RobotRepository robotRepository; private final FacilityMapRepository mapRepository;
     private final EndpointRepository endpointRepository; private final AccountRepository accountRepository;
     private final AlertRepository alertRepository; private final AlertRecipientRepository recipientRepository;
-    private final AlertService alertService; private final JobExecutionService jobExecutionService;
+    private final AlertService alertService;
     private final JobRepository jobRepository; private final AuditService auditService;
-    private final WorkflowRepository workflowRepository;
     private final ObjectMapper objectMapper; private final Clock clock;
     private final OrchestrationWorkService wakeups;
     private final com.mediassistrover.backend.mqtt.MqttWire wire;
-    private final com.mediassistrover.backend.validation.WorkflowExecutionReadiness readiness;
     private final com.mediassistrover.backend.validation.DeviceResourceScopePolicy deviceScope;
     private final com.mediassistrover.backend.storage.MediaReferenceValidator mediaReferences;
-    private final com.mediassistrover.backend.media.MediaSessionService mediaSessions;
     private final com.mediassistrover.backend.validation.StaffOperationalScopePolicy staffScope;
-    private final SosResponderRouting sosRouting;
+    private final EmergencyFlowService emergencyFlow;
 
     @Override @Transactional public SosResponse createSos(PiEnvelope<SosPayload> e,DevicePrincipal actor,RequestMetadata md){
         Robot authenticated=deviceScope.requireCurrentDevice(actor);validateEnvelope(e,actor);
@@ -44,44 +41,13 @@ public class EmergencyServiceImpl implements EmergencyService {
         if(robot.getDeviceSecretHash()==null||robot.getDeviceTokenVersion()!=actor.tokenVersion()||!robot.getRobotCode().equals(actor.robotCode()))throw new org.springframework.security.access.AccessDeniedException("Device session is no longer valid");
         String key=operationKey(e);ServiceRequest previous=requestRepository.findByIdempotencyKey(key).orElse(null);if(previous!=null)return existing(previous,e);
         SosPayload p=e.payload();if((p.xM()==null)!=(p.yM()==null))throw new BusinessRuleException("xM and yM must both be provided or both be null");FacilityMap map=p.mapId()==null?robot.getCurrentMap():map(p.mapId());Endpoint endpoint=p.endpointId()==null?null:endpoint(p.endpointId());if(endpoint!=null&&(map==null||!endpoint.getMap().getMapId().equals(map.getMapId())))throw new BusinessRuleException("Emergency endpoint must belong to incident map");
-        Instant now=Instant.now(clock);
-        EmergencyIncident incident=EmergencyIncident.builder().robot(robot).map(map).endpoint(endpoint)
-                .incidentType("SOS").severity(p.severity()).status(EmergencyIncidentStatus.OPEN)
-                .description(p.description()).xM(p.xM()).yM(p.yM()).occurredAt(e.occurredAt()).build();
-        sosRouting.assign(incident,now);
-        incidentRepository.saveAndFlush(incident);
-        ObjectNode data=objectMapper.createObjectNode().put("incident_id",incident.getIncidentId().toString())
-                .put("message",p.description()).put("severity",p.severity().name())
+        ObjectNode data=objectMapper.createObjectNode()
                 .put("source_payload_hash",wire.canonicalHash(objectMapper.valueToTree(p)));
-        if(endpoint!=null)data.put("endpoint_id",endpoint.getEndpointId().toString());
-        UUID mediaSessionId=mediaSessions.openSos(incident);
-        if(mediaSessionId!=null)data.put("media_session_id",mediaSessionId.toString());
-
-        ServiceRequest request=requestRepository.saveAndFlush(ServiceRequest.builder().requestedRobot(robot)
-                .relatedIncidentId(incident.getIncidentId()).requestCode(code("REQ")).requestType(ServiceRequestType.EMERGENCY_SOS)
-                .sourceType(RequestSourceType.ROBOT_UI).priority(p.severity()==EmergencyIncidentSeverity.CRITICAL?100:80)
-                .status(ServiceRequestStatus.SUBMITTED).requestNote(p.description()).requestDataJson(data)
-                .idempotencyKey(key).requestedAt(now).build());
-        Alert alert=alertService.createSystemAlert(key,"SOS",p.severity()==EmergencyIncidentSeverity.CRITICAL
-                ?AlertSeverity.CRITICAL:AlertSeverity.WARNING,p.description(),
-                data.deepCopy().put("sos_routing_status",incident.getSosRoutingStatus().name()),incident,request,null,
-                endpoint==null?null:endpoint.getZone(),true,AlertAckPolicy.ANY,now.plusSeconds(300));
-        Job job=null;
-        if(incident.getSosResponder()!=null) {
-            if(robot.getStatus()==RobotStatus.IDLE && jobRepository.findByRobotRobotIdAndStatusIn(robot.getRobotId(),
-                    List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED)).isEmpty()
-                    && canDispatch(robot)) {
-                job=jobExecutionService.createForRequest(request);
-                job.setAssignedStaffAccount(incident.getSosResponder());
-                request.setStatus(ServiceRequestStatus.QUEUED);
-            } else {
-                request.setRequestDataJson(data.deepCopy().put("dispatch_pending",true));
-            }
-        }
-        auditService.record(null,"EMERGENCY_SOS_CREATED","EmergencyIncident",incident.getIncidentId(),null,
-                Map.of("robotId",robot.getRobotId(),"serviceRequestId",request.getServiceRequestId(),
-                        "sosRoutingStatus",incident.getSosRoutingStatus().name()),md);
-        return new SosResponse(response(incident),request.getServiceRequestId(),alert.getAlertId(),job==null?null:job.getJobId());
+        var created=emergencyFlow.create(new EmergencyFlowService.Command(key,robot,map,endpoint,null,
+                "SOS",p.severity(),p.description(),p.xM(),p.yM(),e.occurredAt(),
+                RequestSourceType.ROBOT_UI,data,"EMERGENCY_SOS_CREATED",md));
+        return new SosResponse(response(created.incident()),created.request().getServiceRequestId(),
+                created.alert().getAlertId(),created.job()==null?null:created.job().getJobId());
     }
     @Override public DeviceIncidentStatusResponse getDeviceIncident(UUID id,DevicePrincipal actor){EmergencyIncident value=incident(id);deviceScope.requireIncidentOwner(value,actor);ServiceRequest request=requestRepository.findByRelatedIncidentId(id).orElse(null);Alert alert=alertRepository.findByIncidentIncidentId(id).stream().filter(a->"SOS".equals(a.getNotificationType())).min(Comparator.comparing(Alert::getCreatedAt)).orElse(null);Job job=request==null?null:jobRepository.findByServiceRequestServiceRequestId(request.getServiceRequestId()).stream().min(Comparator.comparing(Job::getQueuedAt).thenComparing(Job::getJobId)).orElse(null);return new DeviceIncidentStatusResponse(value.getIncidentId(),value.getRobot().getRobotId(),value.getMap()==null?null:value.getMap().getMapId(),value.getEndpoint()==null?null:value.getEndpoint().getEndpointId(),value.getSeverity(),value.getStatus(),value.getDescription(),value.getXM(),value.getYM(),value.getOccurredAt(),value.getAcknowledgedAt(),value.getResolvedAt(),value.getClosedAt(),request==null?null:request.getServiceRequestId(),request==null?null:request.getStatus(),alert==null?null:alert.getAlertId(),alert==null?null:alert.getStatus(),job==null?null:job.getJobId(),job==null?null:job.getStatus());}
     @Override public IncidentResponse get(UUID id,boolean includeDeleted,AccountPrincipal actor){EmergencyIncident value=incident(id);staffScope.requireIncidentAccess(value,actor);if(!includeDeleted&&value.getArchivedAt()!=null)throw new ResourceNotFoundException("EmergencyIncident not found: "+id);return response(value);}
@@ -105,11 +71,10 @@ public class EmergencyServiceImpl implements EmergencyService {
     private SosResponse existing(ServiceRequest request,PiEnvelope<SosPayload> e){if(request.getRequestType()!=ServiceRequestType.EMERGENCY_SOS||request.getRequestedRobot()==null||!request.getRequestedRobot().getRobotId().equals(e.robotId()))throw new ConflictException("SOS operation key belongs to another request");if(request.getRequestDataJson().has("source_payload_hash") && !request.getRequestDataJson().path("source_payload_hash").asText().equals(wire.canonicalHash(objectMapper.valueToTree(e.payload()))))throw new ConflictException("SOS operation key reused with different payload");EmergencyIncident i=incident(request.getRelatedIncidentId());Alert a=alertRepository.findByOperationKey(operationKey(e)).orElseThrow();Job j=jobRepository.findByServiceRequestServiceRequestId(request.getServiceRequestId()).stream().findFirst().orElse(null);return new SosResponse(response(i),request.getServiceRequestId(),a.getAlertId(),j==null?null:j.getJobId());}
     private void validateEnvelope(PiEnvelope<?> e,DevicePrincipal actor){if(!"1.0".equals(e.protocolVersion())||!"EMERGENCY_SOS".equals(e.messageType()))throw new BusinessRuleException("Invalid SOS protocol or messageType");if(!actor.robotId().equals(e.robotId()))throw new BusinessRuleException("Envelope robotId does not match device token");if(e.jobId()!=null||e.jobStepId()!=null)throw new BusinessRuleException("SOS request must not specify jobId/jobStepId");if(e.occurredAt().isAfter(Instant.now(clock).plusSeconds(300)))throw new BusinessRuleException("occurredAt is too far in the future");}
     private String operationKey(PiEnvelope<?> e){UUID hash=UUID.nameUUIDFromBytes(e.operationKey().getBytes(StandardCharsets.UTF_8));return "SOS:"+e.robotId()+":"+hash;}
-    private boolean canDispatch(Robot robot){var workflow=workflowRepository.findFirstByServiceTypeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc("EMERGENCY",WorkflowStatus.PUBLISHED).orElse(null);if(workflow==null || !readiness.acceptsRobot(workflow,robot))return false;try{readiness.requireReady(workflow);return true;}catch(BusinessRuleException ex){return false;}}
     private IncidentResponse response(EmergencyIncident i){return new IncidentResponse(i.getIncidentId(),i.getRobot()==null?null:i.getRobot().getRobotId(),i.getMap()==null?null:i.getMap().getMapId(),i.getEndpoint()==null?null:i.getEndpoint().getEndpointId(),i.getAcknowledgedByAccount()==null?null:i.getAcknowledgedByAccount().getAccountId(),i.getResolvedByAccount()==null?null:i.getResolvedByAccount().getAccountId(),i.getIncidentType(),i.getSeverity(),i.getStatus(),i.getDescription(),i.getXM(),i.getYM(),i.getOccurredAt(),i.getAcknowledgedAt(),i.getResolvedAt(),i.getClosedAt(),i.getDetectionEvent()==null?null:i.getDetectionEvent().getEvidenceRef(),i.getResolutionNote(),i.getResolutionEvidenceJson(),i.getRowVersion(),
                 i.getSosResponder()==null?null:i.getSosResponder().getAccountId(),i.getSosRoutingStatus());}
     private void audit(Account account,String action,EmergencyIncident i,RequestMetadata md){auditService.record(account,action,"EmergencyIncident",i.getIncidentId(),null,Map.of("status",i.getStatus().name()),md);}
     private void validateWindow(Instant from,Instant to){if(from!=null&&to!=null&&!from.isBefore(to))throw new BusinessRuleException("from must be before to");}
     private String normalize(String value){return value==null||value.isBlank()?null:value.trim();}
-    private String code(String prefix){return prefix+"-"+UUID.randomUUID().toString().replace("-","").substring(0,20).toUpperCase(Locale.ROOT);}private EmergencyIncident incident(UUID id){return incidentRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("EmergencyIncident not found: "+id));}private EmergencyIncident incidentForUpdate(UUID id){return incidentRepository.lockById(id).orElseThrow(()->new ResourceNotFoundException("EmergencyIncident not found: "+id));}private Robot robot(UUID id){return robotRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Robot not found: "+id));}private FacilityMap map(UUID id){return mapRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Map not found: "+id));}private Endpoint endpoint(UUID id){return endpointRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Endpoint not found: "+id));}private Account account(UUID id){return accountRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Account not found: "+id));}
+    private EmergencyIncident incident(UUID id){return incidentRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("EmergencyIncident not found: "+id));}private EmergencyIncident incidentForUpdate(UUID id){return incidentRepository.lockById(id).orElseThrow(()->new ResourceNotFoundException("EmergencyIncident not found: "+id));}private Robot robot(UUID id){return robotRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Robot not found: "+id));}private FacilityMap map(UUID id){return mapRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Map not found: "+id));}private Endpoint endpoint(UUID id){return endpointRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Endpoint not found: "+id));}private Account account(UUID id){return accountRepository.findById(id).orElseThrow(()->new ResourceNotFoundException("Account not found: "+id));}
 }

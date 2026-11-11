@@ -7,6 +7,7 @@ import com.mediassistrover.backend.exception.ConflictException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import java.time.*;
+import java.util.UUID;
 @Service @RequiredArgsConstructor
 public class MonitoringReceiptService {
     private final MonitoringIngestionReceiptRepository receipts;
@@ -20,5 +21,18 @@ public class MonitoringReceiptService {
     }
     public void record(PiEnvelope<?> envelope,Robot robot){record(envelope,robot,null);}
     public void record(PiEnvelope<?> envelope,Robot robot,com.fasterxml.jackson.databind.JsonNode provenance){receipts.saveAndFlush(MonitoringIngestionReceipt.builder().messageId(envelope.messageId()).robotId(robot.getRobotId()).messageType(envelope.messageType()).payloadHash(hash(envelope)).receivedAt(Instant.now(clock)).provenanceJson(provenance).build());}
+    public boolean duplicateVision(UUID messageId,Robot robot,com.fasterxml.jackson.databind.node.ObjectNode payload) {
+        var receipt=receipts.findById(messageId).orElse(null);if(receipt==null)return false;
+        if(!receipt.getRobotId().equals(robot.getRobotId()) || !receipt.getMessageType().equals("VISION_AI_EVENT")
+                || !receipt.getPayloadHash().equals(wire.canonicalHash(payload)))
+            throw new ConflictException("Vision event identity reused with different robot/type/content");
+        return true;
+    }
+    public void recordVision(UUID messageId,Robot robot,com.fasterxml.jackson.databind.node.ObjectNode payload,
+                             com.fasterxml.jackson.databind.JsonNode provenance) {
+        receipts.saveAndFlush(MonitoringIngestionReceipt.builder().messageId(messageId).robotId(robot.getRobotId())
+                .messageType("VISION_AI_EVENT").payloadHash(wire.canonicalHash(payload)).receivedAt(Instant.now(clock))
+                .provenanceJson(provenance).build());
+    }
     private String hash(PiEnvelope<?> envelope){return wire.canonicalHash(json.valueToTree(envelope));}
 }

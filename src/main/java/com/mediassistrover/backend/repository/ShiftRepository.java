@@ -65,6 +65,7 @@ public interface ShiftRepository extends JpaRepository<Shift, UUID> {
               and a.role = com.mediassistrover.backend.enums.Role.STAFF
               and a.mustChangePassword = false
               and s.status = com.mediassistrover.backend.enums.ShiftStatus.ACTIVE
+              and s.checkedInAt is not null and s.checkedOutAt is null
               and s.startsAt <= :now and s.endsAt > :now
             order by a.accountCode
             """)
