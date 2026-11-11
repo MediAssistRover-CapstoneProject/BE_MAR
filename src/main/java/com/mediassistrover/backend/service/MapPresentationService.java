@@ -140,7 +140,7 @@ public class MapPresentationService {
             Endpoint endpoint=endpoints.findById(feature.endpointId()).orElseThrow(()->new ResourceNotFoundException("Điểm đích không tồn tại: "+feature.endpointId()));
             if(!endpoint.getMap().getMapId().equals(map.getMapId()) || !endpoint.isActive() || !endpoint.isAccessible())
                 throw new BusinessRuleException("Điểm liên kết phải đang hoạt động, có thể tiếp cận và thuộc map này.");
-            String endpointName=clean(feature.endpointName());
+            String endpointName=text(feature.endpointName(),endpoint.getEndpointName());
             if(endpointName==null) throw new BusinessRuleException("Phòng gắn điểm đích phải có tên endpoint.");
             if(endpointName.length()>160) throw new BusinessRuleException("Tên endpoint không được vượt quá 160 ký tự.");
             String code=roomCode(feature,map), normalized=code.toLowerCase(Locale.ROOT);
