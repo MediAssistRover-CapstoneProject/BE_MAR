@@ -17,9 +17,10 @@ public interface EmergencyIncidentRepository extends JpaRepository<EmergencyInci
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select i from EmergencyIncident i where i.incidentId=:id")
     Optional<EmergencyIncident> lockById(@Param("id") UUID id);
-    @Query("select i from EmergencyIncident i where (:status is null or i.status=:status) " +
+    @Query("select i from EmergencyIncident i left join i.map m left join i.endpoint e left join e.room r " +
+            "where (:status is null or i.status=:status) " +
             "and (:severity is null or i.severity=:severity) and (:type is null or lower(i.incidentType)=lower(:type)) " +
-            "and (:mapId is null or i.map.mapId=:mapId) and (:roomId is null or i.endpoint.room.roomId=:roomId) " +
+            "and (:mapId is null or m.mapId=:mapId) and (:roomId is null or r.roomId=:roomId) " +
             "and (:from is null or i.occurredAt>=:from) and (:to is null or i.occurredAt<:to)")
     Page<EmergencyIncident> search(@Param("status") EmergencyIncidentStatus status,
             @Param("severity") com.mediassistrover.backend.enums.EmergencyIncidentSeverity severity,
