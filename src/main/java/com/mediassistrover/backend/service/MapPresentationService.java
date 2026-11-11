@@ -140,6 +140,9 @@ public class MapPresentationService {
             Endpoint endpoint=endpoints.findById(feature.endpointId()).orElseThrow(()->new ResourceNotFoundException("Điểm đích không tồn tại: "+feature.endpointId()));
             if(!endpoint.getMap().getMapId().equals(map.getMapId()) || !endpoint.isActive() || !endpoint.isAccessible())
                 throw new BusinessRuleException("Điểm liên kết phải đang hoạt động, có thể tiếp cận và thuộc map này.");
+            String endpointName=clean(feature.endpointName());
+            if(endpointName==null) throw new BusinessRuleException("Phòng gắn điểm đích phải có tên endpoint.");
+            if(endpointName.length()>160) throw new BusinessRuleException("Tên endpoint không được vượt quá 160 ký tự.");
             String code=roomCode(feature,map), normalized=code.toLowerCase(Locale.ROOT);
             if(!roomCodes.add(normalized)) throw new BusinessRuleException("Mã phòng bị trùng trong bản đồ: "+code);
             String name=text(feature.roomName(),feature.label());
@@ -160,12 +163,13 @@ public class MapPresentationService {
             room.setFloor(map.getFloor()); room.setRoomCode(code); room.setRoomName(name); room.setRoomType(type);
             room.setDepartmentCode(clean(feature.departmentCode())); room.setDescription(clean(feature.roomDescription()));
             room.setActive(true); room.setPublicVisible(visible); room=rooms.save(room);
+            endpoint.setEndpointName(endpointName);
             endpoint.setRoom(room);
             if(visible) endpoint.setPublicVisible(true);
             endpoints.save(endpoint);
             sosMonitoringRooms.reconcile(room,previousName,previousType,null);
             result.add(feature.withRoom(room.getRoomId(),room.getRoomCode(),room.getRoomName(),room.getRoomType(),
-                    room.getDepartmentCode(),room.getDescription(),room.isPublicVisible()));
+                    room.getDepartmentCode(),room.getDescription(),room.isPublicVisible(),endpointName));
         }
         return new Document(document.schemaVersion(),document.backgroundColor(),result,document.rotationDegrees());
     }

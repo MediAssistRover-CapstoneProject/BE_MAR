@@ -19,6 +19,7 @@ public final class MapPresentationContracts {
         @NotNull @DecimalMin("0.01") @DecimalMax("2") Double lineWidthM,
         @NotNull @DecimalMin("0.05") @DecimalMax("5") Double fontSizeM,
         UUID endpointId,
+        String endpointName,
         UUID roomId,
         @Size(max=64) String roomCode,
         @Size(max=160) String roomName,
@@ -28,10 +29,19 @@ public final class MapPresentationContracts {
         Boolean roomPublicVisible) {
         public Feature(String id,FeatureType type,String label,String color,List<Point> points,
                        Double lineWidthM,Double fontSizeM,UUID endpointId) {
-            this(id,type,label,color,points,lineWidthM,fontSizeM,endpointId,null,null,null,null,null,null,null);
+            this(id,type,label,color,points,lineWidthM,fontSizeM,endpointId,null,null,null,null,null,null,null,null);
         }
-        public Feature withRoom(UUID value,String code,String name,String type,String department,String description,boolean visible) {
-            return new Feature(id,this.type,label,color,points,lineWidthM,fontSizeM,endpointId,value,code,name,type,department,description,visible);
+        public Feature(String id,FeatureType type,String label,String color,List<Point> points,
+                       Double lineWidthM,Double fontSizeM,UUID endpointId,UUID roomId,String roomCode,
+                       String roomName,String roomType,String departmentCode,String roomDescription,
+                       Boolean roomPublicVisible) {
+            this(id,type,label,color,points,lineWidthM,fontSizeM,endpointId,null,roomId,roomCode,roomName,
+                    roomType,departmentCode,roomDescription,roomPublicVisible);
+        }
+        public Feature withRoom(UUID value,String code,String name,String type,String department,String description,
+                                boolean visible,String synchronizedEndpointName) {
+            return new Feature(id,this.type,label,color,points,lineWidthM,fontSizeM,endpointId,synchronizedEndpointName,
+                    value,code,name,type,department,description,visible);
         }
     }
     /** Coordinates stay in the map's local grid; rotation affects presentation only. */
