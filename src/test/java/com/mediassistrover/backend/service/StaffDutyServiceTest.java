@@ -20,6 +20,7 @@ class StaffDutyServiceTest {
  .startsAt(now.minusSeconds(60)).endsAt(now.plusSeconds(60)).status(ShiftStatus.PLANNED).build();when(shifts.lockAttendance(shift.getShiftId())).thenReturn(Optional.of(shift));}
  @Test void checkInIsIdempotentAndCheckoutRemovesEligibility(){service.attendance(shift.getShiftId(),actor,true);service.attendance(shift.getShiftId(),actor,true);
  assertEquals(now,shift.getCheckedInAt());assertEquals(ShiftStatus.ACTIVE,shift.getStatus());assertSame(shift,service.require(shift.getShiftId(),a.getAccountId()));
+ shift.setEndsAt(now);
  service.attendance(shift.getShiftId(),actor,false);service.attendance(shift.getShiftId(),actor,false);assertEquals(now,shift.getCheckedOutAt());
  assertThrows(BusinessRuleException.class,()->service.require(shift.getShiftId(),a.getAccountId()));assertThrows(BusinessRuleException.class,()->service.attendance(shift.getShiftId(),actor,true));}
  @Test void rejectsUnattendedAndExpiredShifts(){shift.setStatus(ShiftStatus.ACTIVE);assertThrows(BusinessRuleException.class,()->service.require(shift.getShiftId(),a.getAccountId()));
