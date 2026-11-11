@@ -8,6 +8,7 @@ import com.mediassistrover.backend.exception.*;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.mqtt.MqttWire;
 import com.mediassistrover.backend.security.AccountPrincipal;
+import com.mediassistrover.backend.service.PatrolWorkflowService;
 import jakarta.validation.constraints.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -28,6 +29,7 @@ public class AiSensingService {
     private final AccountRepository accounts;
     private final CrowdDensityRecordRepository crowd;
     private final DetectionEventRepository detections;
+    private final RestrictedIntrusionAlertService intrusionAlerts;
     private final MqttWire wire;
     private final Clock clock;
     private final com.mediassistrover.backend.service.AuditService auditService;
@@ -87,7 +89,11 @@ public class AiSensingService {
         }
         if(output.has("frame_id") && !profile.path("frame_id").asText().equals(output.path("frame_id").asText()))fail("AI frame differs from dispatched profile");
         if(output.has("producer_ref") && !profile.path("producer_ref").asText().equals(output.path("producer_ref").asText()))fail("AI producer differs from dispatched profile");
-        Zone zone=zones.findById(UUID.fromString(profile.path("zone_id").asText())).orElseThrow();
+        boolean intrusion = "RESTRICTED_ZONE".equals(output.path("sensing_type").asText())
+                && output.path("metrics").path("intrusion_detected").asBoolean();
+        boolean patrolIntrusion = intrusion && PatrolWorkflowService.isPatrol(step.getJobTask().getJob().getWorkflow());
+        UUID zoneId = UUID.fromString(profile.path("zone_id").asText());
+        Zone zone = (patrolIntrusion ? zones.lockById(zoneId) : zones.findById(zoneId)).orElseThrow();
         if(!zone.isActive() || !zone.getMap().getMapId().toString().equals(profile.path("map_id").asText())
                 || !Objects.equals(zone.getMap().getAssetHash(),profile.path("map_asset_hash").asText()) || !Objects.equals(zone.getMap().getFrameId(),profile.path("frame_id").asText()))fail("AI catalog changed during operation; observation cannot be attributed to the new map");
         Instant captured=Instant.parse(output.path("captured_at").asText());
@@ -108,10 +114,12 @@ public class AiSensingService {
             crowd.saveAndFlush(CrowdDensityRecord.builder().crowdDensityRecordId(id).robot(step.getJobTask().getJob().getRobot()).zone(zone).jobStep(step)
                     .personCount(count.intValue()).modelVersion(profile.path("model_version").asText()).metricsJson(output.path("metrics").deepCopy()).evidenceRef(evidence)
                     .capturedAt(captured).recordedAt(Instant.now(clock)).build());row.setCrowdRecordId(id);
-        } else if(output.path("metrics").path("intrusion_detected").asBoolean()) {
-            detections.saveAndFlush(DetectionEvent.builder().detectionEventId(id).robot(step.getJobTask().getJob().getRobot()).map(zone.getMap()).zone(zone)
+        } else if(intrusion) {
+            var detection = detections.saveAndFlush(DetectionEvent.builder().detectionEventId(id).robot(step.getJobTask().getJob().getRobot()).map(zone.getMap()).zone(zone)
                     .eventType(DetectionEventType.RESTRICTED_INTRUSION).locationBasis(DetectionLocationBasis.UNKNOWN).modelVersion(profile.path("model_version").asText())
-                    .eventPayloadJson(output.deepCopy()).evidenceRef(evidence).detectedAt(captured).receivedAt(Instant.now(clock)).build());row.setDetectionEventId(id);
+                    .eventPayloadJson(output.deepCopy()).evidenceRef(evidence).detectedAt(captured).receivedAt(Instant.now(clock)).build());
+            row.setDetectionEventId(id);
+            if (patrolIntrusion) intrusionAlerts.record(detection, step);
         }
         observations.saveAndFlush(row);
     }

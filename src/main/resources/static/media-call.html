@@ -33,12 +33,16 @@ body{font:16px system-ui,sans-serif;max-width:1000px;margin:24px auto;padding:0 
 </details>
 <small>Staff chỉ mở phiên cho sự cố thuộc phạm vi được phép. SOS ưu tiên micro/loa và dừng chuyển động của robot; phiên gọi hoạt động độc lập với AMCL.</small>
 <ol id="sessions"></ol>
+<h2>Cảnh báo tuần tra</h2>
+<p id="patrolAlertStatus" role="status"></p>
+<ul id="patrolAlerts"></ul>
 </section>
 <section>
 <video id="video" autoplay playsinline muted></video><div id="audio"></div>
 <p id="status" role="status">Chưa kết nối.</p>
 <button id="enableAudio" disabled>Bật âm thanh</button><button id="mic" disabled>Bật/tắt micro staff</button>
 <button id="end" disabled>Kết thúc phiên</button>
+<small>Dùng Kết thúc phiên để đóng cuộc gọi. Khi tải lại trang, hãy đăng nhập và kết nối lại sớm với phiên đang mở.</small>
 <small>Camera robot gửi hình bệnh nhân tới staff. Chỉ micro staff được phát ngược lại loa robot. Không ghi âm/ghi hình mặc định.</small>
 </section>
 <script src="/vendor/livekit-client.umd.min.js"></script><script src="/media-call.js"></script>

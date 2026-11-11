@@ -25,6 +25,14 @@ class StaffDutyServiceTest {
  assertThrows(BusinessRuleException.class,()->service.require(shift.getShiftId(),a.getAccountId()));assertThrows(BusinessRuleException.class,()->service.attendance(shift.getShiftId(),actor,true));}
  @Test void rejectsUnattendedAndExpiredShifts(){shift.setStatus(ShiftStatus.ACTIVE);assertThrows(BusinessRuleException.class,()->service.require(shift.getShiftId(),a.getAccountId()));
  shift.setCheckedInAt(now.minusSeconds(30));shift.setEndsAt(now);assertThrows(BusinessRuleException.class,()->service.require(shift.getShiftId(),a.getAccountId()));assertThrows(BusinessRuleException.class,()->service.attendance(shift.getShiftId(),actor,true));}
+ @Test void queuedDeliveryChecksTheRoomAndCurrentShiftBeforeStarting(){
+  service.attendance(shift.getShiftId(),actor,true);
+  UUID room=shift.getRoom().getRoomId();
+  assertTrue(service.receiverStillOnDuty(shift.getShiftId(),a.getAccountId(),room));
+  assertFalse(service.receiverStillOnDuty(shift.getShiftId(),a.getAccountId(),UUID.randomUUID()));
+  shift.setEndsAt(now);
+  assertFalse(service.receiverStillOnDuty(shift.getShiftId(),a.getAccountId(),room));
+ }
  @Test void rejectsOtherStaffAndCancelledShift(){var other=AccountPrincipal.fromAccount(Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).status(AccountStatus.ACTIVE).build());
  assertThrows(org.springframework.security.access.AccessDeniedException.class,()->service.attendance(shift.getShiftId(),other,true));shift.setStatus(ShiftStatus.CANCELLED);assertThrows(BusinessRuleException.class,()->service.attendance(shift.getShiftId(),actor,true));}
  Endpoint endpoint(){return Endpoint.builder().endpointId(UUID.randomUUID()).map(FacilityMap.builder().mapId(map).build()).room(shift.getRoom()).active(true).accessible(true).build();}

@@ -25,6 +25,10 @@ public class MediaEvents {
         var list=robots.get(robot);
         return list!=null&&!list.isEmpty();
     }
+    void unsubscribe(UUID robot,SseEmitter emitter) {
+        remove(robot,emitter);
+        emitter.complete();
+    }
     public void publish(UUID robot,Object event) {
         var list=robots.get(robot);if(list!=null)for(var emitter:list)send(robot,emitter,event);
     }

@@ -1,5 +1,6 @@
 package com.mediassistrover.backend.validation;
 
+import com.mediassistrover.backend.ai.RestrictedIntrusionAlertService;
 import com.mediassistrover.backend.entity.*;
 import com.mediassistrover.backend.enums.AccountStatus;
 import com.mediassistrover.backend.enums.Role;
@@ -125,6 +126,7 @@ public class StaffOperationalScopePolicy {
             return alert.getIncident().isSosResponder(accountId);
         boolean recipient = alert != null
                 && alertRecipientRepository.existsByAlertAlertIdAndAccountAccountId(alert.getAlertId(), accountId);
+        if (RestrictedIntrusionAlertService.isRoutedAlert(alert)) return recipient;
         boolean requestScope = alert != null && alert.getServiceRequest() != null
                 && isServiceRequestInScope(alert.getServiceRequest(), accountId, now);
         boolean jobScope = alert != null && alert.getJobStep() != null

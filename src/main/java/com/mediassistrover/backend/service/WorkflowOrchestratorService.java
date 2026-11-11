@@ -36,6 +36,8 @@ public class WorkflowOrchestratorService {
     private final Clock clock;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     private final StepExecutionPolicy executionPolicy;
+    private final DeliveryRequestRepository deliveries;
+    private final StaffDutyService staffDuty;
 
     @Transactional
     public void advance(UUID jobId) {
@@ -55,6 +57,8 @@ public class WorkflowOrchestratorService {
             if (robot.getStatus()!=RobotStatus.IDLE) return;
             if (jobs.findByRobotRobotIdAndStatusIn(robot.getRobotId(),List.of(JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED))
                     .stream().anyMatch(other->!other.getJobId().equals(jobId))) return;
+            now=clock.instant();
+            if (rejectExpiredDelivery(job,now)) return;
             job.setStatus(JobStatus.RUNNING); job.setAcceptedAt(now); job.setStartedAt(now); robot.setStatus(RobotStatus.BUSY);
             if (job.getServiceRequest()!=null) job.getServiceRequest().setStatus(ServiceRequestStatus.IN_PROGRESS);
             event(job,null,"BE_JOB_STARTED",json.createObjectNode());
@@ -154,6 +158,26 @@ public class WorkflowOrchestratorService {
         selected.setStatus(JobStepStatus.FAILED); selected.setErrorCode("SERVER_STEP_REJECTED");
         selected.setErrorDetailsJson(json.createObjectNode().put("message",reason));
         event(job,selected,"SERVER_STEP_REJECTED",selected.getErrorDetailsJson()); wakeups.request(job);
+    }
+
+    private boolean rejectExpiredDelivery(Job job, Instant now) {
+        var request=job.getServiceRequest();
+        if(request==null || request.getRequestType()!=ServiceRequestType.DELIVERY)return false;
+        var delivery=deliveries.findById(request.getServiceRequestId()).orElse(null);
+        if(delivery==null) {
+            job.setErrorCode("DELIVERY_REQUEST_MISSING");
+            job.setFailureReason("The queued job has no delivery request.");
+        } else if(delivery.getDeliveryDeadline()!=null && !delivery.getDeliveryDeadline().isAfter(now)) {
+            job.setErrorCode("DELIVERY_DEADLINE_EXPIRED");
+            job.setFailureReason("The delivery deadline elapsed while this job was queued.");
+        } else if(delivery.getReceiverShift()!=null && (delivery.getExpectedReceiverAccount()==null
+                || delivery.getDeliveryRoom()==null || !staffDuty.receiverStillOnDuty(delivery.getReceiverShift().getShiftId(),
+                delivery.getExpectedReceiverAccount().getAccountId(),delivery.getDeliveryRoom().getRoomId()))) {
+            job.setErrorCode("DELIVERY_RECEIVER_OFF_DUTY");
+            job.setFailureReason("The expected receiver is no longer on duty in the delivery room.");
+        } else return false;
+        finish(job,TerminalStatus.FAILED);
+        return true;
     }
 
     private boolean hasPhysicalWork(List<JobStep> visits) {

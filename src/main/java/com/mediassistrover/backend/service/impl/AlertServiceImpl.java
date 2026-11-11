@@ -1,6 +1,7 @@
 package com.mediassistrover.backend.service.impl;
 
 import com.fasterxml.jackson.databind.*;
+import com.mediassistrover.backend.ai.RestrictedIntrusionAlertService;
 import com.mediassistrover.backend.dto.alert.response.AlertResponses.*;
 import com.mediassistrover.backend.entity.*;
 import com.mediassistrover.backend.enums.*;
@@ -75,16 +76,17 @@ public class AlertServiceImpl implements AlertService {
         var incident=alert.getIncident();
         boolean unassignedSos=actor.role()==Role.ADMIN && incident!=null && incident.isRoutedSos()
                 && incident.getSosResponder()==null;
+        boolean patrolAlert = RestrictedIntrusionAlertService.isRoutedAlert(alert);
+        boolean unassignedPatrol = actor.role() == Role.ADMIN && patrolAlert && alert.getRequestedRecipientsJson().isEmpty();
         if(!alert.isRequireAck())throw new BusinessRuleException("Alert does not require acknowledgement");
         if(!unassignedSos && alert.getExpiresAt()!=null && !alert.getExpiresAt().isAfter(now))
             throw new BusinessRuleException("Alert acknowledgement window has expired");
         if(alert.getStatus()==AlertStatus.RESOLVED||alert.getStatus()==AlertStatus.CLOSED)
             throw new BusinessRuleException("Resolved or closed Alert cannot be acknowledged");
-        if(unassignedSos){
-            // Record manual triage without inventing a delivery to a staff member.
+        if(unassignedSos || unassignedPatrol){
             if(alert.getStatus()!=AlertStatus.ACKNOWLEDGED){
                 alert.setStatus(AlertStatus.ACKNOWLEDGED);
-                audit(actor,"UNASSIGNED_SOS_ACKNOWLEDGED",alert,md);
+                audit(actor,unassignedSos ? "UNASSIGNED_SOS_ACKNOWLEDGED" : "UNASSIGNED_PATROL_ALERT_ACKNOWLEDGED",alert,md);
             }
             return response(alert,actor);
         }
@@ -107,7 +109,7 @@ public class AlertServiceImpl implements AlertService {
                 &&(alert.getAckPolicy()==AlertAckPolicy.ANY||acked>=total);
         if(becameAcknowledged){
             alert.setStatus(AlertStatus.ACKNOWLEDGED);
-            if(alert.getJobStep()!=null && alert.getJobStep().getJobTask().getJob().getSchemaVersion()==3)
+            if(!patrolAlert && alert.getJobStep()!=null && alert.getJobStep().getJobTask().getJob().getSchemaVersion()==3)
                 workflowEvents.publishAlertAcknowledged(alert,account,now,acked,total);
             else completeNotify(alert,true);
         }

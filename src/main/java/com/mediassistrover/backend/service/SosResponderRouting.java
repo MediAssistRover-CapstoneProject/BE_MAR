@@ -1,6 +1,9 @@
 package com.mediassistrover.backend.service;
 
+import com.mediassistrover.backend.entity.Account;
 import com.mediassistrover.backend.entity.EmergencyIncident;
+import com.mediassistrover.backend.entity.EmergencyIncident.SosRoutingStatus;
+import com.mediassistrover.backend.entity.FacilityMap;
 import com.mediassistrover.backend.entity.Room;
 import com.mediassistrover.backend.repository.RoomRepository;
 import com.mediassistrover.backend.repository.ShiftRepository;
@@ -22,38 +25,41 @@ public class SosResponderRouting {
     private final RoomRepository rooms;
     private final ShiftRepository shifts;
 
+    public record Assignment(SosRoutingStatus status, Account responder) { }
+
     public void assign(EmergencyIncident incident, Instant now) {
-        String configuredRoom = settings.getString(MONITORING_ROOM_SETTING, "");
+        var assignment = resolve(incident.getMap(), now, null);
+        incident.setSosRoutingStatus(assignment.status());
+        if (assignment.responder() != null) incident.setSosResponder(assignment.responder());
+    }
+
+    public Assignment resolve(FacilityMap map, Instant now, UUID roomOverride) {
+        String configuredRoom = roomOverride == null
+                ? settings.getString(MONITORING_ROOM_SETTING, "") : roomOverride.toString();
         if (configuredRoom.isBlank()) {
-            incident.setSosRoutingStatus(NO_MONITORING_ROOM);
-            return;
+            return new Assignment(NO_MONITORING_ROOM, null);
         }
 
         UUID roomId;
         try {
             roomId = UUID.fromString(configuredRoom.trim());
         } catch (IllegalArgumentException error) {
-            incident.setSosRoutingStatus(ROOM_UNAVAILABLE);
-            return;
+            return new Assignment(ROOM_UNAVAILABLE, null);
         }
         var room = rooms.findById(roomId).filter(Room::isActive).orElse(null);
-        if (room == null || !room.getFloor().isActive() || !sameHospital(incident, room)) {
-            incident.setSosRoutingStatus(ROOM_UNAVAILABLE);
-            return;
+        if (room == null || !room.getFloor().isActive() || !sameHospital(map, room)) {
+            return new Assignment(ROOM_UNAVAILABLE, null);
         }
 
-        // Two rows suffice to detect a conflicting roster. The recipient is fixed for this incident.
+        // Two rows suffice to detect a conflicting roster.
         var candidates = shifts.findOnDutySosResponders(roomId, now, PageRequest.of(0, 2));
         if (candidates.size() == 1) {
-            incident.setSosResponder(candidates.getFirst());
-            incident.setSosRoutingStatus(ASSIGNED);
-        } else {
-            incident.setSosRoutingStatus(candidates.isEmpty() ? NO_ACTIVE_SHIFT : AMBIGUOUS_SHIFT);
+            return new Assignment(ASSIGNED, candidates.getFirst());
         }
+        return new Assignment(candidates.isEmpty() ? NO_ACTIVE_SHIFT : AMBIGUOUS_SHIFT, null);
     }
 
-    private boolean sameHospital(EmergencyIncident incident, Room room) {
-        var map = incident.getMap();
+    private boolean sameHospital(FacilityMap map, Room room) {
         return map == null || map.getFloor().getHospitalInformation().getHospitalInformationId()
                 .equals(room.getFloor().getHospitalInformation().getHospitalInformationId());
     }

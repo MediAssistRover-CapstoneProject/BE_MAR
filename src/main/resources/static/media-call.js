@@ -3,6 +3,7 @@
 const $=id=>document.getElementById(id),sdk=window.LivekitClient;
 let room=null,current=null,refreshTimer=null,lastFrame=0,frameHandle=null;
 let accessToken='',signingIn=false,connecting=false,listPending=false;
+let patrolAlertsPending=false;
 function message(value,error=false){$('status').textContent=value;$('status').className=error?'error':'';}
 async function request(path,body,token='',keepalive=false){
   const result=await fetch(path,{
@@ -38,6 +39,8 @@ function authView(label){
 function clearSignIn(label){
   accessToken='';
   $('sessions').replaceChildren();
+  $('patrolAlerts').replaceChildren();
+  $('patrolAlertStatus').textContent='';
   authView(label);
 }
 async function signIn(loadToken){
@@ -52,7 +55,7 @@ async function signIn(loadToken){
     $('staffLogin').reset();$('token').value='';
     authView('Đã đăng nhập · '+(account.fullName||account.username));
     message('Đang chờ phiên được giao.');
-    await refresh();
+    await refreshPanel();
   }catch(e){authView(e.message);}
   finally{signingIn=false;buttons();}
 }
@@ -130,6 +133,39 @@ async function refresh(){
     }
   }finally{listPending=false;buttons();}
 }
+async function refreshPatrolAlerts(){
+  if(!accessToken||patrolAlertsPending)return;
+  const token=accessToken;
+  const list=$('patrolAlerts'),status=$('patrolAlertStatus');
+  patrolAlertsPending=true;
+  try{
+    const page=await api('/api/v1/alerts?type=PATROL_RESTRICTED_INTRUSION&status=OPEN&size=10');
+    if(token!==accessToken)return;
+    const items=page.content||[];
+    status.textContent=items.length?'':'Không có cảnh báo tuần tra đang mở.';
+    list.replaceChildren(...items.map(alert=>{
+      const item=document.createElement('li'), label=document.createElement('span'), acknowledge=document.createElement('button');
+      const time=new Date(alert.dataJson?.detected_at||alert.createdAt).toLocaleString('vi-VN');
+      label.textContent=alert.message+' · '+time;
+      if(alert.dataJson?.routing_status&&alert.dataJson.routing_status!=='ASSIGNED')
+        label.textContent+=' · Chưa phân công staff ('+alert.dataJson.routing_status+')';
+      acknowledge.textContent='Đã nhận';
+      acknowledge.onclick=async()=>{
+        acknowledge.disabled=true;
+        try{
+          await api('/api/v1/alerts/'+alert.alertId+'/acknowledge',{});
+          if(token===accessToken){item.remove();await refreshPatrolAlerts();}
+        }catch(error){if(token===accessToken)status.textContent=error.message;}
+        finally{acknowledge.disabled=false;}
+      };
+      item.append(label,acknowledge);
+      return item;
+    }));
+  }catch(error){
+    if(token===accessToken)status.textContent='Chưa tải được cảnh báo tuần tra: '+error.message;
+  }finally{patrolAlertsPending=false;}
+}
+function refreshPanel(){return Promise.all([refresh(),refreshPatrolAlerts()]);}
 $('staffLogin').addEventListener('submit',event=>{
   event.preventDefault();
   const username=$('username').value.trim(),password=$('password').value;
@@ -152,13 +188,13 @@ $('create').onclick=()=>connect(()=>{
   if($('incident').value.trim())body.incidentId=$('incident').value.trim();
   return api('/api/v1/media-sessions',body);
 }).catch(e=>message(e.message,true));
-$('refresh').onclick=refresh;
-setInterval(()=>{if(!document.hidden)refresh();},7000);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
+$('refresh').onclick=refreshPanel;
+setInterval(()=>{if(!document.hidden)refreshPanel();},7000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshPanel();});
 $('enableAudio').onclick=()=>room?.startAudio().catch(e=>message(e.message,true));
 $('mic').onclick=async()=>{try{if(room)await room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled,{echoCancellation:true,noiseSuppression:true});}catch(e){message(e.message,true);}};
 $('end').onclick=async()=>{try{if(current)await api('/api/v1/media-sessions/'+current.sessionId+'/end',{reason:'STAFF_ENDED'});await leave();message('Đã kết thúc phiên.');}catch(e){message(e.message,true);}};
-window.addEventListener('pagehide',()=>{if(current)api('/api/v1/media-sessions/'+current.sessionId+'/end',{reason:'STAFF_PAGE_CLOSED'},true).catch(()=>{});if(room)room.disconnect();});
+window.addEventListener('pagehide',()=>{if(room)room.disconnect();});
 const query=new URLSearchParams(location.search);
 if(query.get('incidentId')){
   $('incident').value=query.get('incidentId');

@@ -51,6 +51,9 @@ public interface JobRepository extends JpaRepository<Job,UUID> {
     List<Job> findByRobotRobotIdAndStatusIn(UUID robotId,Collection<JobStatus> statuses);
     @Query("select j.jobId from Job j where j.status='QUEUED' and j.robot is null order by j.priority desc,j.queuedAt,j.jobId")
     List<UUID> findUnassignedQueuedJobIds(Pageable pageable);
+    @Query("select count(j)>0 from Job j left join j.map m where j.status='QUEUED' and j.robot is null " +
+           "and j.cancelRequestedAt is null and j.priority>:priority and (m is null or m.mapId=:mapId)")
+    boolean existsHigherPriorityQueuedForMap(@Param("mapId") UUID mapId, @Param("priority") int priority);
     Optional<Job> findFirstByRobotRobotIdAndStatusOrderByQueuedAtAsc(UUID robotId,JobStatus status);
     boolean existsByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(UUID scheduleId,Instant fireAt,String itemKey);
     @Query("select j.jobId from Job j where j.robot.robotId=:robotId and j.status in :statuses order by j.jobId")

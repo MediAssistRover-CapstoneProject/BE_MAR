@@ -22,7 +22,7 @@ public class NavigationGuidanceService {
     private final NavigationLivePoseService poses;
     private final MqttWire wire;
     private final Clock clock;
-    @Value("${app.navigation.guidance.announce-distance-cm:35}") private double announceCm;
+    @Value("${app.navigation.guidance.announce-distance-cm:80}") private double announceCm;
     @Value("${app.navigation.guidance.simplify-cm:2.5}") private double simplifyCm;
     @Value("${app.navigation.guidance.turn-angle-deg:35}") private double turnAngle;
     @Value("${app.navigation.guidance.max-path-offset-cm:25}") private double maxOffsetCm;
@@ -112,7 +112,7 @@ public class NavigationGuidanceService {
                     .put("text","Còn "+distance+" cm, "+instruction);
             out.putObject("turn").put("xM",b.x).put("yM",b.y);
             if(distance<=Math.max(1,announceCm)){
-                speech(out,step.getJobStepId(),cue,direction,b,"Phía trước "+instruction);
+                speech(out,step.getJobStepId(),cue,direction,b,"Chuẩn bị "+instruction+".");
             }else if(facingPath)straight(out,step.getJobStepId(),straightStart);
             return out;
         }
@@ -124,7 +124,8 @@ public class NavigationGuidanceService {
 
     private void straight(ObjectNode out,UUID step,Point anchor){
         String cue=step+":STRAIGHT:"+Math.round(anchor.x*5)+":"+Math.round(anchor.y*5);
-        speech(out,step,cue,"STRAIGHT",anchor,"Mời bạn đi thẳng theo tôi.");
+        long distance=Math.max(10,Math.round(out.path("distanceCm").asDouble()/10.)*10);
+        speech(out,step,cue,"STRAIGHT",anchor,"Mời bạn đi thẳng khoảng "+distance+" cm theo tôi.");
     }
 
     private void speech(ObjectNode out,UUID step,String cue,String direction,Point anchor,String text){

@@ -7,8 +7,10 @@ import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.*;
 import com.mediassistrover.backend.validation.*;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -128,10 +130,36 @@ public class MediaSessionService {
         }
         return view(s);
     }
+    @Transactional(isolation=Isolation.READ_COMMITTED)
     public SseEmitter deviceEvents(DevicePrincipal actor) {
-        var robot=deviceScope.requireCurrentDevice(actor);
-        View current=sessions.findByActiveRobotId(robot.getRobotId()).filter(s->s.getExpiresAt().isAfter(now())).map(this::view).orElse(null);
-        return events.subscribe(robot.getRobotId(),Duration.between(now(),actor.expiresAt()).toMillis(),new Event(properties.isEnabled(),current));
+        UUID robotId=deviceScope.requireCurrentDevice(actor).getRobotId();
+        boolean enabled=properties.isEnabled();
+        // SOS creation takes the same lock. Register the listener before
+        // releasing it so the initial snapshot cannot miss a new call.
+        if(enabled)robots.findByIdForUpdate(robotId).orElseThrow(()->new ResourceNotFoundException("Robot not found"));
+        var active=sessions.findByActiveRobotId(robotId);
+        View current=active.filter(s->s.getExpiresAt().isAfter(now())).map(this::view).orElse(null);
+        var emitter=events.subscribe(robotId,Duration.between(now(),actor.expiresAt()).toMillis(),new Event(enabled,current));
+        if(TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCompletion(int status) {
+                    if(status!=STATUS_COMMITTED)events.unsubscribe(robotId,emitter);
+                }
+            });
+        }
+        if(enabled&&active.isEmpty())retryMissedSos(robotId);
+        return emitter;
+    }
+
+    private void retryMissedSos(UUID robotId) {
+        // The caller holds the robot lock and has registered the listener.
+        // Never reopen an incident's previous call.
+        var recent=sessions.recentSosForMedia(robotId,now().minusSeconds(properties.getRingTimeoutSec()),
+                List.of(EmergencyIncidentStatus.OPEN,EmergencyIncidentStatus.ACKNOWLEDGED,EmergencyIncidentStatus.IN_PROGRESS),
+                PageRequest.of(0,1));
+        if(recent.isEmpty())return;
+        var incident=recent.getFirst();
+        if(!sessions.existsByIncidentIncidentId(incident.getIncidentId()))openSos(incident);
     }
     public Event deviceCurrent(DevicePrincipal actor) {
         var robot=deviceScope.requireCurrentDevice(actor);

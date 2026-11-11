@@ -1,16 +1,23 @@
 package com.mediassistrover.backend.repository;
 
 import com.mediassistrover.backend.entity.Zone;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import com.mediassistrover.backend.enums.ZoneType;
 
+import java.util.Optional;
 import java.util.UUID;
 
 public interface ZoneRepository extends JpaRepository<Zone, UUID> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select z from Zone z where z.zoneId = :id")
+    Optional<Zone> lockById(@Param("id") UUID id);
+
     java.util.List<Zone> findByMapMapIdOrderByZoneCodeAsc(UUID mapId);
     boolean existsByMapMapIdAndZoneCodeIgnoreCase(UUID mapId, String zoneCode);
     Page<Zone> findByActiveTrueAndPublicVisibleTrue(Pageable pageable);

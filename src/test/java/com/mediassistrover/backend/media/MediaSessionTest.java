@@ -194,6 +194,59 @@ class MediaSessionTest {
         assertNull(service.openSos(incident));
         verifyNoInteractions(sessions,gateway,jobs,wakeups);
     }
+    @Test void reconnectingDeviceOpensOneRecentMissedSosWithoutASecondStaffClaim() {
+        properties.setEnabled(true);
+        var robot=Robot.builder().robotId(UUID.randomUUID()).build();
+        var responder=Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).build();
+        var incident=EmergencyIncident.builder().incidentId(UUID.randomUUID()).robot(robot)
+                .incidentType("SOS").status(EmergencyIncidentStatus.OPEN).occurredAt(instant.minusSeconds(3))
+                .sosRoutingStatus(EmergencyIncident.SosRoutingStatus.ASSIGNED).sosResponder(responder).build();
+        when(robots.findByIdForUpdate(robot.getRobotId())).thenReturn(Optional.of(robot));
+        when(sessions.findByActiveRobotId(robot.getRobotId())).thenReturn(Optional.empty());
+        when(sessions.recentSosForMedia(eq(robot.getRobotId()),eq(instant.minusSeconds(60)),anyList(),eq(PageRequest.of(0,1))))
+                .thenReturn(List.of(incident));
+        when(events.isListening(robot.getRobotId())).thenReturn(true);
+
+        service.deviceEvents(device(robot));
+
+        var saved=ArgumentCaptor.forClass(MediaSession.class);
+        verify(sessions).saveAndFlush(saved.capture());
+        assertEquals(incident,saved.getValue().getIncident());
+        assertEquals(MediaSession.State.RINGING,saved.getValue().getState());
+        assertEquals(MediaSession.Mode.ASSIST,saved.getValue().getMode());
+        assertNull(saved.getValue().getStaff());
+        verifyNoInteractions(gateway,jobs,wakeups);
+    }
+    @Test void reconnectingDeviceNeverReopensAnIncidentsEndedCall() {
+        properties.setEnabled(true);
+        var robot=Robot.builder().robotId(UUID.randomUUID()).build();
+        var incident=EmergencyIncident.builder().incidentId(UUID.randomUUID()).robot(robot).build();
+        when(robots.findByIdForUpdate(robot.getRobotId())).thenReturn(Optional.of(robot));
+        when(sessions.findByActiveRobotId(robot.getRobotId())).thenReturn(Optional.empty());
+        when(sessions.recentSosForMedia(eq(robot.getRobotId()),any(),anyList(),any())).thenReturn(List.of(incident));
+        when(sessions.existsByIncidentIncidentId(incident.getIncidentId())).thenReturn(true);
+
+        service.deviceEvents(device(robot));
+
+        verify(sessions,never()).saveAndFlush(any());
+        verifyNoInteractions(gateway,jobs,wakeups);
+    }
+    @Test void reconnectingDeviceWithAnOpenCallDoesNotSearchOldSosIncidents() {
+        properties.setEnabled(true);
+        var session=session();
+        var robot=session.getRobot();
+        var robotId=robot.getRobotId();
+        when(robots.findByIdForUpdate(robotId)).thenReturn(Optional.of(robot));
+        when(sessions.findByActiveRobotId(robotId)).thenReturn(Optional.of(session));
+        var principal=device(robot);
+        service.deviceEvents(principal);
+        var order=inOrder(robots,sessions,events);
+        order.verify(robots).findByIdForUpdate(robotId);
+        order.verify(sessions).findByActiveRobotId(robotId);
+        order.verify(events).subscribe(eq(robotId),anyLong(),any());
+        verify(sessions,never()).recentSosForMedia(any(),any(),anyList(),any());
+        verifyNoInteractions(gateway,jobs,wakeups);
+    }
     @Test void monitorDoesNotCancelMovementJobs() {
         var s=session();s.setMode(MediaSession.Mode.MONITOR);
         service.deviceToken(s.getSessionId(),device(s.getRobot()));verifyNoInteractions(jobs,wakeups);

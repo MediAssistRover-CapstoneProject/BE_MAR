@@ -46,11 +46,23 @@ public class StaffDutyService {
     }
     public Shift require(UUID id, UUID account) {
         Shift s=shifts.lockAttendance(id).orElseThrow(()->new ResourceNotFoundException("Receiver shift not found"));
-        Instant now=clock.instant();var p=s.getStaffProfile();var a=p.getAccount();
-        if(!a.getAccountId().equals(account)||!p.isActive()||a.getStatus()!=AccountStatus.ACTIVE||a.getRole()!=Role.STAFF||a.isMustChangePassword()
-            ||s.getStatus()!=ShiftStatus.ACTIVE||s.getCheckedInAt()==null||s.getCheckedOutAt()!=null||now.isBefore(s.getStartsAt())||!now.isBefore(s.getEndsAt())||!s.getRoom().isActive())
+        if(!activeReceiver(s,account,clock.instant()))
             throw new BusinessRuleException("Receiver is no longer checked in to this shift");
         return s;
+    }
+
+    public boolean receiverStillOnDuty(UUID shiftId, UUID accountId, UUID roomId) {
+        return shifts.lockAttendance(shiftId).filter(shift -> activeReceiver(shift,accountId,clock.instant()))
+                .filter(shift -> shift.getRoom().getRoomId().equals(roomId)).isPresent();
+    }
+
+    private boolean activeReceiver(Shift shift, UUID accountId, Instant now) {
+        var profile=shift.getStaffProfile();
+        var account=profile.getAccount();
+        return account.getAccountId().equals(accountId) && profile.isActive()
+                && account.getStatus()==AccountStatus.ACTIVE && account.getRole()==Role.STAFF && !account.isMustChangePassword()
+                && shift.getStatus()==ShiftStatus.ACTIVE && shift.getCheckedInAt()!=null && shift.getCheckedOutAt()==null
+                && !now.isBefore(shift.getStartsAt()) && now.isBefore(shift.getEndsAt()) && shift.getRoom().isActive();
     }
     public Endpoint target(Shift s, UUID map) {
         Room room=s.getRoom();var group=room.getDefaultEndpointGroup();

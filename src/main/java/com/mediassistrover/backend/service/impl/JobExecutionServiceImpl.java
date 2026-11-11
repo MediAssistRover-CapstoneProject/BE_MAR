@@ -7,13 +7,14 @@ import com.mediassistrover.backend.enums.*;
 import com.mediassistrover.backend.exception.*;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.service.JobExecutionService;
+import com.mediassistrover.backend.service.PatrolWorkflowService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.*;
 import java.util.*;
 
-@Service @RequiredArgsConstructor @Transactional
+@Service @RequiredArgsConstructor @Transactional @lombok.extern.slf4j.Slf4j
 public class JobExecutionServiceImpl implements JobExecutionService {
     private static final Set<JobStatus> ACTIVE=EnumSet.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
     private static final Set<ServiceRequestType> ROBOT_PINNED=EnumSet.of(ServiceRequestType.CROWD_MONITORING,
@@ -35,6 +36,7 @@ public class JobExecutionServiceImpl implements JobExecutionService {
     private final MappingSessionRepository mappingSessions;
     private final com.mediassistrover.backend.mqtt.MqttRolloutService rollout;
     private final com.mediassistrover.backend.service.NavigationSessionService navigationSessions;
+    private final PatrolWorkflowService patrol;
     @Override public Job createForTest(UUID workflowId,UUID robotId,UUID mapId,UUID sessionId,JsonNode input) {
         var policy=rollout.lockForRuntimeCreation();
         Workflow workflow=workflowRepository.findById(workflowId).orElseThrow(()->new ResourceNotFoundException("Workflow not found"));
@@ -111,7 +113,38 @@ public class JobExecutionServiceImpl implements JobExecutionService {
         if(sessionPinned){if(request.getRequestedRobot()==null||map==null)throw new BusinessRuleException("Navigation session requires its selected robot/map");
             navigationSessions.requireReadyContext(request.getRequestedRobot().getRobotId(),UUID.fromString(request.getRequestDataJson().path("navigation_session_id").asText()),map.getMapId());}
         Robot robot=ROBOT_PINNED.contains(request.getRequestType())||sessionPinned?selectPinnedRobot(request.getRequestedRobot()):selectRobot(request.getRequestedRobot(),map,workflow);JsonNode input=inputSnapshots.forRequest(workflow,request);Job job=create(workflow,request,null,robot,map,request.getPriority(),input,null,null);job.setRecoveryOfJob(recoverySource(request));return job;}
-    @Override public Job createForSchedule(Schedule schedule,Instant fireAt,JsonNode input){var policy=rollout.lockForRuntimeCreation();if(jobRepository.existsByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(schedule.getScheduleId(),fireAt,"DEFAULT"))return jobRepository.findAll().stream().filter(j->j.getSchedule()!=null&&j.getSchedule().getScheduleId().equals(schedule.getScheduleId())&&fireAt.equals(j.getScheduleFireAt())).findFirst().orElseThrow();Workflow w=schedule.getWorkflow();rollout.requireSchema(policy,w.getSchemaVersion());if(w.getStatus()!=WorkflowStatus.PUBLISHED||!w.isAcceptsNewJobs())throw new BusinessRuleException("Schedule workflow does not accept new jobs");Robot robot=selectRobot(schedule.getRobot(),null,w);return create(w,null,schedule,robot,robot==null?null:robot.getCurrentMap(),schedule.getPriority(),inputSnapshots.forWorkflow(w,input),fireAt,"DEFAULT");}
+    @Override public Job createForSchedule(Schedule schedule, Instant fireAt, JsonNode input) {
+        var policy = rollout.lockForRuntimeCreation();
+        if (jobRepository.existsByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(schedule.getScheduleId(), fireAt, "DEFAULT")) {
+            return jobRepository.findAll().stream().filter(job -> job.getSchedule() != null
+                    && job.getSchedule().getScheduleId().equals(schedule.getScheduleId())
+                    && fireAt.equals(job.getScheduleFireAt())).findFirst().orElseThrow();
+        }
+        Workflow workflow = schedule.getWorkflow();
+        rollout.requireSchema(policy, workflow.getSchemaVersion());
+        if (PatrolWorkflowService.isPatrol(workflow)) {
+            if (policy.dispatchHalted() || workflow.getStatus() != WorkflowStatus.PUBLISHED
+                    || !workflow.isAcceptsNewJobs() || schedule.getRobot() == null) return null;
+            Robot robot = robotRepository.findByIdForUpdate(schedule.getRobot().getRobotId()).orElse(null);
+            FacilityMap map;
+            try {
+                patrol.validateSchedule(workflow, robot, schedule.getPriority(), schedule.getIntervalSec(), input);
+                map = patrol.readyMap(workflow, robot, schedule.getPriority());
+            } catch (BusinessRuleException | ResourceNotFoundException error) {
+                log.warn("Patrol schedule {} skipped: {}", schedule.getScheduleId(), error.getMessage());
+                return null;
+            }
+            if (map == null) return null;
+            return create(workflow, null, schedule, robot, map, schedule.getPriority(),
+                    inputSnapshots.forWorkflow(workflow, input), fireAt, "DEFAULT");
+        }
+        if (workflow.getStatus() != WorkflowStatus.PUBLISHED || !workflow.isAcceptsNewJobs()) {
+            throw new BusinessRuleException("Schedule workflow does not accept new jobs");
+        }
+        Robot robot = selectRobot(schedule.getRobot(), null, workflow);
+        return create(workflow, null, schedule, robot, robot == null ? null : robot.getCurrentMap(),
+                schedule.getPriority(), inputSnapshots.forWorkflow(workflow, input), fireAt, "DEFAULT");
+    }
 
     private Job create(Workflow workflow,ServiceRequest request,Schedule schedule,Robot robot,FacilityMap map,int priority,JsonNode input,Instant fireAt,String itemKey){
         if(robot!=null && !readiness.acceptsRobot(workflow,robot))throw new BusinessRuleException("Selected robot does not support this workflow transport; enrolled MQTT robots require schema 3");
