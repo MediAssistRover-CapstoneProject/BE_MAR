@@ -26,8 +26,9 @@ class MapPresentationServiceTest {
     final RoomRepository rooms=mock(RoomRepository.class);
     final SavedMapImageService images=mock(SavedMapImageService.class);
     final EntityManager em=mock(EntityManager.class);
+    final SosMonitoringRoomService sosRooms=mock(SosMonitoringRoomService.class);
     final Clock clock=Clock.fixed(Instant.parse("2026-11-06T00:00:00Z"),ZoneOffset.UTC);
-    final MapPresentationService service=new MapPresentationService(rows,maps,endpoints,rooms,images,json,em,clock);
+    final MapPresentationService service=new MapPresentationService(rows,maps,endpoints,rooms,images,json,em,clock,sosRooms);
     FacilityMap map;
     Source source;
     Feature room;
