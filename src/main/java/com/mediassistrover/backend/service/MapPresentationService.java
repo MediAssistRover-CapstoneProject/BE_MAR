@@ -57,6 +57,9 @@ public class MapPresentationService {
     @Transactional
     public Editor publish(UUID id, Change request) {
         FacilityMap map=lock(id);
+        // Room availability is shared by maps on this floor. Serialize publications
+        // before reading their snapshots, including simultaneous removals on two maps.
+        entityManager.lock(map.getFloor(),LockModeType.PESSIMISTIC_WRITE);
         MapPresentation row=requireRow(id);
         checkRevision(row,request.expectedRevision());
         Source source=source(map);
@@ -65,7 +68,11 @@ public class MapPresentationService {
         if(draft.features().isEmpty() && draft.rotationDegrees()==0. && row.getPublishedJson()==null)
             throw new BusinessRuleException("Thêm ít nhất một đối tượng hoặc căn góc bản đồ trước khi xuất bản.");
         validate(draft,source);
+        Set<UUID> previouslyPublishedRooms=row.getPublishedJson()==null?Set.of():linkedRoomIds(document(row.getPublishedJson()),id);
         Document synchronizedDraft=syncRooms(draft,map);
+        Set<UUID> removedRooms=new HashSet<>(previouslyPublishedRooms);
+        removedRooms.removeAll(linkedRoomIds(synchronizedDraft,id));
+        deactivateRemovedRooms(map,removedRooms,synchronizedDraft);
         row.setDraftJson(json.valueToTree(synchronizedDraft));
         row.setPublishedJson(row.getDraftJson().deepCopy());
         row.setRevision(row.getRevision()+1);
@@ -172,6 +179,46 @@ public class MapPresentationService {
                     room.getDepartmentCode(),room.getDescription(),room.isPublicVisible(),endpointName));
         }
         return new Document(document.schemaVersion(),document.backgroundColor(),result,document.rotationDegrees());
+    }
+    private Set<UUID> linkedRoomIds(Document document,UUID mapId) {
+        Set<UUID> result=new HashSet<>(),legacyEndpoints=new HashSet<>();
+        for(Feature feature:document.features()) {
+            if(feature.type()!=FeatureType.ROOM) continue;
+            if(feature.roomId()!=null) result.add(feature.roomId());
+            else if(feature.endpointId()!=null) legacyEndpoints.add(feature.endpointId());
+        }
+        if(!legacyEndpoints.isEmpty()) for(Endpoint endpoint:endpoints.findAllById(legacyEndpoints)) {
+            if(endpoint.getRoom()!=null && endpoint.getMap().getMapId().equals(mapId))
+                result.add(endpoint.getRoom().getRoomId());
+        }
+        return result;
+    }
+    private void deactivateRemovedRooms(FacilityMap map,Set<UUID> removed,Document next) {
+        if(removed.isEmpty()) return;
+        Set<UUID> sharedRooms=new HashSet<>();
+        for(MapPresentation other:presentations.findOtherPublishedOnFloor(map.getFloor().getFloorId(),map.getMapId()))
+            sharedRooms.addAll(linkedRoomIds(document(other.getPublishedJson()),other.getMapId()));
+        Set<UUID> retainedEndpoints=new HashSet<>();
+        for(Feature feature:next.features()) if(feature.endpointId()!=null) retainedEndpoints.add(feature.endpointId());
+        for(UUID roomId:removed.stream().sorted().toList()) {
+            Room room=rooms.lockById(roomId).orElse(null);
+            if(room==null) continue;
+            if(!room.getFloor().getFloorId().equals(map.getFloor().getFloorId()))
+                throw new BusinessRuleException("Phòng bị xóa và bản đồ phải thuộc cùng một tầng.");
+            List<Endpoint> linked=endpoints.findByRoomRoomIdOrderByEndpointCodeAsc(roomId);
+            // A point used by a remaining label/landmark cannot silently become inactive.
+            if(linked.stream().anyMatch(endpoint->endpoint.getMap().getMapId().equals(map.getMapId())
+                    && retainedEndpoints.contains(endpoint.getEndpointId())))
+                throw new BusinessRuleException("Điểm của phòng bị xóa vẫn được gắn trên bản vẽ. Bỏ liên kết điểm trước khi áp dụng.");
+            boolean usedElsewhere=sharedRooms.contains(roomId) || linked.stream().anyMatch(endpoint->endpoint.isActive()
+                    && !endpoint.getMap().getMapId().equals(map.getMapId()));
+            for(Endpoint endpoint:linked) if(endpoint.getMap().getMapId().equals(map.getMapId()))
+                endpoint.setActive(false);
+            if(!usedElsewhere) {
+                room.setActive(false);
+                sosMonitoringRooms.releaseIfConfigured(room,null);
+            }
+        }
     }
     private Room resolveRoom(Feature feature,String code,FacilityMap map) {
         Room room;
