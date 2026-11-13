@@ -27,6 +27,7 @@ import java.util.*;
 @PreAuthorize("hasAnyRole('ADMIN','STAFF')") @Tag(name="Workflow Definitions",description="ADMIN quản lý definition; STAFF đọc published")
 public class WorkflowController {
     private final WorkflowService service;
+    private final com.mediassistrover.backend.service.WorkflowSpeechService speechService;
     private final DeletionPolicy deletionPolicy;
     private final com.mediassistrover.backend.service.StaffQrDeliveryWorkflowFactory staffQrDelivery;
 
@@ -43,6 +44,12 @@ public class WorkflowController {
     @Operation(summary="Replace draft graph atomically; rollback on validation failure")
     public WorkflowDetailResponse replaceGraph(@PathVariable UUID id,@Valid @RequestBody GraphRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.replaceGraph(id,body,actor.accountId(),RequestMetadataFactory.from(request));}
     @GetMapping("/step-types") @Operation(deprecated=true) public List<StepTypeResponse> stepTypes(){return service.stepTypes();}
+    @PutMapping("/{id}/speech") @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary="Edit workflow speech steps atomically and optionally publish a new version")
+    public WorkflowDetailResponse saveSpeech(@PathVariable UUID id, @Valid @RequestBody WorkflowSpeechRequest body,
+            @AuthenticationPrincipal AccountPrincipal actor, HttpServletRequest request) {
+        return speechService.save(id, body, actor.accountId(), RequestMetadataFactory.from(request));
+    }
     @GetMapping @PreAuthorize("hasRole('ADMIN')") public PageResponse<WorkflowResponse> list(@RequestParam(required=false)WorkflowStatus status,@RequestParam(defaultValue="false")boolean includeDeleted,@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size){return PageResponse.from(service.list(status,includeDeleted,PageRequest.of(page,size,Sort.by("workflowCode").and(Sort.by(Sort.Direction.DESC,"versionNo")))));}
     @GetMapping("/{id}") @PreAuthorize("hasRole('ADMIN')") public WorkflowDetailResponse get(@PathVariable UUID id,@RequestParam(defaultValue="false")boolean includeDeleted){return service.get(id,includeDeleted);}
     @GetMapping("/published/all") @Operation(deprecated=true) public List<WorkflowDetailResponse> published(){return service.published();}

@@ -39,6 +39,10 @@ public final class WorkflowRequests {
                                     TerminalStatus terminalStatus) {}
     public record StartStepRequest(@NotNull UUID startStepId) {}
     public record CloneWorkflowRequest(@Size(max=160) String workflowName) {}
+    public record WorkflowSpeechRequest(@NotNull @PositiveOrZero Long expectedRowVersion,
+            boolean publish, @NotEmpty @Size(max=500) List<@NotNull @Valid SpeechStepChange> steps) {}
+    public record SpeechStepChange(@NotBlank String stepCode, @NotNull JsonNode expectedParamsJson,
+            @NotNull JsonNode expectedInputMappingJson, @NotNull JsonNode data) {}
     public record GraphCreateRequest(@NotNull @Valid WorkflowUpsertRequest workflow,
                                      @NotNull @Valid GraphRequest graph) {}
     public record GraphRequest(@NotBlank String startStepCode,
