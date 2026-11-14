@@ -22,16 +22,30 @@ public class MonitoringReceiptService {
     public void record(PiEnvelope<?> envelope,Robot robot){record(envelope,robot,null);}
     public void record(PiEnvelope<?> envelope,Robot robot,com.fasterxml.jackson.databind.JsonNode provenance){receipts.saveAndFlush(MonitoringIngestionReceipt.builder().messageId(envelope.messageId()).robotId(robot.getRobotId()).messageType(envelope.messageType()).payloadHash(hash(envelope)).receivedAt(Instant.now(clock)).provenanceJson(provenance).build());}
     public boolean duplicateVision(UUID messageId,Robot robot,com.fasterxml.jackson.databind.node.ObjectNode payload) {
+        return duplicateExternal(messageId,robot,"VISION_AI_EVENT",payload);
+    }
+    public boolean duplicatePatrolFall(UUID messageId,Robot robot,com.fasterxml.jackson.databind.node.ObjectNode payload) {
+        return duplicateExternal(messageId,robot,"PATROL_FALL_EVENT",payload);
+    }
+    private boolean duplicateExternal(UUID messageId,Robot robot,String type,com.fasterxml.jackson.databind.node.ObjectNode payload) {
         var receipt=receipts.findById(messageId).orElse(null);if(receipt==null)return false;
-        if(!receipt.getRobotId().equals(robot.getRobotId()) || !receipt.getMessageType().equals("VISION_AI_EVENT")
+        if(!receipt.getRobotId().equals(robot.getRobotId()) || !receipt.getMessageType().equals(type)
                 || !receipt.getPayloadHash().equals(wire.canonicalHash(payload)))
-            throw new ConflictException("Vision event identity reused with different robot/type/content");
+            throw new ConflictException("Detection event identity reused with different robot/type/content");
         return true;
     }
     public void recordVision(UUID messageId,Robot robot,com.fasterxml.jackson.databind.node.ObjectNode payload,
                              com.fasterxml.jackson.databind.JsonNode provenance) {
+        recordExternal(messageId,robot,"VISION_AI_EVENT",payload,provenance);
+    }
+    public void recordPatrolFall(UUID messageId,Robot robot,com.fasterxml.jackson.databind.node.ObjectNode payload,
+                                 com.fasterxml.jackson.databind.JsonNode provenance) {
+        recordExternal(messageId,robot,"PATROL_FALL_EVENT",payload,provenance);
+    }
+    private void recordExternal(UUID messageId,Robot robot,String type,com.fasterxml.jackson.databind.node.ObjectNode payload,
+                                com.fasterxml.jackson.databind.JsonNode provenance) {
         receipts.saveAndFlush(MonitoringIngestionReceipt.builder().messageId(messageId).robotId(robot.getRobotId())
-                .messageType("VISION_AI_EVENT").payloadHash(wire.canonicalHash(payload)).receivedAt(Instant.now(clock))
+                .messageType(type).payloadHash(wire.canonicalHash(payload)).receivedAt(Instant.now(clock))
                 .provenanceJson(provenance).build());
     }
     private String hash(PiEnvelope<?> envelope){return wire.canonicalHash(json.valueToTree(envelope));}

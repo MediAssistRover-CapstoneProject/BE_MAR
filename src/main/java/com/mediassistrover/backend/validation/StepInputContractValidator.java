@@ -1060,7 +1060,7 @@ public class StepInputContractValidator {
                         "action",
                         "mapping_session_id",
                         "artifact_id",
-                        "preview_rate_hz", "duration_sec", "language_code", "volume"
+                        "preview_rate_hz", "duration_sec", "language_code", "volume", "fall_detection"
                 )
         );
 
@@ -1074,14 +1074,14 @@ public class StepInputContractValidator {
                         "SIDE_CLEARANCE",
                         "CROWD_DENSITY",
                         "RESTRICTED_ZONE",
-                        "MAPPING", "VOICE_CAPTURE", "AUDIO_LOOPBACK"
+                        "MAPPING", "VOICE_CAPTURE", "AUDIO_LOOPBACK", "PATROL_FALL"
                 )
                         : Set.of(
                         "ROBOT_HEALTH",
                         "SIDE_CLEARANCE",
                         "CROWD_DENSITY",
                         "RESTRICTED_ZONE",
-                        "RESTRICTED_AREA_INTRUSION"
+                        "RESTRICTED_AREA_INTRUSION", "PATROL_FALL"
                 ),
                 required,
                 template
@@ -1096,6 +1096,22 @@ public class StepInputContractValidator {
                         "RESTRICTED_ZONE",
                         "RESTRICTED_AREA_INTRUSION"
                 ).contains(type);
+
+        JsonNode fall = n.get("fall_detection");
+        if (literal(fall, template) && (!fall.isBoolean()
+                || literal(n.get("sensing_type"), template)
+                   && !Set.of("CROWD_DENSITY", "RESTRICTED_ZONE", "PATROL_FALL").contains(type))) {
+            fail(s, "fall_detection", "requires a boolean on a patrol fall, crowd or restricted-zone sensing step");
+        }
+        if (fall != null && fall.asBoolean()) number(s,n,"window_sec",3,30,false,required,template);
+        if ("PATROL_FALL".equals(type)) {
+            fields(s,n,Set.of("sensing_type", "window_sec", "fall_detection"));
+            JsonNode window = n.get("window_sec");
+            if (literal(window, template) && !window.isIntegralNumber())
+                fail(s,"window_sec","PATROL_FALL requires an integer");
+            if ((required && fall == null || literal(fall, template)) && !n.path("fall_detection").asBoolean())
+                fail(s,"fall_detection","PATROL_FALL requires true");
+        }
 
         uuid(
                 s,
@@ -1261,8 +1277,7 @@ public class StepInputContractValidator {
                     );
                 }
 
-            } else {
-
+            } else if (!"PATROL_FALL".equals(type)) {
                 fields(
                         s,
                         n,
@@ -1270,7 +1285,8 @@ public class StepInputContractValidator {
                                 ? Set.of(
                                 "sensing_type",
                                 "zone_id",
-                                "window_sec"
+                                "window_sec",
+                                "fall_detection"
                         )
                                 : Set.of(
                                 "sensing_type"

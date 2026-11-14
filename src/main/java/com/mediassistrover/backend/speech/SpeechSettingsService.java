@@ -38,7 +38,7 @@ public class SpeechSettingsService {
 
     public SpeechSettingsService(SystemSettingRepository settings,AccountRepository accounts,AuditService audit,Clock clock,
             @Value("${app.tts.voice:coral}") String voice,
-            @Value("${app.tts.speed:1.25}") double speed,
+            @Value("${app.tts.speed:1.2}") double speed,
             @Value("${app.tts.instructions:Speak Vietnamese with a clear Northern Vietnamese accent and a calm adult female tone. Read only the supplied text.}") String instructions) {
         this.settings=settings;this.accounts=accounts;this.audit=audit;this.clock=clock;
         this.defaults=profile(voice,speed,instructions);

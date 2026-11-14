@@ -17,7 +17,7 @@ Swagger: http://localhost:8080/swagger-ui/index.html. UI: http://localhost:8080/
 
 ## OpenAI / bản đồ
 
-Trong `.env`: TTS_ENABLED=true, OPENAI_API_KEY=<key riêng>, OPENAI_TTS_MODEL=gpt-4o-mini-tts, OPENAI_TTS_VOICE=coral, OPENAI_TTS_SPEED=1.0. Key chỉ ở BE. WAV cache nằm trong volume speech-cache.
+Trong `.env`: TTS_ENABLED=true, OPENAI_API_KEY=<key riêng>, OPENAI_TTS_MODEL=gpt-4o-mini-tts, OPENAI_TTS_VOICE=coral, OPENAI_TTS_SPEED=1.2. Key chỉ ở BE. WAV cache nằm trong volume speech-cache.
 
 - POST /api/v1/pi/speech/prepare: ADMIN chuẩn bị âm thanh, body text/languageCode/speedWpm.
 - POST /api/v1/speech-jobs: tạo job phát loa; Pi tải WAV từ BE qua HTTPS.

@@ -94,6 +94,9 @@ final class Schema3StepResultContractValidator {
             if (input.has("map_id")) same(input, n, "map_id");
             if (n.path("model_version").asText().isBlank() || n.path("model_version").asText().length()>100) invalid("model_version requires 1-100 characters");
             if("CROWD_DENSITY".equals(type) && !metrics.path("count").canConvertToInt())invalid("AI count exceeds integer range");
+        } else if ("PATROL_FALL".equals(type)) {
+            if (!metrics.path("frames").canConvertToInt() || metrics.path("frames").asInt() < 1)
+                invalid("PATROL_FALL success requires at least one accepted camera frame");
         } else if ("AUDIO_LOOPBACK".equals(type)) {
             same(input,metrics,"volume");
             if(Math.abs(metrics.path("duration_sec").asDouble()-input.path("duration_sec").asDouble())>.1)

@@ -69,6 +69,8 @@ public class VisionDetectionIngestionService {
         if(algorithm.length()>100)throw new BusinessRuleException("Vision algorithm exceeds 100 characters");
         if(payload.has("simulation")&&!payload.path("simulation").isBoolean())
             throw new BusinessRuleException("Vision simulation must be boolean");
+        boolean simulation=payload.path("simulation").asBoolean(false);
+        String description=description(payload,sourceType);
 
         DetectionEvent detection=DetectionEvent.builder().detectionEventId(eventId).robot(robot)
                 .map(robot.getCurrentMap()).eventType(detectionType).confidenceScore(confidence)
@@ -78,15 +80,15 @@ public class VisionDetectionIngestionService {
 
         ObjectNode provenance=payload.objectNode().put("transport","MQTT")
                 .put("topic","mar/robots/"+topicRobotId+"/vision/detections")
-                .put("simulation",payload.path("simulation").asBoolean(false));
+                .put("simulation",simulation);
         receipts.recordVision(eventId,robot,payload,provenance);
+        if(simulation)return new Result(eventId,null,false);
 
         EmergencyIncidentSeverity severity=detectionType==DetectionEventType.SUSPECTED_FALL
                 ?EmergencyIncidentSeverity.WARNING:EmergencyIncidentSeverity.CRITICAL;
-        String description=description(payload,sourceType);
         ObjectNode data=payload.objectNode().put("source","VISION_AI")
                 .put("source_event_type",sourceType)
-                .put("simulation",payload.path("simulation").asBoolean(false));
+                .put("simulation",false);
         if(confidence!=null)data.put("confidence",confidence);
         data.put("algorithm",algorithm);
         data.set("vision_event",payload.deepCopy());

@@ -188,6 +188,16 @@
         {
           "type": "object",
           "properties": {
+            "sensing_type": { "const": "PATROL_FALL" },
+            "window_sec": { "type": "integer", "minimum": 3, "maximum": 30 },
+            "fall_detection": { "const": true }
+          },
+          "required": ["sensing_type", "window_sec", "fall_detection"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
             "sensing_type": {
               "enum": [
                 "ROBOT_HEALTH",
@@ -219,6 +229,9 @@
               "minimum": 0,
               "maximum": 30,
               "default": 0
+            },
+            "fall_detection": {
+              "type": "boolean"
             }
           },
           "required": [

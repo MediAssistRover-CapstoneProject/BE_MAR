@@ -63,7 +63,7 @@
 <section id="mapNavigation" class="panel" aria-label="Đặt endpoint và dẫn đường trên map đã lưu"></section>
 <section class="panel" aria-label="Cấu hình dẫn đường bằng giọng nói">
 <h2>Dẫn robot tới endpoint bằng giọng nói</h2>
-<button id="prepareVoiceNavigation">Chuẩn bị workflow voice MOVE → báo đã tới nơi</button>
+<button id="prepareVoiceNavigation">Chuẩn bị workflow voice mời đi theo → dẫn đường → báo đến nơi</button>
 <label>Workflow NAVIGATION cho voice<input id="voiceNavigationWorkflow" readonly placeholder="Chuẩn bị một lần; dùng lại với endpoint của map đang mở"></label>
 <small>Mở phiên map, chạy navigation trên Pi và chờ READY. Trong terminal Pi khác chạy voice_audio.py chat --start-now --once. Nói “dẫn tôi tới điểm b”, rồi “xác nhận”. BE tạo một job MOVE → SPEAK; không báo đã tới nơi khi MOVE thất bại.</small>
 </section>
@@ -188,12 +188,46 @@ function renderMapView(state){
 }
 
 class TimedJog {
-  constructor(send,onState){this.send=send;this.onState=onState;this.active=false;this.generation=0;this.renewTimer=null;this.stopTimer=null;this.commandId=null}
+  constructor(send,onState){this.send=send;this.onState=onState;this.active=false;this.generation=0;this.renewTimer=null;this.stopTimer=null;this.resetReceipts()}
+  resetReceipts(){this.commandId=null;this.pending=new Map();this.failure=null;this.runGeneration=this.generation}
+  emit(message,receipt,intent='MOVE'){
+    const failure=this.failure;
+    this.onState(failure?.message??message,failure?.receipt??receipt,failure?'MOVE':intent);
+  }
+  remember(receipt,intent){
+    if(!receipt?.commandId)return;
+    // STOP is always allowed, but only its newest receipt needs following.
+    if(intent==='STOP')for(const [id,item] of this.pending)if(item.intent==='STOP')this.pending.delete(id);
+    this.pending.set(receipt.commandId,{intent,receivedAt:performance.now()});
+    if(intent==='MOVE')this.commandId=receipt.commandId;
+  }
+  receiptCommandIds(){
+    // Follow older renewals by ID: the newest lease usually has no Pi ACK yet.
+    return [...this.pending].filter(([,item])=>performance.now()-item.receivedAt>=300).slice(0,4).map(([id])=>id);
+  }
+  async observeReceipt(receipt){
+    const item=this.pending.get(receipt?.commandId);if(!item)return;
+    const rejected=['PI_REJECTED','NO_PI_ACK','PUBLISH_FAILED'].includes(receipt.status);
+    if(rejected||receipt.status==='PI_ACCEPTED')this.pending.delete(receipt.commandId);
+    if(rejected&&item.intent==='MOVE'){
+      const code=receipt.errorCode||receipt.status;
+      const hint=code==='MOTION_NOT_COMMISSIONED'?'Cấu hình chạy bánh trên Pi chưa được nghiệm thu/bật.':
+        ['SENSORS_NOT_READY','ODOM_NOT_READY'].includes(code)?'Kiểm tra dữ liệu cảm biến và odometry trên Pi.':
+        code==='NO_PI_ACK'?'Kiểm tra MQTT/heartbeat và thời gian BE–Pi.':'';
+      const result=receipt.status==='PI_REJECTED'?'Pi từ chối lệnh di chuyển':
+        receipt.status==='PUBLISH_FAILED'?'Không gửi được lệnh di chuyển':'Chưa xác nhận Pi nhận lệnh di chuyển';
+      if(!this.failure)this.failure={message:result+': '+code+'. '+hint,receipt};
+      if(this.active)await this.stop().catch(()=>{});else this.emit();
+    }else if(receipt.status==='PI_ACCEPTED'){
+      this.emit(item.intent==='STOP'?'Pi đã nhận lệnh Dừng; chưa xác nhận bánh đã đứng yên.':
+        'Pi đã nhận lệnh vận tốc; xem phản hồi safety gate để biết bánh có được phép chạy.',receipt,item.intent);
+    }else if(rejected)this.emit('Lệnh Dừng chưa được Pi chấp nhận: '+(receipt.errorCode||receipt.status),receipt,'STOP');
+  }
   start(x,z,totalMs){
     if(this.active)throw Error('Dừng chuyển động hiện tại trước khi gửi hướng mới.');
     if(!Number.isFinite(totalMs)||totalMs<400||totalMs>10000)throw Error('Thời gian chạy phải từ 0,4 đến 10 giây.');
-    this.active=true;this.commandId=null;const generation=++this.generation;
-    this.onState('Đang gia hạn lệnh; thời gian chọn '+(totalMs/1000)+' giây.');
+    this.active=true;const generation=++this.generation;this.resetReceipts();
+    this.emit('Đang gia hạn lệnh; thời gian chọn '+(totalMs/1000)+' giây.');
     this.stopTimer=setTimeout(()=>this.stop('Đã hết thời gian chạy.').catch(()=>{}),totalMs);
     this.renew(x,z,generation);
   }
@@ -201,23 +235,29 @@ class TimedJog {
     if(!this.active||generation!==this.generation)return;
     const started=performance.now();
     try{
+      if(this.pending.size>=16)throw Error('Quá nhiều lệnh chưa có xác nhận từ Pi; kiểm tra kết nối.');
       const receipt=await this.send(x,z);
+      if(generation!==this.runGeneration)return;
+      this.remember(receipt,'MOVE');await this.observeReceipt(receipt);
       if(!this.active||generation!==this.generation)return;
-      this.commandId=receipt?.commandId;
-      this.onState('Đang gia hạn lệnh. Bấm Dừng để kết thúc sớm.',receipt);
+      this.emit('Đang gia hạn lệnh. Pi nhận gói lệnh chưa đồng nghĩa bánh đã chạy.',receipt);
       this.renewTimer=setTimeout(()=>this.renew(x,z,generation),Math.max(0,300-(performance.now()-started)));
     }catch(error){if(this.active&&generation===this.generation)await this.stop('Đã ngừng gia hạn: '+error.message).catch(()=>{})}
   }
   async stop(message='Đã ngừng gia hạn và gửi lệnh dừng.'){
     this.active=false;const generation=++this.generation;
     clearTimeout(this.renewTimer);clearTimeout(this.stopTimer);
-    this.onState(message);
-    try{const receipt=await this.send(0,0);if(generation===this.generation)this.onState(message,receipt);return receipt}
-    catch(error){if(generation===this.generation)this.onState('Đã ngừng gia hạn; chưa xác nhận được lệnh dừng: '+error.message);throw error}
+    this.emit(message);
+    try{const receipt=await this.send(0,0);if(generation===this.generation){this.remember(receipt,'STOP');this.emit(message,receipt,'STOP');await this.observeReceipt(receipt)}return receipt}
+    catch(error){if(generation===this.generation)this.emit('Đã ngừng gia hạn; chưa xác nhận được lệnh dừng: '+error.message);throw error}
   }
 }
 const controlSessionId=crypto.randomUUID();let controlSequence=0;
-const jog=new TimedJog(control,(message,receipt)=>{$('jogStatus').textContent=message;if(receipt)$('receipt').textContent=JSON.stringify(receipt,null,2);buttons()});
+function receiptText(receipt,intent){
+  const label=intent==='STOP'?'Lệnh Dừng':intent==='MOVE'?'Lệnh di chuyển':'Lệnh tự quét';
+  return label+(receipt.status==='PI_ACCEPTED'?' — Pi đã nhận lệnh; chưa xác nhận chuyển động thực tế.':'')+'\n'+JSON.stringify(receipt,null,2);
+}
+const jog=new TimedJog(control,(message,receipt,intent)=>{$('jogStatus').textContent=message;if(receipt&&!autoMapping?.owned)$('receipt').textContent=receiptText(receipt,intent);buttons()});
 
 async function api(path,body,raw=false,options={}){const token=$('token').value.trim().replace(/^Bearer\s+/i,'');if(!token)throw Error('Cần access token ADMIN.');const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,...(body===undefined?{}:{'Content-Type':'application/json'}),...(options.headers??{})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(options.timeoutMs??5000),keepalive:options.keepalive??false});if(!r.ok){const t=await r.text();const error=Error(r.status+' '+t.slice(0,300));error.status=r.status;throw error}return raw?r:r.status===204?null:r.json()}
 function buttons(){savedMapButton();document.querySelectorAll('[data-x]').forEach(b=>b.disabled=!mapping||busy||jog.active||!!autoMapping?.owned||manualSource==='gamepad');$('save').disabled=busy||recovery||!session||lastMappingStatus?.state!=='MAPPING'||lastMappingStatus?.potentially_open!==true||saveIntent?.accepted===true;$('stop').disabled=!session;$('create').disabled=busy||mapping||lastMappingStatus?.potentially_open===true||recovery||jog.active;$('recover').disabled=busy||!recovery;autoMapping?.buttons()}
@@ -286,8 +326,19 @@ $('cameraStreamImage').onload=()=>{if(cameraStreaming)$('cameraTime').textConten
 $('cameraStreamImage').onerror=()=>{if(cameraStreaming){stopCameraStream();$('cameraTime').textContent='Không kết nối được video. Kiểm tra URL/Pi; đang dùng lại ảnh MQTT.'}};
 window.addEventListener('pagehide',stopCameraStream);
 function renderMotion(state){const manual=state.autonomy?.manual_control;manualSource=manual?.source??null;$('manualControlStatus').textContent=manual?('Nguồn: '+manual.source+' • '+manual.layout+' • '+manual.forward_mps+' m/s • '+manual.angular_rps+' rad/s'+(manual.continuous?' • giữ cần chạy liên tục':'')+(manual.session_required?' • cần phiên quét':' • joystick chạy cả khi chưa tạo job')):'Chưa nhận cấu hình điều khiển từ Pi.';const age=state.motionObservedAt?(Date.now()-Date.parse(state.motionObservedAt))/1000:Infinity;const sample=state.motionTelemetry?.gate;let gate;try{gate=JSON.parse(sample?.value??'null')}catch{}if(!gate||age>10){$('motionStatus').textContent='Chưa có phản hồi chuyển động mới từ Pi.';return}const labels={CLEAR:'Đường điều khiển đang cho phép chuyển động',NO_LEASE:'Đang dừng/chờ lệnh',STALE_COMMAND:'Chưa nhận được lệnh mới',STALE_OR_INVALID_US100:'Dừng: dữ liệu siêu âm chưa hợp lệ hoặc đã cũ',SIDE_OBSTACLE:'Dừng: có vật cản bên cạnh',REAR_OBSTACLE:'Dừng: có vật cản phía sau',REAR_LIDAR_NOT_READY:'Dừng: LiDAR phía sau chưa đủ dữ liệu',REAR_LIDAR_TF_NOT_READY:'Dừng: chưa xác định được hướng LiDAR phía sau',STALE_REAR_LIDAR:'Dừng: dữ liệu LiDAR phía sau đã cũ',REVERSE_NOT_ENABLED:'Chưa bật cấu hình lùi M1',NOT_COMMISSIONED:'Cấu hình chuyển động chưa được bật'};$('motionStatus').textContent=(labels[gate.reason]??('Robot dừng/giới hạn: '+gate.reason))+' • cập nhật '+Math.max(0,Math.round(age))+' giây trước'}
-async function poll(){if(!job||polling)return;polling=true;const epoch=watchEpoch,observedJob=job;try{const state=await api('/api/v1/jobs/'+encodeURIComponent(observedJob)+'/mapping-session?includePreview=false');if(epoch!==watchEpoch)return;session=state.mapping_session_id;lastMappingStatus=state;if(!state.potentially_open)stopMappingStream();renderMotion(state);recovery=state.job_status==='RECOVERY_REQUIRED';mapping=state.state==='MAPPING'&&state.potentially_open&&state.job_status==='RUNNING';autoMapping?.render(state);if(!mapping&&jog.active)await jog.stop('Nhiệm vụ không còn cho phép di chuyển.').catch(()=>{});notice(state.job_status==='RECOVERY_REQUIRED'?'Nhiệm vụ cần khôi phục. Đã khóa nút di chuyển; không tạo thêm nhiệm vụ.':mapping?'Đang quét bản đồ.':'Trạng thái nhiệm vụ: '+state.job_status+' / '+state.state);const p=state.preview;const summary={...state,preview:p?{revision:p.revision,width:p.width,height:p.height,resolution:p.resolution,captured_at:p.captured_at,pose:p.pose}:null};$('state').textContent=JSON.stringify(summary,null,2);buttons();renderMapView(state);ensureMappingStream(epoch,observedJob);if(performance.now()-mapStreamLastAt>6000)await picture('mapping-preview.png','mapImage','mapTime',epoch,observedJob);if(!cameraStreaming&&performance.now()-cameraProbeAt>10000){cameraProbeAt=performance.now();picture('camera-preview.jpg','cameraImage','cameraTime',epoch,observedJob).catch(()=>{});}if(epoch!==watchEpoch)return;renderMapView(state);if(state.job_status==='FAILED'){const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));const failed=detail.steps?.find(s=>s.status==='FAILED');if(failed)notice('Nhiệm vụ thất bại tại '+failed.stepCodeSnapshot+': '+(failed.errorCode||'Xem chi tiết nhiệm vụ')+(failed.errorCode==='MAP_UPLOAD_UNAUTHORIZED'?' — upload bị từ chối xác thực; map vẫn giữ trên Pi.':''))}const receiptId=autoMapping?.receiptCommandId();const receipt=(receiptId||jog.commandId||jog.active)?await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control'+(receiptId?'?commandId='+encodeURIComponent(receiptId):'')):null;if(receipt){autoMapping?.observeReceipt(receipt);$('receipt').textContent=JSON.stringify(receipt,null,2);if(jog.active&&receipt.commandId===jog.commandId&&['PI_REJECTED','NO_PI_ACK','PUBLISH_FAILED'].includes(receipt.status))await jog.stop('Pi chưa thực hiện lệnh: '+(receipt.errorCode||receipt.status)).catch(()=>{})}}catch(e){if(epoch!==watchEpoch)return;mapping=false;hideRobot();if(autoMapping?.active)await autoMapping.stop().catch(()=>{});if(jog.active)await jog.stop('Mất kết nối theo dõi nhiệm vụ.').catch(()=>{});buttons();if(e.status===404){try{const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));$('state').textContent=JSON.stringify(detail,null,2);if(['QUEUED','ACCEPTED','RUNNING'].includes(detail.job.status)){notice('Đang chờ Pi mở phiên quét.');return}}catch(lookup){notice(lookup.message)}}notice('UI chưa nhận trạng thái mới: '+e.message);if(e.status===401||e.status===403){stopMappingStream();clearImage('mapImage','mapTime','Cần đăng nhập lại.');}else{$('mapTime').textContent='Đang giữ ảnh cuối; chờ trạng thái mới từ BE.';renderMapView(lastMappingStatus);}}finally{polling=false}}
-async function watch(){if(autoMapping?.active)await autoMapping.stop().catch(()=>{});if(jog.active)await jog.stop().catch(()=>{});if(timer)clearInterval(timer);job=$('job').value.trim();if(!job){notice('Cần jobId.');return}stopMappingStream();watchEpoch++;resetSavedMap();lastMappingStatus=null;saveIntent=null;session='';mapping=false;recovery=false;clearImage('mapImage','mapTime','Đang chờ map của phiên mới.');$('mapGeometry').textContent='Đang chờ kích thước map mới.';clearImage('cameraImage','cameraTime','Đang chờ ảnh của phiên mới.');buttons();poll();timer=setInterval(poll,1000)}
+async function pollControlReceipts(epoch,observedJob){
+  const route='/api/v1/jobs/'+encodeURIComponent(observedJob)+'/mapping-control?commandId=';
+  const receiptId=autoMapping?.receiptCommandId();
+  if(receiptId){
+    const receipt=await api(route+encodeURIComponent(receiptId));if(epoch!==watchEpoch)return;
+    if(receipt){autoMapping?.observeReceipt(receipt);$('receipt').textContent=receiptText(receipt,'AUTONOMY')}
+  }
+  const receipts=await Promise.all(jog.receiptCommandIds().map(id=>api(route+encodeURIComponent(id))));
+  if(epoch!==watchEpoch)return;
+  for(const receipt of receipts)await jog.observeReceipt(receipt);
+}
+async function poll(){if(!job||polling)return;polling=true;const epoch=watchEpoch,observedJob=job;try{const state=await api('/api/v1/jobs/'+encodeURIComponent(observedJob)+'/mapping-session?includePreview=false');if(epoch!==watchEpoch)return;session=state.mapping_session_id;lastMappingStatus=state;if(!state.potentially_open)stopMappingStream();renderMotion(state);recovery=state.job_status==='RECOVERY_REQUIRED';mapping=state.state==='MAPPING'&&state.potentially_open&&state.job_status==='RUNNING';autoMapping?.render(state);if(!mapping&&jog.active)await jog.stop('Nhiệm vụ không còn cho phép di chuyển.').catch(()=>{});notice(state.job_status==='RECOVERY_REQUIRED'?'Nhiệm vụ cần khôi phục. Đã khóa nút di chuyển; không tạo thêm nhiệm vụ.':mapping?'Đang quét bản đồ.':'Trạng thái nhiệm vụ: '+state.job_status+' / '+state.state);const p=state.preview;const summary={...state,preview:p?{revision:p.revision,width:p.width,height:p.height,resolution:p.resolution,captured_at:p.captured_at,pose:p.pose}:null};$('state').textContent=JSON.stringify(summary,null,2);buttons();renderMapView(state);await pollControlReceipts(epoch,observedJob);if(epoch!==watchEpoch)return;ensureMappingStream(epoch,observedJob);if(performance.now()-mapStreamLastAt>6000)await picture('mapping-preview.png','mapImage','mapTime',epoch,observedJob);if(!cameraStreaming&&performance.now()-cameraProbeAt>10000){cameraProbeAt=performance.now();picture('camera-preview.jpg','cameraImage','cameraTime',epoch,observedJob).catch(()=>{});}if(epoch!==watchEpoch)return;renderMapView(state);if(state.job_status==='FAILED'){const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));const failed=detail.steps?.find(s=>s.status==='FAILED');if(failed)notice('Nhiệm vụ thất bại tại '+failed.stepCodeSnapshot+': '+(failed.errorCode||'Xem chi tiết nhiệm vụ')+(failed.errorCode==='MAP_UPLOAD_UNAUTHORIZED'?' — upload bị từ chối xác thực; map vẫn giữ trên Pi.':''))}}catch(e){if(epoch!==watchEpoch)return;mapping=false;hideRobot();if(autoMapping?.active)await autoMapping.stop().catch(()=>{});if(jog.active)await jog.stop('Mất kết nối theo dõi nhiệm vụ.').catch(()=>{});buttons();if(e.status===404){try{const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));$('state').textContent=JSON.stringify(detail,null,2);if(['QUEUED','ACCEPTED','RUNNING'].includes(detail.job.status)){notice('Đang chờ Pi mở phiên quét.');return}}catch(lookup){notice(lookup.message)}}notice('UI chưa nhận trạng thái mới: '+e.message);if(e.status===401||e.status===403){stopMappingStream();clearImage('mapImage','mapTime','Cần đăng nhập lại.');}else{$('mapTime').textContent='Đang giữ ảnh cuối; chờ trạng thái mới từ BE.';renderMapView(lastMappingStatus);}}finally{polling=false}}
+async function watch(){if(autoMapping?.active)await autoMapping.stop().catch(()=>{});if(jog.active)await jog.stop().catch(()=>{});if(timer)clearInterval(timer);job=$('job').value.trim();if(!job){notice('Cần jobId.');return}stopMappingStream();watchEpoch++;jog.resetReceipts();resetSavedMap();lastMappingStatus=null;saveIntent=null;session='';mapping=false;recovery=false;clearImage('mapImage','mapTime','Đang chờ map của phiên mới.');$('mapGeometry').textContent='Đang chờ kích thước map mới.';clearImage('cameraImage','cameraTime','Đang chờ ảnh của phiên mới.');buttons();poll();timer=setInterval(poll,1000)}
 async function control(x,z){if(!session)throw Error('Chưa có phiên quét.');return api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control',{mappingSessionId:session,linearX:x,angularZ:z,durationMs:900,controlSessionId,controlSequence:++controlSequence,requestedAt:new Date().toISOString()},false,{timeoutMs:x===0&&z===0?15000:1200,keepalive:x===0&&z===0})}
 function jogVelocity(directionX,directionZ,speed,turn){if(!Number.isFinite(speed)||speed<0||speed>.30||!Number.isFinite(turn)||turn<0||turn>1.0)throw Error('Tốc độ không hợp lệ.');return [Math.sign(directionX)*speed,Math.sign(directionZ)*turn]}
 document.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{if(busy||!mapping||jog.active||autoMapping?.owned)return;try{const [x,z]=jogVelocity(Number(b.dataset.x),Number(b.dataset.z),Number($('jogSpeed').value),Number($('jogTurnSpeed').value));jog.start(x,z,Number($('jogSeconds').value)*1000)}catch(e){notice(e.message)}});
@@ -345,20 +396,24 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden){if(autoMap
 window.addEventListener('blur',()=>{if(jog.active)jog.stop('Cửa sổ mất focus; đã ngừng gia hạn.').catch(()=>{})});
 window.addEventListener('pagehide',()=>{stopMappingStream();if(autoMapping?.active)autoMapping.stop().catch(()=>{});if(jog.active)jog.stop().catch(()=>{})});
 
-async function prepareWorkflow(file,code,field){
+async function prepareWorkflow(file,code,field,upgrade=false){
+  const definition=upgrade?await api('/'+file):null;
+  const minVersion=definition?.workflow.versionNo??0;
   const published=await api('/api/v1/admin/workflows/published/all');
-  const found=published.find(x=>x.workflow.workflowCode===code && x.workflow.acceptsNewJobs);
+  const found=published.find(x=>x.workflow.workflowCode===code && x.workflow.acceptsNewJobs
+    && x.workflow.versionNo>=minVersion);
   if(found){$(field).value=found.workflow.workflowId;return}
   const list=await api('/api/v1/admin/workflows?size=100');
-  const draft=list.content.find(x=>x.workflowCode===code && ['DRAFT','VALIDATED'].includes(x.status));
+  const draft=list.content.find(x=>x.workflowCode===code && ['DRAFT','VALIDATED'].includes(x.status)
+    && (!upgrade||x.versionNo===minVersion));
   let id=draft?.workflowId;
-  if(!id){const definition=await api('/'+file);const created=await api('/api/v1/admin/workflows/graph',definition);id=created.workflow.workflowId}
-  $(field).value=id;
+  if(!id){const created=await api('/api/v1/admin/workflows/graph',definition??await api('/'+file));id=created.workflow.workflowId}
   await api('/api/v1/admin/workflows/'+id+'/validate',{});
   await api('/api/v1/admin/workflows/'+id+'/publish',{});
+  $(field).value=id;
 }
 $('prepareMapping').onclick=async()=>{const b=$('prepareMapping');b.disabled=true;try{await prepareWorkflow('mapping-workflow.json','WF_MAPPING','workflow');notice('Workflow quét và lưu đã sẵn sàng.')}catch(e){notice(e.message)}finally{b.disabled=false}};
-$('prepareVoiceNavigation').onclick=async()=>{const b=$('prepareVoiceNavigation');b.disabled=true;try{await prepareWorkflow('voice-navigation-workflow.json','WF_VOICE_ENDPOINT_V1','voiceNavigationWorkflow');notice('Workflow voice đã sẵn sàng: MOVE thành công rồi robot mới báo đã tới nơi.')}catch(e){notice(e.message)}finally{b.disabled=false}};
+$('prepareVoiceNavigation').onclick=async()=>{const b=$('prepareVoiceNavigation');b.disabled=true;try{await prepareWorkflow('voice-navigation-workflow.json','WF_VOICE_ENDPOINT_V1','voiceNavigationWorkflow',true);notice('Workflow voice đã sẵn sàng. Robot mời đi theo trước khi MOVE và báo khi đã tới nơi.')}catch(e){notice(e.message)}finally{b.disabled=false}};
 </script>
 <script src="/map-navigation.js?v=20261108-workflow-recheck"></script>
 <script>

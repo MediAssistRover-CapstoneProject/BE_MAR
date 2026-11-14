@@ -43,7 +43,7 @@ public class OpenAiTtsService implements AutoCloseable {
     public OpenAiTtsService(@Value("${app.tts.enabled:false}") boolean enabled,
                            @Value("${app.tts.openai-api-key:}") String key,
                            @Value("${app.tts.voice:coral}") String voice,
-                           @Value("${app.tts.speed:1.25}") double speed,
+                           @Value("${app.tts.speed:1.2}") double speed,
                            @Value("${app.tts.model:gpt-4o-mini-tts}") String model,
                            @Value("${app.tts.instructions:Speak Vietnamese with a clear Northern Vietnamese accent and a calm adult female tone. Read only the supplied text.}") String instructions,
                            @Value("${app.tts.cache-dir:./data/speech}") String directory, ObjectMapper json,

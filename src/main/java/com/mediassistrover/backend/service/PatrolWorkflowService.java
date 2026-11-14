@@ -8,6 +8,8 @@ import com.mediassistrover.backend.entity.*;
 import com.mediassistrover.backend.enums.*;
 import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.exception.ResourceNotFoundException;
+import com.mediassistrover.backend.media.MediaSession;
+import com.mediassistrover.backend.media.MediaSessionRepository;
 import com.mediassistrover.backend.mqtt.MqttProperties;
 import com.mediassistrover.backend.mqtt.MqttSessionRegistry;
 import com.mediassistrover.backend.mqtt.MqttWire;
@@ -34,6 +36,9 @@ public class PatrolWorkflowService {
     private static final String SERVICE = "PATROL";
     private static final String CODE_PREFIX = "WF_PATROL_";
     private static final String TASK = "PATROL";
+    public static final String FALL_CAPABILITY = "PATROL_FALL";
+    private static final Set<EmergencyIncidentStatus> OPEN_INCIDENTS = Set.of(EmergencyIncidentStatus.OPEN,
+            EmergencyIncidentStatus.ACKNOWLEDGED, EmergencyIncidentStatus.IN_PROGRESS);
     private static final Set<JobStatus> OCCUPIED = Set.of(
             JobStatus.QUEUED, JobStatus.ACCEPTED, JobStatus.RUNNING, JobStatus.RECOVERY_REQUIRED);
 
@@ -48,6 +53,8 @@ public class PatrolWorkflowService {
     private final MappingSessionRepository mappingSessions;
     private final RobotCommandOutboxRepository commands;
     private final AiSensingProfileRepository profiles;
+    private final MediaSessionRepository mediaSessions;
+    private final EmergencyIncidentRepository incidents;
     private final AiSensingService ai;
     private final MqttSessionRegistry registry;
     private final MqttProperties mqtt;
@@ -56,14 +63,15 @@ public class PatrolWorkflowService {
     private final MqttWire wire;
     private final ObjectMapper json;
 
-    public record Checkpoint(@NotNull UUID endpointId, @NotNull UUID zoneId,
-                             @NotBlank @Pattern(regexp = "CROWD_DENSITY|RESTRICTED_ZONE") String sensingType) { }
+    public record Checkpoint(@NotNull UUID endpointId, UUID zoneId,
+                             @NotBlank @Pattern(regexp = "CROWD_DENSITY|RESTRICTED_ZONE|PATROL_FALL") String sensingType) { }
 
     public record Create(@NotBlank @Size(max = 160) String name, @NotNull UUID mapId,
                          @NotEmpty @Size(max = 5) List<@NotNull @Valid Checkpoint> checkpoints,
                          @DecimalMin("0.05") @DecimalMax("0.60") Double maxSpeedMps,
                          @Min(15) @Max(120) Integer moveTimeoutSec,
-                         @Min(1) @Max(30) Integer sensingWindowSec) { }
+                         @Min(1) @Max(30) Integer sensingWindowSec,
+                         Boolean fallDetection) { }
 
     public record Result(UUID workflowId, UUID mapId, int checkpointCount) { }
 
@@ -100,6 +108,8 @@ public class PatrolWorkflowService {
         double speed = request.maxSpeedMps() == null ? .25 : request.maxSpeedMps();
         int moveTimeout = request.moveTimeoutSec() == null ? 60 : request.moveTimeoutSec();
         int window = request.sensingWindowSec() == null ? 12 : request.sensingWindowSec();
+        if (window < 3 && (Boolean.TRUE.equals(request.fallDetection()) || request.checkpoints().stream().anyMatch(PatrolWorkflowService::fallOnly)))
+            throw new BusinessRuleException("Patrol fall detection requires a sensing window of at least 3 seconds");
         List<GraphStepRequest> actions = new ArrayList<>();
         for (Checkpoint checkpoint : request.checkpoints()) {
             int number = actions.size() / 2 + 1;
@@ -107,9 +117,11 @@ public class PatrolWorkflowService {
                     actions.size() + 1, moveTimeout, json.createObjectNode().put("mode", SERVICE)
                             .put("map_id", request.mapId().toString())
                             .put("endpoint_id", checkpoint.endpointId().toString()).put("max_speed_mps", speed)));
+            var sensing = json.createObjectNode().put("sensing_type", checkpoint.sensingType()).put("window_sec", window);
+            if (checkpoint.zoneId() != null) sensing.put("zone_id", checkpoint.zoneId().toString());
+            if (fallOnly(checkpoint) || Boolean.TRUE.equals(request.fallDetection())) sensing.put("fall_detection", true);
             actions.add(step(StepType.EXECUTE_SENSING, "SENSE_" + number, "Observe checkpoint " + number,
-                    actions.size() + 1, window + 10, json.createObjectNode().put("zone_id", checkpoint.zoneId().toString())
-                            .put("sensing_type", checkpoint.sensingType()).put("window_sec", window)));
+                    actions.size() + 1, window + 10, sensing));
         }
         List<GraphTransitionRequest> edges = new ArrayList<>();
         for (int i = 0; i < actions.size(); i++) {
@@ -168,6 +180,9 @@ public class PatrolWorkflowService {
                 || map.getAssetHash() == null || !map.getAssetHash().equalsIgnoreCase(robot.getMapAssetHash())) return null;
         if (!jobs.findByRobotRobotIdAndStatusIn(robotId, OCCUPIED).isEmpty()
                 || jobs.existsHigherPriorityQueuedForMap(mapId, priority)
+                || mediaSessions.findByActiveRobotId(robotId).filter(s -> s.getMode() == MediaSession.Mode.ASSIST).isPresent()
+                || incidents.existsByRobotRobotIdAndIncidentTypeAndStatusInAndArchivedAtIsNull(
+                        robotId, "AI_SUSPECTED_FALL", OPEN_INCIDENTS)
                 || !mappingSessions.findByRobotIdAndPotentiallyOpenTrue(robotId).isEmpty()
                 || !commands.findByRobotIdAndStateIn(robotId, List.of("PENDING", "PUBLISHING", "PUBLISHED",
                         "ACKNOWLEDGED", "STARTED", "RECOVERY_REQUIRED")).isEmpty()) return null;
@@ -176,7 +191,6 @@ public class PatrolWorkflowService {
                 || link.getHeartbeatJson() == null || !"IDLE".equals(link.getHeartbeatJson().path("status").asText())
                 || !link.getHeartbeatJson().path("activeJobStepId").isNull()
                 || (link.getHelloJson().path("simulation").asBoolean() && !mqtt.isAllowSimulation())) return null;
-        ai.requireEnabled();
         var actions = steps.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId());
         if (actions.isEmpty() || actions.size() > 10 || actions.size() % 2 != 0) {
             throw new BusinessRuleException("Patrol requires 1..5 MOVE/sensing checkpoint pairs");
@@ -190,15 +204,27 @@ public class PatrolWorkflowService {
                     || !mapId.toString().equals(move.getParamsJson().path("map_id").asText())) {
                 throw new BusinessRuleException("Patrol requires MOVE on its map followed by sensing");
             }
+            var config = sensing.getParamsJson();
             var checkpoint = new Checkpoint(requiredUuid(move.getParamsJson(), "endpoint_id"),
-                    requiredUuid(sensing.getParamsJson(), "zone_id"), sensing.getParamsJson().path("sensing_type").asText());
+                    config.hasNonNull("zone_id") ? requiredUuid(config, "zone_id") : null, config.path("sensing_type").asText());
             requireCheckpoint(mapId, checkpoint);
+            if ((fallOnly(checkpoint) || config.path("fall_detection").asBoolean()) && !fallCapable(link)) return null;
+            if (fallOnly(checkpoint)) continue;
+            ai.requireEnabled();
             boolean commissioned = profiles.findByRobotIdAndZoneIdAndSensingType(robotId, checkpoint.zoneId(), checkpoint.sensingType())
                     .filter(p -> p.isEnabled() && map.getAssetHash().equalsIgnoreCase(p.getMapAssetHash())
                             && map.getFrameId().equals(p.getFrameId())).isPresent();
             if (!commissioned) return null;
         }
         return map;
+    }
+
+    public static boolean fallCapable(RobotMqttSession link) {
+        if (link == null || link.getHelloJson() == null) return false;
+        for (JsonNode capability : link.getHelloJson().path("capabilities")) {
+            if (FALL_CAPABILITY.equals(capability.asText())) return true;
+        }
+        return false;
     }
 
     private UUID mapId(Workflow workflow) {
@@ -230,14 +256,23 @@ public class PatrolWorkflowService {
 
     private void requireCheckpoint(UUID mapId, Checkpoint checkpoint) {
         var endpoint = endpoints.findById(checkpoint.endpointId()).orElseThrow(() -> new BusinessRuleException("Patrol endpoint not found"));
-        var zone = zones.findById(checkpoint.zoneId()).orElseThrow(() -> new BusinessRuleException("Patrol zone not found"));
         if (!endpoint.isActive() || !endpoint.isAccessible() || !mapId.equals(endpoint.getMap().getMapId())
                 || endpoint.getYawRad() == null) {
             throw new BusinessRuleException("Patrol checkpoint needs an active accessible endpoint with heading on the patrol map");
         }
+        if (fallOnly(checkpoint)) {
+            if (checkpoint.zoneId() != null) throw new BusinessRuleException("A patrol fall-only checkpoint does not require a sensing zone");
+            return;
+        }
+        if (checkpoint.zoneId() == null) throw new BusinessRuleException("Patrol sensing zone is required");
+        var zone = zones.findById(checkpoint.zoneId()).orElseThrow(() -> new BusinessRuleException("Patrol zone not found"));
         if (!zone.isActive() || !mapId.equals(zone.getMap().getMapId()) || !AiSensingService.TYPES.contains(checkpoint.sensingType())
                 || ("RESTRICTED_ZONE".equals(checkpoint.sensingType()) && zone.getZoneType() != ZoneType.KEEP_OUT)) {
             throw new BusinessRuleException("Patrol needs an active sensing zone on the same map; RESTRICTED_ZONE requires KEEP_OUT");
         }
+    }
+
+    private static boolean fallOnly(Checkpoint checkpoint) {
+        return FALL_CAPABILITY.equals(checkpoint.sensingType());
     }
 }

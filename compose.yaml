@@ -76,7 +76,7 @@ services:
       TTS_ENABLED: ${TTS_ENABLED:-false}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_TTS_VOICE: ${OPENAI_TTS_VOICE:-coral}
-      OPENAI_TTS_SPEED: ${OPENAI_TTS_SPEED:-1.0}
+      OPENAI_TTS_SPEED: ${OPENAI_TTS_SPEED:-1.2}
       OPENAI_TTS_MODEL: ${OPENAI_TTS_MODEL:-gpt-4o-mini-tts}
       TTS_CACHE_DIR: /app/data/speech
     volumes:

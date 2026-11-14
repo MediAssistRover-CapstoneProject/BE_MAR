@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mediassistrover.backend.dto.request.request.ServiceRequestRequests.NavigationCreateRequest;
 import com.mediassistrover.backend.dto.request.response.ServiceRequestResponses.DeviceRequestDetailResponse;
 import com.mediassistrover.backend.entity.Endpoint;
+import com.mediassistrover.backend.entity.Workflow;
 import com.mediassistrover.backend.enums.*;
 import com.mediassistrover.backend.exception.*;
 import com.mediassistrover.backend.mqtt.MqttWire;
@@ -16,13 +17,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.*;
 
-/** Voice selects a real endpoint; a trusted MOVE -> SPEAK workflow owns execution. */
+/** Voice selects a real endpoint; the published workflow owns execution. */
 @Service @RequiredArgsConstructor @Transactional(readOnly=true)
 public class VoiceNavigationService {
     public static final String WORKFLOW_CODE="WF_VOICE_ENDPOINT_V1";
     public static final double DEFAULT_SPEED_MPS = 0.35;
     public record Create(@NotNull UUID navigationSessionId,@NotNull UUID endpointId,
-        @DecimalMin("0.10") @DecimalMax("0.35") Double maxSpeedMps,UUID voiceInteractionId) { }
+        @DecimalMin("0.10") @DecimalMax("0.35") Double maxSpeedMps,UUID voiceInteractionId,
+        Boolean workflowOwnsInvite) { }
     private final NavigationSessionService sessions;
     private final DeviceResourceScopePolicy scope;
     private final EndpointRepository endpoints;
@@ -43,6 +45,7 @@ public class VoiceNavigationService {
         result.put("workflowCode",WORKFLOW_CODE);
         var workflow=workflows.findFirstByWorkflowCodeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(WORKFLOW_CODE,WorkflowStatus.PUBLISHED);
         result.put("workflowPrepared",workflow.isPresent());
+        result.put("workflowOwnsInvite",workflow.map(VoiceNavigationService::ownsInvite).orElse(false));
         var points=result.putArray("endpoints");
         endpoints.findByMapMapIdOrderByEndpointCodeAsc(mapId).stream().filter(e->e.isActive()&&e.isAccessible()).forEach(e->{
             var p=points.addObject().put("endpointId",e.getEndpointId().toString()).put("mapId",mapId.toString())
@@ -67,6 +70,8 @@ public class VoiceNavigationService {
                 ||!input.navigationSessionId().toString().equals(prior.getRequestDataJson().path("navigation_session_id").asText())
                 ||!Objects.equals(input.voiceInteractionId()==null?null:input.voiceInteractionId().toString(),
                     prior.getRequestDataJson().hasNonNull("voice_interaction_id")?prior.getRequestDataJson().path("voice_interaction_id").asText():null)
+                ||!Objects.equals(input.workflowOwnsInvite(),prior.getRequestDataJson().hasNonNull("workflow_owns_invite")
+                    ?prior.getRequestDataJson().path("workflow_owns_invite").asBoolean():null)
                 ||Double.compare(speed,prior.getRequestDataJson().path("max_speed_mps").asDouble())!=0)
                 throw new ConflictException("Idempotency-Key belongs to another voice navigation request");
             return requests.getDeviceRequest(prior.getServiceRequestId(),device);
@@ -78,16 +83,31 @@ public class VoiceNavigationService {
         var target=endpoints.findById(input.endpointId()).orElseThrow(()->new ResourceNotFoundException("Endpoint not found"));
         if(!target.isActive()||!target.isAccessible()||!mapId.equals(target.getMap().getMapId()))
             throw new BusinessRuleException("Voice destination must be an active accessible endpoint in this session map");
-        var workflow=workflows.findFirstByWorkflowCodeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(WORKFLOW_CODE,WorkflowStatus.PUBLISHED)
-            .orElseThrow(()->new BusinessRuleException("VOICE_NAVIGATION_WORKFLOW_NOT_PREPARED: prepare WF_VOICE_ENDPOINT_V1 on mapping.html"));
+        // Older Pi clients speak the invitation themselves. Keep their dispatch on the MOVE-first workflow.
+        var selected=input.workflowOwnsInvite()==null
+                ?workflows.findFirstByWorkflowCodeIgnoreCaseAndStatusAndAcceptsNewJobsTrueAndStartStepStepTypeOrderByVersionNoDesc(
+                    WORKFLOW_CODE,WorkflowStatus.PUBLISHED,StepType.MOVE)
+                :workflows.findFirstByWorkflowCodeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(
+                    WORKFLOW_CODE,WorkflowStatus.PUBLISHED);
+        var workflow=selected.orElseThrow(()->new BusinessRuleException(
+                "VOICE_NAVIGATION_WORKFLOW_NOT_PREPARED: prepare WF_VOICE_ENDPOINT_V1 on mapping.html"));
+        if(input.workflowOwnsInvite()!=null && input.workflowOwnsInvite()!=ownsInvite(workflow))
+            throw new ConflictException("VOICE_NAVIGATION_WORKFLOW_CHANGED: refresh the catalog and confirm again");
         var data=wire.object().put("voice_navigation",true).put("max_speed_mps",speed)
             .put("arrival_text",arrivalText(target));
+        if(input.workflowOwnsInvite()!=null)data.put("workflow_owns_invite",input.workflowOwnsInvite());
         if(input.voiceInteractionId()!=null)data.put("voice_interaction_id",input.voiceInteractionId().toString());
         var body=new NavigationCreateRequest(mapId,workflow.getWorkflowId(),null,null,target.getEndpointId(),null,
             TargetMode.ENDPOINT,NavigationMode.STANDARD,null,1,null,50,"Confirmed voice destination: "+target.getEndpointCode(),
             data,device.robotId(),input.navigationSessionId());
         var created=requests.createDeviceNavigation(body,key,device,metadata);
         return requests.getDeviceRequest(created.request().serviceRequestId(),device);
+    }
+
+    private static boolean ownsInvite(Workflow workflow) {
+        var start=workflow.getStartStep();
+        return start!=null && start.isEnabled() && "ANNOUNCE_INVITATION".equals(start.getStepCode())
+                && start.getStepType()==StepType.INTERACT && "SPEAK".equals(start.getParamsJson().path("action").asText());
     }
 
     public static String arrivalText(Endpoint endpoint) {

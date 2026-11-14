@@ -43,7 +43,7 @@ public class PiVoiceController {
     }
 
     @PostMapping("/navigation-requests")
-    @Operation(summary="Submit a confirmed voice destination as a real NAVIGATION request/job; MOVE succeeds before arrival SPEAK")
+    @Operation(summary="Submit a confirmed voice destination as a NAVIGATION job using the published voice workflow")
     public com.mediassistrover.backend.dto.request.response.ServiceRequestResponses.DeviceRequestDetailResponse navigate(
             @RequestHeader("Idempotency-Key") String key,@Valid @RequestBody VoiceNavigationService.Create body,
             @AuthenticationPrincipal DevicePrincipal device,HttpServletRequest request){

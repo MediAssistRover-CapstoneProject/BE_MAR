@@ -359,6 +359,22 @@
         {
           "type": "object",
           "properties": {
+            "sensing_type": { "const": "PATROL_FALL" },
+            "metrics": {
+              "type": "object",
+              "properties": { "frames": { "type": "integer", "minimum": 1, "maximum": 2147483647 } },
+              "required": ["frames"],
+              "additionalProperties": false
+            },
+            "captured_at": { "type": "string", "format": "date-time" },
+            "evidence_ref": { "type": "null" }
+          },
+          "required": ["sensing_type", "metrics", "captured_at", "evidence_ref"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
             "sensing_type": {
               "enum": [
                 "ROBOT_HEALTH",

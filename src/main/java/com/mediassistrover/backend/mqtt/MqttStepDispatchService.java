@@ -100,6 +100,10 @@ public class MqttStepDispatchService {
         if (session.getHelloJson().path("simulation").asBoolean() && !properties.isAllowSimulation()) throw new BusinessRuleException("Simulation dispatch is disabled");
         boolean enabled=false;for (var type:session.getHelloJson().path("enabledStepTypes")) if (step.getStepTypeSnapshot().equals(type.asText())) enabled=true;
         if (!enabled) throw new BusinessRuleException("Pi does not enable selected StepType");
+        if (step.getResolvedInputsJson().path("fall_detection").asBoolean()
+                && (!com.mediassistrover.backend.service.PatrolWorkflowService.isPatrol(job.getWorkflow())
+                || !com.mediassistrover.backend.service.PatrolWorkflowService.fallCapable(session)))
+            throw new BusinessRuleException("Patrol fall detection requires an opted-in Pi and a patrol workflow");
         if ("MOVE".equals(step.getStepTypeSnapshot()) && (job.getMap()==null || job.getRobot().getCurrentMap()==null
                 || !job.getMap().getMapId().equals(job.getRobot().getCurrentMap().getMapId()) || job.getMap().getAssetHash()==null
                 || !job.getMap().getAssetHash().equalsIgnoreCase(Objects.toString(job.getRobot().getMapAssetHash(),""))))

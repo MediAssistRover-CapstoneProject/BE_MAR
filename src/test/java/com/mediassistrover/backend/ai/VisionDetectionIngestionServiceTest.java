@@ -43,13 +43,25 @@ class VisionDetectionIngestionServiceTest {
     }
 
     @Test
-    void mapsAllEmergencyVisionTypesAndKeepsSimulationCallsEnabled() {
+    void mapsAllEmergencyVisionTypes() {
         assertMapping("SUSPECTED_FALL",DetectionEventType.SUSPECTED_FALL,"AI_SUSPECTED_FALL",
                 EmergencyIncidentSeverity.WARNING);
         assertMapping("SUSPECTED_SEIZURE",DetectionEventType.SUSPECTED_SEIZURE,"AI_SUSPECTED_SEIZURE",
                 EmergencyIncidentSeverity.CRITICAL);
         assertMapping("GESTURE_SOS",DetectionEventType.SOS_SIGNAL,"AI_GESTURE_SOS",
                 EmergencyIncidentSeverity.CRITICAL);
+    }
+
+    @Test
+    void simulatedVisionStoresOnlyDetectionAndReceipt() {
+        ObjectNode payload = payload("SUSPECTED_FALL").put("simulation", true);
+        var result = service.ingest(robotId, payload);
+        assertNull(result.incidentId());
+        assertFalse(result.duplicate());
+        verify(detections).saveAndFlush(any());
+        verify(receipts).recordVision(eq(result.detectionEventId()), any(), same(payload),
+                argThat(provenance -> provenance.path("simulation").asBoolean()));
+        verifyNoInteractions(emergencies);
     }
 
     @Test
@@ -78,14 +90,14 @@ class VisionDetectionIngestionServiceTest {
         verify(emergencies).create(commandCaptor.capture());
         assertEquals(incidentType,commandCaptor.getValue().incidentType());
         assertEquals(severity,commandCaptor.getValue().severity());
-        assertTrue(commandCaptor.getValue().data().path("simulation").asBoolean());
+        assertFalse(commandCaptor.getValue().data().path("simulation").asBoolean());
     }
 
     private ObjectNode payload(String type) {
         ObjectNode payload=json.createObjectNode();
         payload.put("event_id",UUID.randomUUID().toString());payload.put("robot_id",robotId.toString());
         payload.put("event_type",type);payload.put("source","VISION_AI");payload.put("detected_at",now.toString());
-        payload.put("algorithm","test-model");payload.put("confidence",0.91);payload.put("simulation",true);
+        payload.put("algorithm","test-model");payload.put("confidence",0.91);payload.put("simulation",false);
         return payload;
     }
 }

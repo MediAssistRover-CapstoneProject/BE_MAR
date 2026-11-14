@@ -13,6 +13,8 @@ import java.util.UUID;
 public interface EmergencyIncidentRepository extends JpaRepository<EmergencyIncident,UUID> {
     Page<EmergencyIncident> findByStatus(EmergencyIncidentStatus status,Pageable pageable);
     Optional<EmergencyIncident> findByDetectionEventDetectionEventId(UUID detectionEventId);
+    boolean existsByRobotRobotIdAndIncidentTypeAndStatusInAndArchivedAtIsNull(UUID robotId, String incidentType,
+                                                                            Collection<EmergencyIncidentStatus> statuses);
     long countByStatusIn(Collection<EmergencyIncidentStatus> statuses);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select i from EmergencyIncident i where i.incidentId=:id")

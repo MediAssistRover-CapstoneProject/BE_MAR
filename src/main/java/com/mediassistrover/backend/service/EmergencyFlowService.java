@@ -42,6 +42,15 @@ public class EmergencyFlowService {
 
     @Transactional
     public Result create(Command command) {
+        return create(command, true);
+    }
+
+    @Transactional
+    public Result createForStaffReview(Command command) {
+        return create(command, false);
+    }
+
+    private Result create(Command command, boolean automaticDispatch) {
         Instant now = Instant.now(clock);
         EmergencyIncident incident = EmergencyIncident.builder()
                 .detectionEvent(command.detectionEvent())
@@ -94,7 +103,7 @@ public class EmergencyFlowService {
                 incident, request, null, zone, true, AlertAckPolicy.ANY, now.plusSeconds(300));
 
         Job job = null;
-        if (incident.getSosResponder() != null) {
+        if (automaticDispatch && incident.getSosResponder() != null) {
             if (command.robot().getStatus() == RobotStatus.IDLE
                     && jobRepository.findByRobotRobotIdAndStatusIn(command.robot().getRobotId(),
                     List.of(JobStatus.QUEUED, JobStatus.ACCEPTED, JobStatus.RUNNING,

@@ -1,10 +1,10 @@
 {
   "workflow": {
     "workflowCode": "WF_VOICE_ENDPOINT_V1",
-    "versionNo": 3,
-    "workflowName": "Voice: di toi endpoint roi thong bao",
+    "versionNo": 4,
+    "workflowName": "Voice: mời đi theo, dẫn đường và báo đến nơi",
     "serviceType": "NAVIGATION",
-    "description": "Trusted parameterized MOVE then arrival SPEAK. Endpoint/map come from BE; no arrival announcement on MOVE failure.",
+    "description": "Play the invitation before MOVE and announce arrival after MOVE succeeds. Endpoint and map come from BE.",
     "inputSchemaJson": {
       "type": "object",
       "properties": {
@@ -43,6 +43,9 @@
       "max_speed_mps": 0.35
     },
     "outputMappingJson": {
+      "invitation_speech": {
+        "$ref": "/outputs/ANNOUNCE_INVITATION"
+      },
       "move_result": {
         "$ref": "/outputs/MOVE_TO_ENDPOINT"
       },
@@ -54,12 +57,12 @@
       "MOVE"
     ],
     "maxDurationSec": 300,
-    "maxTotalVisits": 2,
+    "maxTotalVisits": 3,
     "graphVersion": 3,
     "schemaVersion": 3
   },
   "graph": {
-    "startStepCode": "MOVE_TO_ENDPOINT",
+    "startStepCode": "ANNOUNCE_INVITATION",
     "tasks": [
       {
         "taskCode": "NAVIGATE",
@@ -71,10 +74,34 @@
     "steps": [
       {
         "taskCode": "NAVIGATE",
+        "stepType": "INTERACT",
+        "stepCode": "ANNOUNCE_INVITATION",
+        "stepName": "Mời người dùng đi theo",
+        "sequenceNo": 1,
+        "paramsJson": {
+          "prompt_key": "VOICE_INVITATION",
+          "action": "SPEAK",
+          "data": {
+            "text": "Mời bạn đi theo tôi.",
+            "language_code": "vi",
+            "speed_wpm": 150,
+            "volume": 70
+          }
+        },
+        "inputMappingJson": {},
+        "timeoutSec": 25,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
         "stepType": "MOVE",
         "stepCode": "MOVE_TO_ENDPOINT",
         "stepName": "Đi tới vị trí endpoint",
-        "sequenceNo": 1,
+        "sequenceNo": 2,
         "paramsJson": {
           "mode": "NORMAL",
           "max_speed_mps": 0.35
@@ -102,7 +129,7 @@
         "stepType": "INTERACT",
         "stepCode": "ANNOUNCE_ARRIVAL",
         "stepName": "Thong bao da toi noi",
-        "sequenceNo": 2,
+        "sequenceNo": 3,
         "description": "",
         "paramsJson": {
           "prompt_key": "VOICE_ARRIVAL",
@@ -127,6 +154,27 @@
       }
     ],
     "transitions": [
+      {
+        "fromStepCode": "ANNOUNCE_INVITATION",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": true,
+        "toStepCode": "MOVE_TO_ENDPOINT"
+      },
+      {
+        "fromStepCode": "ANNOUNCE_INVITATION",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "ANNOUNCE_INVITATION",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
       {
         "fromStepCode": "MOVE_TO_ENDPOINT",
         "outcome": "SUCCESS",
