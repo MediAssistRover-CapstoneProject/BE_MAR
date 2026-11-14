@@ -48,6 +48,7 @@ public class FacilityServiceImpl implements FacilityService {
     private final FloorHardDeleteService floorDelete;
     private final FacilityCatalogHardDeleteService catalogDelete;
     private final SosMonitoringRoomService sosRooms;
+    private final MapHardDeleteService mapDelete;
 
     @Override @Transactional
     public HospitalInformationResponse createHospitalInformation(HospitalInformationRequest r, UUID actorId, RequestMetadata md) {
@@ -147,8 +148,13 @@ public class FacilityServiceImpl implements FacilityService {
     @Override public MapArtifactResponse getMapArtifact(UUID id) { FacilityMap e=facilityMap(id);return new MapArtifactResponse(e.getMapId(),e.getMapCode(),e.getVersionNo(),e.getMapFileUri(),e.getAssetHash(),e.getFrameId(),e.getStatus()); }
     @Override public Page<MapResponse> listMaps(boolean includeDeleted,Pageable p) { return(includeDeleted?mapRepository.findAll(p):mapRepository.findByStatusNot(MapStatus.ARCHIVED,p)).map(mapper::toResponse); }
     @Override public MapResponse getMap(UUID id,boolean includeDeleted){FacilityMap e=facilityMap(id);if(!includeDeleted&&e.getStatus()==MapStatus.ARCHIVED)throw notFound("Map",id);return mapper.toResponse(e);}
-    @Override public DeletionImpactResponse mapDeletionImpact(UUID id){return catalogDelete.impact(FacilityDeletionResource.MAP,id);}
-    @Override @Transactional public HardDeleteResponse forceDeleteMap(UUID id,String reason,UUID actorId,RequestMetadata md){return forceCatalog(FacilityDeletionResource.MAP,id,reason,actorId,md);}
+    @Override public DeletionImpactResponse mapDeletionImpact(UUID id){return mapDelete.impact(id);}
+    @Override @Transactional public HardDeleteResponse forceDeleteMap(UUID id,String reason,UUID actorId,RequestMetadata md){
+        Account actor=account(actorId);
+        HardDeleteResponse result=mapDelete.delete(id,actor);
+        auditService.record(actor,"MAP_FORCE_DELETED","MAP",id,null,Map.of("reason",reason,"deleted",result.deleted()),md);
+        return result;
+    }
 
     @Override @Transactional public ZoneResponse createZone(ZoneRequest r,UUID a,RequestMetadata md){
         com.mediassistrover.backend.service.ZonePolicy.validate(r.zoneType(),r.polygonJson(),r.speedLimitMps());

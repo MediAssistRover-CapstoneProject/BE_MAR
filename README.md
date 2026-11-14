@@ -23,10 +23,16 @@ Trong `.env`: TTS_ENABLED=true, OPENAI_API_KEY=<key riêng>, OPENAI_TTS_MODEL=gp
 - POST /api/v1/speech-jobs: tạo job phát loa; Pi tải WAV từ BE qua HTTPS.
 - POST /api/v1/maps/import: multipart floorId/mapCode/versionNo/mapName/yaml/pgm; map DRAFT.
 - POST/PUT /api/v1/endpoints: cấu hình endpoint.
+- GET /api/v1/maps/{id}/deletion-impact: ADMIN xem số `Map`, `Endpoint`, `Room`, `Zone`, nhóm điểm, bản vẽ/dữ liệu quét sẽ xóa; `sharedRooms` là số phòng giữ lại và `blockers` liệt kê ràng buộc.
+- DELETE /api/v1/maps/{id}/force: ADMIN xóa cứng map, endpoint, phòng chỉ thuộc map, vùng, nhóm điểm, bản vẽ và dữ liệu quét trong database. Bắt buộc header `X-Confirm-Hard-Delete: true` và body `{ "reason": "Lý do từ 5 đến 500 ký tự" }`. Phòng còn liên kết với map khác được giữ, kể cả qua bản nháp hoặc map lưu trữ. Xóa cấu hình SOS của phòng bị xóa, gỡ map khỏi robot đang rảnh và trả số bản ghi đã xóa trong `deleted`.
+- Toàn bộ lần xóa map chạy trong một giao dịch. Job, yêu cầu giao hàng, ca trực và các tham chiếu bên ngoài dữ liệu của map sẽ chặn xóa với 409; robot BUSY/STARTING hoặc phiên điều hướng chưa đóng cũng chặn. Backend kiểm tra lại khi thực thi và rollback toàn bộ nếu có lỗi. API `DELETE /maps/{id}`/`POST /maps/{id}/archive` vẫn chỉ lưu trữ; UI dùng `/force` cho nút “Xóa bản đồ”.
 - GET /api/v1/pi/maps/{mapId}/bundle: YAML/PGM/metadata; DEVICE chỉ tải map được gán.
 - DELETE /api/v1/admin/workflows/{id}/force: ADMIN xóa cứng workflow ở mọi trạng thái cùng Job/Schedule và runtime liên quan; trả 409 nếu còn Job QUEUED, ACCEPTED hoặc RUNNING. ServiceRequest/NavigationRequest gốc được giữ lại.
 
 Giữ 11 step types. BE xử lý nghiệp vụ; Pi chạy handler robot. MOVE cần map đã nạp và profile ACK. Tạo workflow không tự tạo handler phần cứng mới.
+
+Kiểm thử xóa map: `mvn '-Dmaven.test.skip=false' '-DskipTests=false' '-Dtest=MapCascadeDeleteTest,MapCascadeHttpTest' test`.
+Kiểm tra SQL, khóa ngoại và rollback dùng H2 riêng trong RAM, không kết nối database ứng dụng.
 
 ## Amazon S3 media
 
