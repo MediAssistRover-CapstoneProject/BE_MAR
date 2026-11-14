@@ -67,6 +67,34 @@ class MediaSessionTest {
         var p=new DevicePrincipal(robot.getRobotId(),"MAR",1,"device",instant.plusSeconds(600));
         when(device.requireCurrentDevice(p)).thenReturn(robot);return p;
     }
+    @Test void staffCanStartMonitorWithoutIncidentAndJoinCamera() {
+        var robot = Robot.builder().robotId(UUID.randomUUID()).build();
+        var account = Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).build();
+        var principal = actor(account);
+        when(robots.findByIdForUpdate(robot.getRobotId())).thenReturn(Optional.of(robot));
+        when(events.isListening(robot.getRobotId())).thenReturn(true);
+        doAnswer(call -> {
+            MediaSession created = call.getArgument(0);
+            created.setSessionId(UUID.randomUUID());
+            when(sessions.lockById(created.getSessionId())).thenReturn(Optional.of(created));
+            return created;
+        }).when(sessions).saveAndFlush(any());
+        var created = service.create(robot.getRobotId(), null, MediaSession.Mode.MONITOR, principal);
+        assertEquals(account.getAccountId(), created.staffAccountId());
+        assertNull(created.incidentId());
+        service.staffToken(created.sessionId(), principal);
+        verify(gateway).join(any(), eq("staff-" + account.getAccountId()), eq(false));
+    }
+
+    @Test void staffAssistStillRequiresIncident() {
+        var robot = Robot.builder().robotId(UUID.randomUUID()).build();
+        var principal = actor(Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).build());
+        when(robots.findByIdForUpdate(robot.getRobotId())).thenReturn(Optional.of(robot));
+        assertThrows(AccessDeniedException.class,
+                () -> service.create(robot.getRobotId(), null, MediaSession.Mode.ASSIST, principal));
+        verify(sessions, never()).saveAndFlush(any());
+    }
+
     @Test void anotherDeviceCannotGetRoomCredentials() {
         var s=session();var robot=Robot.builder().robotId(UUID.randomUUID()).build();var principal=device(robot);
         assertThrows(AccessDeniedException.class,()->service.deviceToken(s.getSessionId(),principal));

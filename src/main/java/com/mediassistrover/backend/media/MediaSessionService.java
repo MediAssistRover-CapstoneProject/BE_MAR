@@ -60,7 +60,8 @@ public class MediaSessionService {
             requireSosResponder(incident, actor);
             if(incident.getRobot()==null||!robotId.equals(incident.getRobot().getRobotId()))
                 throw new BusinessRuleException("MEDIA_INCIDENT_ROBOT_MISMATCH");
-        } else if(actor.role()!=Role.ADMIN) throw new AccessDeniedException("Staff media sessions require an accessible incident");
+        } else if(actor.role()!=Role.ADMIN && mode!=MediaSession.Mode.MONITOR)
+            throw new AccessDeniedException("Staff assist sessions require an accessible incident");
         var old=sessions.findByActiveRobotId(robotId);
         if(old.isPresent()) {
             var s=old.get();
