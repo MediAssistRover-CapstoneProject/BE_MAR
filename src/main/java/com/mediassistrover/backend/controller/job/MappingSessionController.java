@@ -20,6 +20,7 @@ import java.util.UUID;
 @PreAuthorize("hasAnyRole('ADMIN','STAFF')") @Tag(name="Mapping session")
 public class MappingSessionController {
     private final JobUiSnapshotService snapshots;
+    private final com.mediassistrover.backend.validation.StaffOperationalScopePolicy staffScope;
     private final MappingSessionRepository sessions;
     private final MappingPreviewService previews;
     private final MappingControlService controls;
@@ -66,9 +67,13 @@ public class MappingSessionController {
     public ResponseEntity<byte[]> image(@PathVariable UUID jobId,@AuthenticationPrincipal AccountPrincipal actor) {
         return picture(previews.mapImage(session(jobId,actor).getSessionId()),MediaType.IMAGE_PNG);
     }
-    @GetMapping(value="/{jobId}/camera-preview.jpg",produces=MediaType.IMAGE_JPEG_VALUE) @PreAuthorize("hasRole('ADMIN')")
+    @GetMapping(value="/{jobId}/camera-preview.jpg",produces=MediaType.IMAGE_JPEG_VALUE)
+    @Operation(summary="Latest robot camera JPEG for authenticated Admin and Staff")
     public ResponseEntity<byte[]> camera(@PathVariable UUID jobId,@AuthenticationPrincipal AccountPrincipal actor) {
-        return picture(previews.cameraImage(session(jobId,actor).getSessionId()),MediaType.IMAGE_JPEG);
+        staffScope.requireRobotRead(actor);
+        var mapping = sessions.findByJobId(jobId)
+                .orElseThrow(() -> new ResourceNotFoundException("Job has no mapping session"));
+        return picture(previews.cameraImage(mapping.getSessionId()),MediaType.IMAGE_JPEG);
     }
     private ResponseEntity<byte[]> picture(MappingPreviewService.Picture frame,MediaType type) {
         if(frame==null)return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
