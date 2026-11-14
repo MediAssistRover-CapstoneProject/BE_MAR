@@ -1,0 +1,49 @@
+package com.mediassistrover.backend.knowledge;
+
+import com.mediassistrover.backend.config.OpenApiConfig;
+import com.mediassistrover.backend.security.AccountPrincipal;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/api/v1/knowledge/documents")
+@PreAuthorize("hasRole('ADMIN')")
+@SecurityRequirement(name = OpenApiConfig.USER_BEARER_SCHEME)
+@Tag(name = "Knowledge documents", description = "ADMIN uploads for the configured OpenAI voice vector store")
+@RequiredArgsConstructor
+public class KnowledgeDocumentController {
+    private final KnowledgeDocumentService service;
+
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    @Operation(summary = "Upload PDF, DOCX, UTF-8 TXT or MD (20 MB maximum)",
+        description = "Returns a durable document ID. Poll GET /{id} until COMPLETED before asking voice questions. "
+            + "Identical bytes in the same vector store return the existing document, including its failure status.")
+    public KnowledgeDocumentService.Document upload(
+            @Parameter(required = true, schema = @Schema(type = "string", format = "binary"))
+            @RequestPart("file") MultipartFile file, @AuthenticationPrincipal AccountPrincipal actor) {
+        return service.upload(file, actor.accountId());
+    }
+
+    @GetMapping
+    @Operation(summary = "List documents and indexing states")
+    public KnowledgeDocumentService.DocumentPage list(@RequestParam(defaultValue = "0") int page,
+                                                      @RequestParam(defaultValue = "20") int size) {
+        return service.list(page, size);
+    }
+
+    @GetMapping("/{id}")
+    @Operation(summary = "Read indexing status and sanitized error code")
+    public KnowledgeDocumentService.Document get(@PathVariable UUID id) { return service.get(id); }
+}

@@ -134,6 +134,12 @@ public class GlobalExceptionHandler {
                 "Media storage is temporarily unavailable",request,null);
     }
 
+    @ExceptionHandler(com.mediassistrover.backend.knowledge.OpenAiKnowledgeClient.Failure.class)
+    ResponseEntity<ApiErrorResponse> handleKnowledgeUnavailable(
+            com.mediassistrover.backend.knowledge.OpenAiKnowledgeClient.Failure exception, HttpServletRequest request) {
+        return response(HttpStatus.SERVICE_UNAVAILABLE, "KNOWLEDGE_UNAVAILABLE", exception.getMessage(), request, null);
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     ResponseEntity<ApiErrorResponse> handleAccessDenied(AccessDeniedException exception, HttpServletRequest request) {
         return response(HttpStatus.FORBIDDEN, "FORBIDDEN", "Bạn không có quyền thực hiện thao tác này", request, null);

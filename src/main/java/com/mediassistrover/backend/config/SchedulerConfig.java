@@ -13,6 +13,14 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 @EnableScheduling
 @EnableSchedulerLock(defaultLockAtMostFor = "PT5M")
 public class SchedulerConfig {
+    @Bean(name = "knowledgeScheduler")
+    ThreadPoolTaskScheduler knowledgeScheduler() {
+        var scheduler = new ThreadPoolTaskScheduler();
+        scheduler.setPoolSize(1);
+        scheduler.setThreadNamePrefix("mar-knowledge-");
+        return scheduler;
+    }
+
     @Bean(name = "deliveryEmailScheduler")
     ThreadPoolTaskScheduler deliveryEmailScheduler() {
         var scheduler=new ThreadPoolTaskScheduler();
