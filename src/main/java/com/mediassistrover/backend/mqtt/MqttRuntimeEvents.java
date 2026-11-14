@@ -35,6 +35,8 @@ public class MqttRuntimeEvents {
     public void apply(Job job,MqttWire.Envelope e) {
         if (job==null || !job.isBeOrchestrated() || job.getSchemaVersion()!=3 || job.getRobot()==null || !job.getRobot().getRobotId().equals(e.robotId()))
             throw new BusinessRuleException("MQTT event is outside orchestrated Job/Robot scope");
+        if(job.getStatus()==JobStatus.CANCELLED)
+            throw new BusinessRuleException("Job is already cancelled");
         UUID acknowledged="COMMAND_ACK".equals(e.messageType())?UUID.fromString(e.payload().path("commandId").asText()):e.correlationId();
         RobotCommandOutbox correlated=commands.lock(acknowledged).orElseThrow(()->new BusinessRuleException("No command for MQTT event"));
         boolean cancelAck="COMMAND_ACK".equals(e.messageType()) && "CANCEL_STEP".equals(correlated.getCommandType());
