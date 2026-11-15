@@ -26,6 +26,7 @@ import java.util.UUID;
 @PreAuthorize("hasAnyRole('ADMIN','STAFF')") @Tag(name="Emergency Incidents")
 public class EmergencyController {
     private final EmergencyService service;
+    private final com.mediassistrover.backend.service.SosResponseRouteService responseRoutes;
     private final com.mediassistrover.backend.service.DeletionPolicy deletionPolicy;
     @GetMapping public PageResponse<IncidentResponse> list(@RequestParam(required=false)EmergencyIncidentStatus status,
             @RequestParam(required=false)EmergencyIncidentSeverity severity,@RequestParam(required=false)String type,
@@ -34,6 +35,17 @@ public class EmergencyController {
             @RequestParam(defaultValue="false")boolean includeDeleted,@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size,
             @AuthenticationPrincipal AccountPrincipal actor){return PageResponse.from(service.list(status,severity,type,mapId,roomId,from,to,includeDeleted,actor,PageRequest.of(page,size,Sort.by(Sort.Direction.DESC,"occurredAt"))));}
     @GetMapping("/{id}") public IncidentResponse get(@PathVariable UUID id,@RequestParam(defaultValue="false")boolean includeDeleted,@AuthenticationPrincipal AccountPrincipal actor){return service.get(id,includeDeleted,actor);}
+    @PostMapping("/{id}/confirm")
+    @io.swagger.v3.oas.annotations.Operation(summary="Confirm a real SOS and start handling", description="Admin or assigned SOS responder. Repeated confirmation returns the current IN_PROGRESS incident.")
+    public IncidentResponse confirm(@PathVariable UUID id, @AuthenticationPrincipal AccountPrincipal actor, HttpServletRequest request) {
+        return service.confirm(id, actor, RequestMetadataFactory.from(request));
+    }
+    @GetMapping("/{id}/response-route")
+    @io.swagger.v3.oas.annotations.Operation(summary="Shortest grid route from the SOS monitoring room to the incident, in centimetres")
+    public com.mediassistrover.backend.service.SosResponseRouteService.Response responseRoute(
+            @PathVariable UUID id, @AuthenticationPrincipal AccountPrincipal actor) {
+        return responseRoutes.route(id, actor);
+    }
     @PostMapping("/{id}/acknowledge") public IncidentResponse acknowledge(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.acknowledge(id,actor,RequestMetadataFactory.from(request));}
     @PostMapping("/{id}/start") public IncidentResponse start(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.start(id,actor,RequestMetadataFactory.from(request));}
     @PostMapping("/{id}/resolve") public IncidentResponse resolve(@PathVariable UUID id,@Valid @RequestBody Resolution body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.resolve(id,body,actor,RequestMetadataFactory.from(request));}

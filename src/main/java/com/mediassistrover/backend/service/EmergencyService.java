@@ -15,6 +15,7 @@ public interface EmergencyService {
     Page<IncidentResponse> list(EmergencyIncidentStatus status,EmergencyIncidentSeverity severity,String type,
                                 UUID mapId,UUID roomId,Instant from,Instant to,boolean includeDeleted,AccountPrincipal actor,Pageable pageable);
     IncidentResponse acknowledge(UUID id,AccountPrincipal actor,RequestMetadata metadata);
+    IncidentResponse confirm(UUID id,AccountPrincipal actor,RequestMetadata metadata);
     IncidentResponse start(UUID id,AccountPrincipal actor,RequestMetadata metadata);
     IncidentResponse resolve(UUID id,Resolution request,AccountPrincipal actor,RequestMetadata metadata);
     IncidentResponse close(UUID id,AccountPrincipal actor,RequestMetadata metadata);

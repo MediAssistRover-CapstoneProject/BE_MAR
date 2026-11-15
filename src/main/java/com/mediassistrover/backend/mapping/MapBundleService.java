@@ -185,6 +185,26 @@ public class MapBundleService {
         }
         return !gray;
     }
+    public SosRouteGrid responseRouteGrid(UUID id) {
+        var files = verifiedFiles(id);
+        var metadata = reader.inspectMap(files.get("map.yaml"), files.get("map.pgm"));
+        var config = yaml(files.get("map.yaml"));
+        var image = raster(files.get("map.pgm"));
+        int width = image.getWidth(), height = image.getHeight();
+        boolean[] free = new boolean[width * height];
+        double threshold = ((Number) config.get("free_thresh")).doubleValue();
+        boolean negate = negated(config);
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
+                double shade = image.getRaster().getSample(x, height - y - 1, 0) / 255.0;
+                free[y * width + x] = (negate ? shade : 1 - shade) < threshold;
+            }
+        }
+        return new SosRouteGrid(width, height, metadata.path("resolution_m_per_pixel").asDouble(),
+                metadata.path("origin_x_m").asDouble(), metadata.path("origin_y_m").asDouble(),
+                metadata.path("origin_yaw_rad").asDouble(), free);
+    }
+
     public void requireFreePoint(UUID id,double x,double y){
         var f=verifiedFiles(id);var meta=reader.inspectMap(f.get("map.yaml"),f.get("map.pgm"));var config=yaml(f.get("map.yaml"));
         double a=meta.path("origin_yaw_rad").asDouble(),dx=x-meta.path("origin_x_m").asDouble(),dy=y-meta.path("origin_y_m").asDouble(),r=meta.path("resolution_m_per_pixel").asDouble();
