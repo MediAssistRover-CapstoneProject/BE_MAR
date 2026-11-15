@@ -45,5 +45,13 @@ body{font:16px system-ui,sans-serif;max-width:1000px;margin:24px auto;padding:0 
 <small>Dùng Kết thúc phiên để đóng cuộc gọi. Khi tải lại trang, hãy đăng nhập và kết nối lại sớm với phiên đang mở.</small>
 <small>Camera robot gửi hình bệnh nhân tới staff. Chỉ micro staff được phát ngược lại loa robot. Không ghi âm/ghi hình mặc định.</small>
 </section>
-<script src="/vendor/livekit-client.umd.min.js"></script><script src="/media-call.js"></script>
+<section id="fallReview" hidden>
+<h2>Xác minh té ngã</h2>
+<p id="fallReviewStatus" role="status"></p>
+<button id="confirmFall" disabled>Xác nhận té ngã qua camera</button>
+<button id="showResponseRoute" hidden>Tải đường đi từ phòng SOS</button>
+<p id="routeStatus" role="status"></p>
+<canvas id="responseMap" hidden aria-label="Vị trí người nghi té ngã và đường đi từ phòng SOS" style="width:min(100%,680px);image-rendering:pixelated"></canvas>
+</section>
+<script src="/vendor/livekit-client.umd.min.js"></script><script src="/map-navigation.js"></script><script src="/media-call.js"></script>
 </html>

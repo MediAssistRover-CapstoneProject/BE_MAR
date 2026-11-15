@@ -3,6 +3,7 @@ package com.mediassistrover.backend.service.impl;
 import com.mediassistrover.backend.entity.*;
 import com.mediassistrover.backend.enums.*;
 import com.mediassistrover.backend.exception.BusinessRuleException;
+import com.mediassistrover.backend.media.MediaSessionService;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.AccountPrincipal;
 import com.mediassistrover.backend.service.AuditService;
@@ -20,6 +21,7 @@ class SosConfirmationTest {
     final EmergencyIncidentRepository incidents = mock(EmergencyIncidentRepository.class);
     final StaffOperationalScopePolicy scope = mock(StaffOperationalScopePolicy.class);
     final AuditService audit = mock(AuditService.class);
+    final MediaSessionService media = mock(MediaSessionService.class);
     final Account staff = Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).build();
     final AccountPrincipal actor = AccountPrincipal.fromAccount(staff);
     final EmergencyIncident incident = EmergencyIncident.builder().incidentId(UUID.randomUUID())
@@ -30,6 +32,7 @@ class SosConfirmationTest {
         ReflectionTestUtils.setField(service,"staffScope",scope);
         ReflectionTestUtils.setField(service,"alertRepository",mock(AlertRepository.class));
         ReflectionTestUtils.setField(service,"auditService",audit);
+        ReflectionTestUtils.setField(service,"mediaSessions",media);
         ReflectionTestUtils.setField(service,"clock",Clock.systemUTC());
         when(incidents.lockById(incident.getIncidentId())).thenReturn(Optional.of(incident));
         when(scope.requireCurrentStaffOrAdmin(actor)).thenReturn(staff);
@@ -54,5 +57,22 @@ class SosConfirmationTest {
             assertThrows(BusinessRuleException.class,() -> service.confirm(incident.getIncidentId(),actor,null));
         }
         verifyNoInteractions(audit);
+    }
+
+    @Test void fallMustBeConfirmedFromAnActiveCameraReview() {
+        incident.setIncidentType(EmergencyIncident.SUSPECTED_FALL_TYPE);
+        incident.setStatus(EmergencyIncidentStatus.ACKNOWLEDGED);
+        incident.setAcknowledgedByAccount(staff);
+        assertThrows(BusinessRuleException.class, () -> service.start(incident.getIncidentId(), actor, null));
+        doThrow(new BusinessRuleException("MEDIA_FALL_REVIEW_NOT_ACTIVE"))
+                .doNothing().when(media).requireActiveFallReview(incident, actor);
+        assertThrows(BusinessRuleException.class, () -> service.confirm(incident.getIncidentId(), actor, null));
+        assertEquals(EmergencyIncidentStatus.ACKNOWLEDGED, incident.getStatus());
+        service.confirm(incident.getIncidentId(), actor, null);
+        assertEquals(EmergencyIncidentStatus.IN_PROGRESS, incident.getStatus());
+        service.confirm(incident.getIncidentId(), actor, null);
+        verify(media, times(2)).requireActiveFallReview(incident, actor);
+        verify(audit).record(eq(staff), eq("FALL_CONFIRMED"), eq("EmergencyIncident"),
+                eq(incident.getIncidentId()), isNull(), anyMap(), isNull());
     }
 }

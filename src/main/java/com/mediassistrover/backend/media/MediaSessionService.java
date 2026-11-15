@@ -50,6 +50,21 @@ public class MediaSessionService {
                 .filter(s->canRead(s,actor)).map(this::view).toList();
     }
     public View get(UUID id,AccountPrincipal actor) {var s=require(id);requireRead(s,actor);return view(s);}
+
+    public void requireActiveFallReview(EmergencyIncident incident, AccountPrincipal actor) {
+        if (incident.getRobot() == null) throw new BusinessRuleException("MEDIA_FALL_REVIEW_NOT_ACTIVE");
+        Instant now = now();
+        var review = sessions.findByActiveRobotId(incident.getRobot().getRobotId())
+                .orElseThrow(() -> new BusinessRuleException("MEDIA_FALL_REVIEW_NOT_ACTIVE"));
+        if (review.getMode() != MediaSession.Mode.MONITOR || review.getState() != ACTIVE
+                || review.getIncident() == null || !incident.getIncidentId().equals(review.getIncident().getIncidentId())
+                || review.getStaff() == null || !actor.accountId().equals(review.getStaff().getAccountId())
+                || !Objects.equals(review.getStaffTokenVersion(), actor.tokenVersion())
+                || !review.getExpiresAt().isAfter(now) || review.getDeviceSeenAt() == null
+                || review.getDeviceSeenAt().plusSeconds(properties.getDeviceTimeoutSec()).isBefore(now))
+            throw new BusinessRuleException("MEDIA_FALL_REVIEW_NOT_ACTIVE");
+    }
+
     public View create(UUID robotId,UUID incidentId,MediaSession.Mode mode,AccountPrincipal actor) {
         livekit.ready();var staff=staffScope.requireCurrentStaffOrAdmin(actor);
         var robot=robots.findByIdForUpdate(robotId).orElseThrow(()->new ResourceNotFoundException("Robot not found"));
@@ -60,6 +75,8 @@ public class MediaSessionService {
             requireSosResponder(incident, actor);
             if(incident.getRobot()==null||!robotId.equals(incident.getRobot().getRobotId()))
                 throw new BusinessRuleException("MEDIA_INCIDENT_ROBOT_MISMATCH");
+            if(incident.isSuspectedFall() && mode!=MediaSession.Mode.MONITOR)
+                throw new BusinessRuleException("MEDIA_FALL_REVIEW_REQUIRES_MONITOR");
         } else if(actor.role()!=Role.ADMIN && mode!=MediaSession.Mode.MONITOR)
             throw new AccessDeniedException("Staff assist sessions require an accessible incident");
         var old=sessions.findByActiveRobotId(robotId);
@@ -79,17 +96,17 @@ public class MediaSessionService {
         if(incident.isRoutedSos()&&incident.getSosResponder()==null)return null;
         var robot=incident.getRobot();
         if(!events.isListening(robot.getRobotId()))return null;
+        var mode=incident.isSuspectedFall()?MediaSession.Mode.MONITOR:MediaSession.Mode.ASSIST;
         var current=sessions.findByActiveRobotId(robot.getRobotId());
         if(current.isPresent()) {
-            if(current.get().getMode()==MediaSession.Mode.ASSIST) {
-                var existing=current.get();
-                return existing.getIncident()!=null
-                        && Objects.equals(existing.getIncident().getIncidentId(),incident.getIncidentId())
-                        ? existing.getSessionId() : null;
-            }
-            finish(current.get(),ENDED,"SOS_PREEMPTED_MONITOR");sessions.flush();
+            var existing=current.get();
+            if(existing.getMode()==mode && existing.getIncident()!=null
+                    && Objects.equals(existing.getIncident().getIncidentId(),incident.getIncidentId()))
+                return existing.getSessionId();
+            if(mode==MediaSession.Mode.MONITOR || existing.getMode()==MediaSession.Mode.ASSIST)return null;
+            finish(existing,ENDED,"SOS_PREEMPTED_MONITOR");sessions.flush();
         }
-        var s=newSession(robot,incident,MediaSession.Mode.ASSIST);
+        var s=newSession(robot,incident,mode);
         sessions.saveAndFlush(s);notifyAfterCommit(s);return s.getSessionId();
     }
     public View accept(UUID id,AccountPrincipal actor) {
@@ -229,7 +246,11 @@ public class MediaSessionService {
     }
     private void requireOpen(MediaSession s) {
         if(!s.open()||!s.getExpiresAt().isAfter(now()))throw new BusinessRuleException("MEDIA_SESSION_CLOSED");
-        if(s.getIncident()!=null)incidentOpen(s.getIncident());
+        if(s.getIncident()!=null) {
+            incidentOpen(s.getIncident());
+            if(s.getIncident().isSuspectedFall() && s.getMode()!=MediaSession.Mode.MONITOR)
+                throw new BusinessRuleException("MEDIA_FALL_REVIEW_REQUIRES_MONITOR");
+        }
     }
     private boolean canRead(MediaSession s,AccountPrincipal actor) {
         if(actor.role()==Role.ADMIN)return true;
@@ -240,6 +261,7 @@ public class MediaSessionService {
     }
     private void requireSosResponder(EmergencyIncident incident, AccountPrincipal actor) {
         if (incident == null || !incident.isRoutedSos()) return;
+        if (incident.isSuspectedFall() && actor.role() == Role.ADMIN) return;
         boolean allowed = incident.getSosResponder() == null ? actor.role() == Role.ADMIN
                 : incident.isSosResponder(actor.accountId());
         if (!allowed) throw new AccessDeniedException("Only the designated SOS responder can take this call");

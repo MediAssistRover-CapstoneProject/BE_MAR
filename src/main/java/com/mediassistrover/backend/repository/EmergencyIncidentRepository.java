@@ -15,6 +15,8 @@ public interface EmergencyIncidentRepository extends JpaRepository<EmergencyInci
     Optional<EmergencyIncident> findByDetectionEventDetectionEventId(UUID detectionEventId);
     boolean existsByRobotRobotIdAndIncidentTypeAndStatusInAndArchivedAtIsNull(UUID robotId, String incidentType,
                                                                             Collection<EmergencyIncidentStatus> statuses);
+    Optional<EmergencyIncident> findFirstByRobotRobotIdAndIncidentTypeAndArchivedAtIsNullOrderByOccurredAtDesc(
+            UUID robotId, String incidentType);
     long countByStatusIn(Collection<EmergencyIncidentStatus> statuses);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select i from EmergencyIncident i where i.incidentId=:id")

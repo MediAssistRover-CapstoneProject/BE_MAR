@@ -23,6 +23,25 @@ public record SosRouteGrid(int width, int height, double resolution, double orig
         return cell >= 0 && free[cell];
     }
 
+    /** Visibility on the saved map. The observed person's own cell may be occupied. */
+    public boolean hasClearView(Point from, Point observed) {
+        int previous = cell(from), end = cell(observed);
+        if (previous < 0 || end < 0 || !free[previous] || previous == end) return false;
+        int samples = Math.max(1, (int) Math.ceil(distance(from, observed) / (.25 * resolution)));
+        if (samples > 10_000) return false;
+        for (int sample = 1; sample <= samples; sample++) {
+            double fraction = (double) sample / samples;
+            int next = sample == samples ? end : cell(new Point(from.x() + fraction * (observed.x() - from.x()),
+                    from.y() + fraction * (observed.y() - from.y())));
+            if (next == previous) continue;
+            if (next < 0 || (next != end && !free[next])) return false;
+            int x = previous % width, y = previous / width, nx = next % width, ny = next / width;
+            if (x != nx && y != ny && (!free[y * width + nx] || !free[ny * width + x])) return false;
+            previous = next;
+        }
+        return true;
+    }
+
     private Point centre(int cell) {
         double x = (cell % width + .5) * resolution;
         double y = (cell / width + .5) * resolution;

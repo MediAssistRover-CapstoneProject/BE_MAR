@@ -34,6 +34,7 @@ public class EmergencyServiceImpl implements EmergencyService {
     private final com.mediassistrover.backend.storage.MediaReferenceValidator mediaReferences;
     private final com.mediassistrover.backend.validation.StaffOperationalScopePolicy staffScope;
     private final EmergencyFlowService emergencyFlow;
+    private final com.mediassistrover.backend.media.MediaSessionService mediaSessions;
 
     @Override @Transactional public SosResponse createSos(PiEnvelope<SosPayload> e,DevicePrincipal actor,RequestMetadata md){
         Robot authenticated=deviceScope.requireCurrentDevice(actor);validateEnvelope(e,actor);
@@ -66,20 +67,40 @@ public class EmergencyServiceImpl implements EmergencyService {
         EmergencyIncident incident = incidentForUpdate(id);
         staffScope.requireIncidentAccess(incident, actor);
         Account account = staffScope.requireCurrentStaffOrAdmin(actor);
-        if (incident.getArchivedAt() != null || !"SOS".equals(incident.getIncidentType()))
-            throw new BusinessRuleException("An active SOS incident is required");
+        if (incident.getArchivedAt() != null || !incident.supportsResponderConfirmation())
+            throw new BusinessRuleException("An active SOS or suspected fall incident is required");
         if (actor.role() != Role.ADMIN && !incident.isSosResponder(actor.accountId()))
             throw new org.springframework.security.access.AccessDeniedException("Only the assigned SOS responder can confirm");
         if (incident.getStatus() == EmergencyIncidentStatus.IN_PROGRESS) return response(incident);
         if (!Set.of(EmergencyIncidentStatus.OPEN, EmergencyIncidentStatus.ACKNOWLEDGED).contains(incident.getStatus()))
-            throw new BusinessRuleException("Only OPEN or ACKNOWLEDGED SOS can be confirmed");
+            throw new BusinessRuleException("Only OPEN or ACKNOWLEDGED incidents can be confirmed");
+        if (incident.isSuspectedFall()) mediaSessions.requireActiveFallReview(incident, actor);
         if (incident.getStatus() == EmergencyIncidentStatus.OPEN) acknowledge(id, actor, metadata);
-        start(id, actor, metadata);
-        audit(account, "SOS_CONFIRMED", incident, metadata);
+        startHandling(incident, actor, account, metadata);
+        audit(account, incident.isSuspectedFall() ? "FALL_CONFIRMED" : "SOS_CONFIRMED", incident, metadata);
         return response(incident);
     }
 
-    @Override @Transactional public IncidentResponse start(UUID id,AccountPrincipal actor,RequestMetadata md){EmergencyIncident i=incidentForUpdate(id);staffScope.requireIncidentAccess(i,actor);Account account=staffScope.requireCurrentStaffOrAdmin(actor);if(i.getStatus()!=EmergencyIncidentStatus.ACKNOWLEDGED)throw new BusinessRuleException("Only ACKNOWLEDGED incident can start handling");if(actor.role()!=Role.ADMIN&&!i.getAcknowledgedByAccount().getAccountId().equals(actor.accountId()))throw new org.springframework.security.access.AccessDeniedException("Incident was acknowledged by another Staff account");i.setStatus(EmergencyIncidentStatus.IN_PROGRESS);audit(account,"EMERGENCY_HANDLING_STARTED",i,md);return response(i);}
+    @Override @Transactional
+    public IncidentResponse start(UUID id, AccountPrincipal actor, RequestMetadata metadata) {
+        EmergencyIncident incident = incidentForUpdate(id);
+        staffScope.requireIncidentAccess(incident, actor);
+        Account account = staffScope.requireCurrentStaffOrAdmin(actor);
+        if (incident.isSuspectedFall())
+            throw new BusinessRuleException("Confirm the suspected fall before starting handling");
+        startHandling(incident, actor, account, metadata);
+        return response(incident);
+    }
+
+    private void startHandling(EmergencyIncident incident, AccountPrincipal actor, Account account, RequestMetadata metadata) {
+        if (incident.getStatus() != EmergencyIncidentStatus.ACKNOWLEDGED)
+            throw new BusinessRuleException("Only ACKNOWLEDGED incident can start handling");
+        if (actor.role() != Role.ADMIN && (incident.getAcknowledgedByAccount() == null
+                || !incident.getAcknowledgedByAccount().getAccountId().equals(actor.accountId())))
+            throw new org.springframework.security.access.AccessDeniedException("Incident was acknowledged by another Staff account");
+        incident.setStatus(EmergencyIncidentStatus.IN_PROGRESS);
+        audit(account, "EMERGENCY_HANDLING_STARTED", incident, metadata);
+    }
     @Override @Transactional public IncidentResponse resolve(UUID id,Resolution r,AccountPrincipal actor,RequestMetadata md){mediaReferences.validateEvidenceJson(r.evidence(),"evidence");EmergencyIncident i=incidentForUpdate(id);staffScope.requireIncidentAccess(i,actor);Account account=staffScope.requireCurrentStaffOrAdmin(actor);if(i.getStatus()!=EmergencyIncidentStatus.IN_PROGRESS)throw new BusinessRuleException("Only IN_PROGRESS incident can be resolved");if(actor.role()!=Role.ADMIN&&!i.getAcknowledgedByAccount().getAccountId().equals(actor.accountId()))throw new org.springframework.security.access.AccessDeniedException("Incident is assigned to another Staff account");i.setStatus(EmergencyIncidentStatus.RESOLVED);i.setResolvedByAccount(account);i.setResolvedAt(Instant.now(clock));i.setResolutionNote(r.resolutionNote());i.setResolutionEvidenceJson(r.evidence()==null||r.evidence().isNull()?null:r.evidence().deepCopy());for(Alert a:alertRepository.findByIncidentIncidentId(id))if(a.getStatus()==AlertStatus.ACKNOWLEDGED)a.setStatus(AlertStatus.RESOLVED);Map<String,Object> details=new LinkedHashMap<>();details.put("status",i.getStatus().name());details.put("resolutionNote",r.resolutionNote());if(r.evidence()!=null&&!r.evidence().isNull())details.put("evidence",r.evidence());auditService.record(account,"EMERGENCY_RESOLVED","EmergencyIncident",id,null,details,md);return response(i);}
     @Override @Transactional public IncidentResponse close(UUID id,AccountPrincipal actor,RequestMetadata md){EmergencyIncident i=incidentForUpdate(id);staffScope.requireIncidentAccess(i,actor);Account account=staffScope.requireCurrentStaffOrAdmin(actor);if(i.getStatus()!=EmergencyIncidentStatus.RESOLVED)throw new BusinessRuleException("Only RESOLVED incident can be closed");i.setStatus(EmergencyIncidentStatus.CLOSED);i.setClosedAt(Instant.now(clock));for(Alert a:alertRepository.findByIncidentIncidentId(id))if(a.getStatus()==AlertStatus.RESOLVED)a.setStatus(AlertStatus.CLOSED);audit(account,"EMERGENCY_CLOSED",i,md);return response(i);}
     @Override @Transactional public IncidentResponse falseAlarm(UUID id,Resolution r,AccountPrincipal actor,RequestMetadata md){mediaReferences.validateEvidenceJson(r.evidence(),"evidence");EmergencyIncident i=incidentForUpdate(id);staffScope.requireIncidentAccess(i,actor);Account account=staffScope.requireCurrentStaffOrAdmin(actor);if(!Set.of(EmergencyIncidentStatus.OPEN,EmergencyIncidentStatus.ACKNOWLEDGED).contains(i.getStatus()))throw new BusinessRuleException("Only OPEN or ACKNOWLEDGED incident can be marked false alarm");if(i.getAcknowledgedByAccount()!=null&&actor.role()!=Role.ADMIN&&!i.getAcknowledgedByAccount().getAccountId().equals(actor.accountId()))throw new org.springframework.security.access.AccessDeniedException("Incident is assigned to another Staff account");i.setStatus(EmergencyIncidentStatus.FALSE_ALARM);i.setResolvedByAccount(account);i.setResolvedAt(Instant.now(clock));i.setClosedAt(i.getResolvedAt());i.setResolutionNote(r.resolutionNote());i.setResolutionEvidenceJson(r.evidence()==null||r.evidence().isNull()?null:r.evidence().deepCopy());for(Alert a:alertRepository.findByIncidentIncidentId(id))a.setStatus(AlertStatus.CLOSED);requestRepository.findByRelatedIncidentId(id).ifPresent(request->{request.setStatus(ServiceRequestStatus.CANCELLED);request.setCancelledAt(i.getResolvedAt());for(Job j:jobRepository.findByServiceRequestServiceRequestId(request.getServiceRequestId()))if(!Set.of(JobStatus.SUCCEEDED,JobStatus.FAILED,JobStatus.CANCELLED).contains(j.getStatus())){j=jobRepository.lockById(j.getJobId()).orElseThrow();if(j.isBeOrchestrated()){j.setCancelRequestedAt(i.getResolvedAt());j.setCancelRequestedByAccount(account);wakeups.request(j);}else{j.setStatus(JobStatus.CANCELLED);j.setEndedAt(i.getResolvedAt());}}});Map<String,Object> details=new LinkedHashMap<>();details.put("reason",r.resolutionNote());if(r.evidence()!=null&&!r.evidence().isNull())details.put("evidence",r.evidence());auditService.record(account,"EMERGENCY_FALSE_ALARM","EmergencyIncident",id,null,details,md);return response(i);}

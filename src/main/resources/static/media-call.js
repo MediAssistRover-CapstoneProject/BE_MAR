@@ -4,6 +4,7 @@ const $=id=>document.getElementById(id),sdk=window.LivekitClient;
 let room=null,current=null,refreshTimer=null,lastFrame=0,frameHandle=null;
 let accessToken='',signingIn=false,connecting=false,listPending=false;
 let patrolAlertsPending=false;
+let fallIncident=null,reviewPending=false;
 function message(value,error=false){$('status').textContent=value;$('status').className=error?'error':'';}
 async function request(path,body,token='',keepalive=false){
   const result=await fetch(path,{
@@ -28,7 +29,91 @@ function buttons(){
   $('loginButton').disabled=$('tokenSignIn').disabled=signingIn;
   $('end').disabled=!active||connecting;
   $('mic').disabled=!active||connecting||current?.mode!=='ASSIST';
-  $('enableAudio').disabled=!active||connecting;
+  $('enableAudio').disabled=!active||connecting||current?.mode!=='ASSIST';
+  reviewButtons();
+}
+function liveVideo(){return !!room&&lastFrame>0&&performance.now()-lastFrame<3000;}
+function reviewButtons(){
+  $('confirmFall').disabled=reviewPending||connecting||!liveVideo();
+  $('confirmFall').hidden=fallIncident?.status==='IN_PROGRESS';
+  $('showResponseRoute').hidden=fallIncident?.status!=='IN_PROGRESS';
+  $('showResponseRoute').disabled=reviewPending;
+}
+function clearReview(){
+  fallIncident=null;
+  $('fallReview').hidden=true;
+  $('responseMap').hidden=true;
+  $('routeStatus').textContent='';
+}
+async function loadReview(session){
+  if(session.mode!=='MONITOR'||!session.incidentId)return;
+  const incident=await api('/api/v1/emergency-incidents/'+session.incidentId);
+  if(current?.sessionId!==session.sessionId||incident.robotId!==session.robotId||incident.incidentType!=='AI_SUSPECTED_FALL')return;
+  fallIncident=incident;
+  $('fallReview').hidden=false;
+  $('fallReviewStatus').textContent=incident.status==='IN_PROGRESS'?'Staff đã xác nhận.':'Quan sát camera trực tiếp trước khi xác nhận.';
+  reviewButtons();
+}
+async function drawResponseRoute(incident){
+  const route=await api('/api/v1/emergency-incidents/'+incident.incidentId+'/response-route');
+  if(fallIncident?.incidentId!==incident.incidentId)return;
+  if(route.status!=='FOUND'&&(!route.mapId||!route.patientLocation&&!route.robotObservationLocation)){
+    $('responseMap').hidden=true;
+    $('routeStatus').textContent='Chưa có đường đi · '+route.reason;
+    return;
+  }
+  const mapUrl='/api/v1/maps/'+route.mapId;
+  const [meta,imageResponse]=await Promise.all([api(mapUrl+'/image-metadata'),fetch(mapUrl+'/image.png',{
+    headers:{Authorization:'Bearer '+accessToken,Accept:'image/png'},cache:'no-store',signal:AbortSignal.timeout(8000)
+  })]);
+  const assetHash=route.mapAssetHash?.toLowerCase();
+  if(!imageResponse.ok||!assetHash||meta.map_id!==route.mapId||meta.asset_hash?.toLowerCase()!==assetHash||
+      imageResponse.headers.get('X-Map-Asset-Hash')?.toLowerCase()!==assetHash)throw Error('Ảnh bản đồ không khớp đường đi đã tính.');
+  const mapGeometry=window.SavedMapNavigation.geometry(meta);
+  const bitmap=await createImageBitmap(await imageResponse.blob());
+  try{
+    if(fallIncident?.incidentId!==incident.incidentId)return;
+    if(bitmap.width!==meta.width_px||bitmap.height!==meta.height_px)throw Error('Kích thước ảnh không khớp bản đồ.');
+    const canvas=$('responseMap');canvas.width=bitmap.width;canvas.height=bitmap.height;
+    const ctx=canvas.getContext('2d');ctx.drawImage(bitmap,0,0);
+    const points=route.points.map(p=>window.SavedMapNavigation.mapToPixel(mapGeometry,p.xCm/100,p.yCm/100));
+    if(points.length>1){
+      ctx.lineWidth=2;ctx.strokeStyle='#065fd4';ctx.lineJoin='round';ctx.beginPath();
+      points.forEach(({u,v},i)=>i?ctx.lineTo(u,v):ctx.moveTo(u,v));ctx.stroke();
+    }
+    const markers=[[route.origin,'#065fd4'],[route.patientLocation||route.destination,'#af1717'],
+      [route.robotObservationLocation,'#d87800'],[route.robotApproach?.position,'#15803d']];
+    for(const [position,color] of markers){
+      if(!position)continue;
+      const point=window.SavedMapNavigation.mapToPixel(mapGeometry,position.xCm/100,position.yCm/100);
+      ctx.fillStyle=color;ctx.beginPath();ctx.arc(point.u,point.v,3,0,Math.PI*2);ctx.fill();
+    }
+    canvas.hidden=false;
+    const target=route.patientLocation?'người nghi té ngã (đỏ)':'điểm robot quan sát';
+    let summary=route.status==='FOUND'?'Phòng SOS (xanh dương) → '+target+' · '+(route.distanceCm/100).toFixed(1)+' m'
+      :'Đã đánh dấu vị trí. Chưa có đường đi · '+route.reason;
+    if(route.patientLocation){
+      summary+=' · Robot lúc quan sát (cam)';
+      if(Number.isFinite(route.cameraRangeM))summary+=' · Depth tại hông '+route.cameraRangeM.toFixed(2)+' m';
+    }
+    if(route.robotApproach)summary+=' · Điểm gần người (xanh lá) '+(route.robotApproach.endpointName||route.robotApproach.endpointCode);
+    if(route.destinationCapturedAt)summary+=' · Ghi nhận '+new Date(route.destinationCapturedAt).toLocaleTimeString('vi-VN');
+    $('routeStatus').textContent=summary;
+  }finally{bitmap.close();}
+}
+async function reviewOperation(confirm){
+  if(reviewPending||!fallIncident||confirm&&!liveVideo())return;
+  const incident=fallIncident;reviewPending=true;reviewButtons();
+  try{
+    if(confirm){
+      const verified=await api('/api/v1/emergency-incidents/'+incident.incidentId+'/confirm',{});
+      if(fallIncident?.incidentId!==incident.incidentId)return;
+      fallIncident=verified;
+      $('fallReviewStatus').textContent='Staff đã xác nhận.';
+    }
+    await drawResponseRoute(fallIncident);
+  }catch(error){if(fallIncident?.incidentId===incident.incidentId)$('routeStatus').textContent=error.message;}
+  finally{reviewPending=false;reviewButtons();}
 }
 function authView(label){
   $('staffLogin').hidden=$('tokenTools').hidden=!!accessToken;
@@ -41,6 +126,7 @@ function clearSignIn(label){
   $('sessions').replaceChildren();
   $('patrolAlerts').replaceChildren();
   $('patrolAlertStatus').textContent='';
+  clearReview();
   authView(label);
 }
 async function signIn(loadToken){
@@ -70,6 +156,7 @@ async function connect(openSession){
   if(room||connecting)return;
   connecting=true;buttons();
   try{
+    clearReview();
     const requested=await openSession();
     const session=await api('/api/v1/media-sessions/'+requested.sessionId+'/accept',{});
     const join=await api('/api/v1/media-sessions/'+session.sessionId+'/join-token',{});
@@ -77,10 +164,13 @@ async function connect(openSession){
     active.on(sdk.RoomEvent.TrackSubscribed,(track,publication,participant)=>{
       if(participant.identity!=='robot-'+session.robotId)return;
       if(track.kind===sdk.Track.Kind.Video){track.attach($('video'));message('Đã nhận camera robot.');}
-      else if(track.kind===sdk.Track.Kind.Audio){const el=track.attach();el.autoplay=true;$('audio').appendChild(el);}
+      else if(session.mode==='ASSIST'&&track.kind===sdk.Track.Kind.Audio){const el=track.attach();el.autoplay=true;$('audio').appendChild(el);}
     });
-    active.on(sdk.RoomEvent.TrackUnsubscribed,track=>track.detach().forEach(el=>{if(el!==$('video'))el.remove();}));
-    active.on(sdk.RoomEvent.Reconnecting,()=>message('Đang kết nối lại cuộc gọi…'));
+    active.on(sdk.RoomEvent.TrackUnsubscribed,track=>track.detach().forEach(el=>{
+      if(el===$('video')){lastFrame=0;reviewButtons();}
+      else el.remove();
+    }));
+    active.on(sdk.RoomEvent.Reconnecting,()=>{lastFrame=0;reviewButtons();message('Đang kết nối lại cuộc gọi…');});
     active.on(sdk.RoomEvent.Reconnected,()=>message('Đã kết nối lại.'));
     active.on(sdk.RoomEvent.Disconnected,()=>{if(room===active){leave().catch(()=>{});message('Cuộc gọi đã ngắt. Kiểm tra trạng thái phiên trước khi mở lại.');}});
     message('Đang kết nối WebRTC; chờ camera robot…');buttons();
@@ -89,11 +179,13 @@ async function connect(openSession){
       try{await active.localParticipant.setMicrophoneEnabled(true,{echoCancellation:true,noiseSuppression:true,autoGainControl:true});}
       catch(e){message('Đã kết nối. Chưa bật được micro staff; bấm nút micro để thử lại.',true);}
     }
-    await active.startAudio().catch(()=>message('Bấm “Bật âm thanh” để nghe micro robot.'));
-    if($('video').requestVideoFrameCallback){const seen=()=>{lastFrame=performance.now();if(room===active)frameHandle=$('video').requestVideoFrameCallback(seen);};frameHandle=$('video').requestVideoFrameCallback(seen);}
+    if(session.mode==='ASSIST')await active.startAudio().catch(()=>message('Bấm “Bật âm thanh” để nghe micro robot.'));
+    if($('video').requestVideoFrameCallback){const seen=()=>{if(room!==active)return;lastFrame=performance.now();reviewButtons();frameHandle=$('video').requestVideoFrameCallback(seen);};frameHandle=$('video').requestVideoFrameCallback(seen);}
+    loadReview(session).catch(e=>message(e.message,true));
     refreshTimer=setInterval(async()=>{
       try{const state=await api('/api/v1/media-sessions/'+session.sessionId);
         if(room!==active)return;
+        reviewButtons();
         if(['ENDED','FAILED','EXPIRED'].includes(state.state)){await leave();message('Phiên '+state.state+' · '+(state.endReason||''));return;}
         if(lastFrame&&performance.now()-lastFrame>3000)message('Camera chưa có frame mới; kiểm tra đường truyền. Âm thanh có thể vẫn đang hoạt động.');
       }catch(e){if(room===active)message('Chưa nhận được trạng thái BE: '+e.message,true);}
@@ -189,6 +281,11 @@ $('create').onclick=()=>connect(()=>{
   return api('/api/v1/media-sessions',body);
 }).catch(e=>message(e.message,true));
 $('refresh').onclick=refreshPanel;
+$('confirmFall').onclick=()=>reviewOperation(true);
+$('showResponseRoute').onclick=()=>reviewOperation(false);
+$('video').addEventListener('timeupdate',()=>{
+  if(room&&!$('video').requestVideoFrameCallback&&$('video').srcObject){lastFrame=performance.now();reviewButtons();}
+});
 setInterval(()=>{if(!document.hidden)refreshPanel();},7000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshPanel();});
 $('enableAudio').onclick=()=>room?.startAudio().catch(e=>message(e.message,true));

@@ -14,6 +14,8 @@ import java.util.UUID;
 @Entity @Table(name="EmergencyIncident")
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class EmergencyIncident {
+    public static final String SOS_TYPE = "SOS";
+    public static final String SUSPECTED_FALL_TYPE = "AI_SUSPECTED_FALL";
     public enum SosRoutingStatus { ASSIGNED, NO_MONITORING_ROOM, ROOM_UNAVAILABLE, NO_ACTIVE_SHIFT, AMBIGUOUS_SHIFT }
     @Id @GeneratedValue @UuidGenerator @Column(name="incident_id",columnDefinition="BINARY(16)") private UUID incidentId;
     @ManyToOne(fetch=FetchType.LAZY) @JoinColumn(name="detection_event_id") private DetectionEvent detectionEvent;
@@ -40,6 +42,10 @@ public class EmergencyIncident {
     @Version @Column(name="row_version",nullable=false) private long rowVersion;
 
     public boolean isRoutedSos() { return sosRoutingStatus != null; }
+
+    public boolean isSuspectedFall() { return SUSPECTED_FALL_TYPE.equals(incidentType); }
+
+    public boolean supportsResponderConfirmation() { return SOS_TYPE.equals(incidentType) || isSuspectedFall(); }
 
     public boolean isSosResponder(UUID accountId) {
         return sosResponder != null && sosResponder.getAccountId().equals(accountId);

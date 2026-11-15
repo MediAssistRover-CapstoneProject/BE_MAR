@@ -14,7 +14,7 @@ public interface MediaSessionRepository extends JpaRepository<MediaSession,UUID>
     List<MediaSession> findTop100ByActiveRobotIdIsNotNullOrderByCreatedAtDesc();
     List<MediaSession> findTop20ByCleanupPendingTrueOrderByEndedAtAsc();
     boolean existsByIncidentIncidentId(UUID incidentId);
-    @Query("select i from EmergencyIncident i where i.robot.robotId=:robotId and i.incidentType='SOS' " +
+    @Query("select i from EmergencyIncident i where i.robot.robotId=:robotId and i.incidentType in ('SOS','AI_SUSPECTED_FALL') " +
             "and i.archivedAt is null and i.sosResponder is not null and i.status in :states " +
             "and i.occurredAt>=:since order by i.occurredAt desc")
     List<EmergencyIncident> recentSosForMedia(@Param("robotId") UUID robotId,@Param("since") Instant since,

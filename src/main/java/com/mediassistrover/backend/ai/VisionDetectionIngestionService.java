@@ -94,15 +94,18 @@ public class VisionDetectionIngestionService {
         data.set("vision_event",payload.deepCopy());
 
         String incidentType=switch(detectionType) {
-            case SUSPECTED_FALL -> "AI_SUSPECTED_FALL";
+            case SUSPECTED_FALL -> EmergencyIncident.SUSPECTED_FALL_TYPE;
             case SUSPECTED_SEIZURE -> "AI_SUSPECTED_SEIZURE";
             case SOS_SIGNAL -> "AI_GESTURE_SOS";
             default -> throw new BusinessRuleException("Unsupported emergency vision event");
         };
-        var created=emergencies.create(new EmergencyFlowService.Command("VISION_AI:"+eventId,robot,
+        boolean needsFallReview = detectionType == DetectionEventType.SUSPECTED_FALL;
+        if (needsFallReview) data.put("staff_review_required", true);
+        var command = new EmergencyFlowService.Command("VISION_AI:"+eventId,robot,
                 robot.getCurrentMap(),null,detection,incidentType,severity,description,null,null,detectedAt,
-                RequestSourceType.DETECTOR,data,"AI_EMERGENCY_CREATED",
-                new RequestMetadata(null,"MQTT VISION_AI",eventId.toString())));
+                RequestSourceType.DETECTOR,data,needsFallReview ? "VISION_FALL_REVIEW_REQUESTED" : "AI_EMERGENCY_CREATED",
+                new RequestMetadata(null,"MQTT VISION_AI",eventId.toString()));
+        var created = needsFallReview ? emergencies.createForStaffReview(command) : emergencies.create(command);
         return new Result(eventId,created.incident().getIncidentId(),false);
     }
 

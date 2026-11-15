@@ -279,6 +279,37 @@ class MediaSessionTest {
         var s=session();s.setMode(MediaSession.Mode.MONITOR);
         service.deviceToken(s.getSessionId(),device(s.getRobot()));verifyNoInteractions(jobs,wakeups);
     }
+
+    @Test void suspectedFallRingsCameraOnlyAndRequiresMatchingLiveReview() {
+        properties.setEnabled(true);
+        var robot = Robot.builder().robotId(UUID.randomUUID()).build();
+        var account = Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).build();
+        var actor = actor(account);
+        var incident = EmergencyIncident.builder().incidentId(UUID.randomUUID()).robot(robot)
+                .incidentType(EmergencyIncident.SUSPECTED_FALL_TYPE).status(EmergencyIncidentStatus.OPEN)
+                .sosRoutingStatus(EmergencyIncident.SosRoutingStatus.ASSIGNED).sosResponder(account).build();
+        when(events.isListening(robot.getRobotId())).thenReturn(true);
+        when(robots.findByIdForUpdate(robot.getRobotId())).thenReturn(Optional.of(robot));
+        when(incidents.findById(incident.getIncidentId())).thenReturn(Optional.of(incident));
+        assertThrows(BusinessRuleException.class,
+                () -> service.create(robot.getRobotId(), incident.getIncidentId(), MediaSession.Mode.ASSIST, actor));
+        service.openSos(incident);
+        var created = ArgumentCaptor.forClass(MediaSession.class);
+        verify(sessions).saveAndFlush(created.capture());
+        var review = created.getValue();
+        assertEquals(MediaSession.Mode.MONITOR, review.getMode());
+        assertEquals(MediaSession.State.RINGING, review.getState());
+        when(sessions.findByActiveRobotId(robot.getRobotId())).thenReturn(Optional.of(review));
+        assertThrows(BusinessRuleException.class, () -> service.requireActiveFallReview(incident, actor));
+        review.setState(MediaSession.State.ACTIVE);
+        review.setDeviceSeenAt(instant);
+        review.setStaff(account);
+        review.setStaffTokenVersion(actor.tokenVersion());
+        assertDoesNotThrow(() -> service.requireActiveFallReview(incident, actor));
+        review.setDeviceSeenAt(instant.minusSeconds(properties.getDeviceTimeoutSec() + 1));
+        assertThrows(BusinessRuleException.class, () -> service.requireActiveFallReview(incident, actor));
+        verifyNoInteractions(jobs, wakeups);
+    }
     @Test void reconnectDeadlineIsNotExtendedByRepeatedReports() {
         var s=session();var started=instant.minusSeconds(20);s.setReconnectStartedAt(started);
         service.deviceState(s.getSessionId(),"RECONNECTING",null,device(s.getRobot()));assertEquals(started,s.getReconnectStartedAt());

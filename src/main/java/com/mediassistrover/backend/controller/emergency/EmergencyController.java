@@ -36,12 +36,14 @@ public class EmergencyController {
             @AuthenticationPrincipal AccountPrincipal actor){return PageResponse.from(service.list(status,severity,type,mapId,roomId,from,to,includeDeleted,actor,PageRequest.of(page,size,Sort.by(Sort.Direction.DESC,"occurredAt"))));}
     @GetMapping("/{id}") public IncidentResponse get(@PathVariable UUID id,@RequestParam(defaultValue="false")boolean includeDeleted,@AuthenticationPrincipal AccountPrincipal actor){return service.get(id,includeDeleted,actor);}
     @PostMapping("/{id}/confirm")
-    @io.swagger.v3.oas.annotations.Operation(summary="Confirm a real SOS and start handling", description="Admin or assigned SOS responder. Repeated confirmation returns the current IN_PROGRESS incident.")
+    @io.swagger.v3.oas.annotations.Operation(summary="Confirm an SOS or suspected fall and start handling",
+            description="Admin or assigned SOS responder. The first fall confirmation requires an active camera review by the same account. Repeated confirmation returns the current IN_PROGRESS incident.")
     public IncidentResponse confirm(@PathVariable UUID id, @AuthenticationPrincipal AccountPrincipal actor, HttpServletRequest request) {
         return service.confirm(id, actor, RequestMetadataFactory.from(request));
     }
     @GetMapping("/{id}/response-route")
-    @io.swagger.v3.oas.annotations.Operation(summary="Shortest grid route from the SOS monitoring room to the incident, in centimetres")
+    @io.swagger.v3.oas.annotations.Operation(summary="Shortest grid route from the SOS room to a confirmed incident, in centimetres",
+            description="For a patrol fall the destination is the recorded robot viewpoint at detection, with its capture time, rather than a live robot or patient location.")
     public com.mediassistrover.backend.service.SosResponseRouteService.Response responseRoute(
             @PathVariable UUID id, @AuthenticationPrincipal AccountPrincipal actor) {
         return responseRoutes.route(id, actor);

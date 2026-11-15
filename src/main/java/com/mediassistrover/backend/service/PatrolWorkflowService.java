@@ -182,7 +182,7 @@ public class PatrolWorkflowService {
                 || jobs.existsHigherPriorityQueuedForMap(mapId, priority)
                 || mediaSessions.findByActiveRobotId(robotId).filter(s -> s.getMode() == MediaSession.Mode.ASSIST).isPresent()
                 || incidents.existsByRobotRobotIdAndIncidentTypeAndStatusInAndArchivedAtIsNull(
-                        robotId, "AI_SUSPECTED_FALL", OPEN_INCIDENTS)
+                        robotId, EmergencyIncident.SUSPECTED_FALL_TYPE, OPEN_INCIDENTS)
                 || !mappingSessions.findByRobotIdAndPotentiallyOpenTrue(robotId).isEmpty()
                 || !commands.findByRobotIdAndStateIn(robotId, List.of("PENDING", "PUBLISHING", "PUBLISHED",
                         "ACKNOWLEDGED", "STARTED", "RECOVERY_REQUIRED")).isEmpty()) return null;
