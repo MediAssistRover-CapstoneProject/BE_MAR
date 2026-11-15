@@ -29,11 +29,17 @@ import java.time.Instant;
 @Tag(name="Robots",description="ADMIN quản lý; ADMIN/STAFF theo dõi")
 public class RobotController {
     private final RobotService service;
+    private final com.mediassistrover.backend.service.RobotBatteryService batteries;
     private final com.mediassistrover.backend.service.RobotRealtimeViewService realtime;
     private final com.mediassistrover.backend.service.RobotRealtimeEventStream realtimeEvents;
     private final com.mediassistrover.backend.service.DeletionPolicy deletionPolicy;
     @GetMapping public PageResponse<RobotResponse> list(@RequestParam(required=false)RobotStatus status,@RequestParam(defaultValue="false")boolean includeDeleted,@RequestParam(defaultValue="0")@Min(0)int page,@RequestParam(defaultValue="20")@Min(1)@Max(100)int size){return PageResponse.from(service.list(status,includeDeleted,PageRequest.of(page,size,Sort.by("robotCode"))));}
     @GetMapping("/{id}") public RobotResponse get(@PathVariable UUID id,@RequestParam(defaultValue="false")boolean includeDeleted){return service.get(id,includeDeleted);}
+    @GetMapping("/{id}/battery")
+    @Operation(summary="Read the latest robot battery measurement and estimated charge",description="ADMIN/STAFF. Uses accepted MQTT telemetry; percentages and filtered voltage are null when stale or unavailable. Voltage-curve estimates are not a calibrated fuel-gauge measurement.")
+    public BatteryResponse battery(@PathVariable UUID id,jakarta.servlet.http.HttpServletResponse response){
+        response.setHeader("Cache-Control","no-store");return batteries.current(id);
+    }
     @GetMapping("/{id}/snapshot") public com.mediassistrover.backend.service.RobotRealtimeSnapshotService.Snapshot snapshot(@PathVariable UUID id){return realtime.snapshot(id);}
     @GetMapping(value="/{id}/stream",produces=org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE) public org.springframework.web.servlet.mvc.method.annotation.SseEmitter stream(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor,jakarta.servlet.http.HttpServletResponse response){
         response.setHeader("X-Accel-Buffering","no");response.setHeader("Cache-Control","no-store");

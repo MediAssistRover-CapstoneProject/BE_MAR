@@ -25,6 +25,10 @@
         },
         "accepted": {
           "type": "boolean"
+        },
+        "batteryTelemetryVersion": {
+          "type": "integer",
+          "const": 1
         }
       },
       "required": [
@@ -89,11 +93,24 @@
         "staffQrScan": {
           "type": "object",
           "properties": {
-            "jobId": {"type": "string", "format": "uuid"},
-            "authJobStepId": {"type": "string", "format": "uuid"},
-            "expiresAt": {"type": "string", "format": "date-time"}
+            "jobId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "authJobStepId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time"
+            }
           },
-          "required": ["jobId", "authJobStepId", "expiresAt"],
+          "required": [
+            "jobId",
+            "authJobStepId",
+            "expiresAt"
+          ],
           "additionalProperties": false
         }
       },

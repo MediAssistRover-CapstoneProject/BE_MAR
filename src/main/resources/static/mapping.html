@@ -77,7 +77,7 @@
 <section id="robotTestWorkflow" class="panel" aria-label="Chạy workflow robot"></section>
 
 <details class="panel"><summary>Trạng thái nhiệm vụ</summary><pre id="state"></pre></details>
-<script src="/mapping-autonomy.js?v=20261104-workflow"></script>
+<script src="/mapping-autonomy.js?v=20261115-lease"></script>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);let job='',session='',mapping=false,timer=null,busy=false,polling=false,cameraStreaming=false,recovery=false,manualSource=null;const images={};
@@ -259,7 +259,7 @@ function receiptText(receipt,intent){
 }
 const jog=new TimedJog(control,(message,receipt,intent)=>{$('jogStatus').textContent=message;if(receipt&&!autoMapping?.owned)$('receipt').textContent=receiptText(receipt,intent);buttons()});
 
-async function api(path,body,raw=false,options={}){const token=$('token').value.trim().replace(/^Bearer\s+/i,'');if(!token)throw Error('Cần access token ADMIN.');const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,...(body===undefined?{}:{'Content-Type':'application/json'}),...(options.headers??{})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(options.timeoutMs??5000),keepalive:options.keepalive??false});if(!r.ok){const t=await r.text();const error=Error(r.status+' '+t.slice(0,300));error.status=r.status;throw error}return raw?r:r.status===204?null:r.json()}
+async function api(path,body,raw=false,options={}){const token=$('token').value.trim().replace(/^Bearer\s+/i,'');if(!token)throw Error('Cần access token ADMIN.');const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,...(body===undefined?{}:{'Content-Type':'application/json'}),...(options.headers??{})},body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',signal:AbortSignal.timeout(options.timeoutMs??5000),keepalive:options.keepalive??false});if(!r.ok){const t=await r.text();const error=Error(r.status+' '+t.slice(0,300));error.status=r.status;try{error.apiMessage=JSON.parse(t)?.message}catch{}throw error}return raw?r:r.status===204?null:r.json()}
 function buttons(){savedMapButton();document.querySelectorAll('[data-x]').forEach(b=>b.disabled=!mapping||busy||jog.active||!!autoMapping?.owned||manualSource==='gamepad');$('save').disabled=busy||recovery||!session||lastMappingStatus?.state!=='MAPPING'||lastMappingStatus?.potentially_open!==true||saveIntent?.accepted===true;$('stop').disabled=!session;$('create').disabled=busy||mapping||lastMappingStatus?.potentially_open===true||recovery||jog.active;$('recover').disabled=busy||!recovery;autoMapping?.buttons()}
 function clearImage(id,label,text){if(id==='cameraImage'&&cameraStreaming)return;$(id).hidden=true;$(label).textContent=text;if(id==='mapImage'){mapImageSerial++;for(const url of mapFrameUrls)URL.revokeObjectURL(url);mapFrameUrls.clear();mapFrameRevision=null;mapFrameMetadata=null;mapLoaded=false;currentMapState=null;hideRobot('Chưa có vị trí robot trong phiên quét.')}if(images[id]){URL.revokeObjectURL(images[id]);delete images[id]}$(id).removeAttribute('src')}
 let mapStreamController=null,mapStreamEpoch=-1,mapStreamLastAt=-Infinity,mapStreamRetryAt=0,mapImageSerial=0,cameraProbeAt=-Infinity;const mapFrameUrls=new Set();

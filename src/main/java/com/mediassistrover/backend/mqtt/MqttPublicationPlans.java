@@ -60,7 +60,11 @@ public class MqttPublicationPlans {
         if(!cancel && com.mediassistrover.backend.ai.AiSensingService.ai(action) && !ai.publicationReady(command))return null;
         if(!cancel && "MOVE".equals(command.getPayloadJson().path("step").path("stepType").asText())
                 && !navigationProfiles.publicationReady(job.getRobot(),session,command)) {
-            if(command.getSendAttempts()>0) {command.setState("RECOVERY_REQUIRED");safety.recovery(job,"Pi navigation profile changed during a published MOVE");}
+            if(command.getSendAttempts()>0 && !navigationProfiles.publicationCompatible(job.getRobot(),session,command)) {
+                command.setState("RECOVERY_REQUIRED");safety.recovery(job,"Pi navigation profile changed during a published MOVE");
+            }
+            // A transient live-pose gap holds retransmission while the original
+            // acceptance/start receipt can still commit before its deadline.
             return null;
         }
         if (!session.getTransportSessionId().toString().equals(command.getPayloadJson().path("transportSessionId").asText())) {

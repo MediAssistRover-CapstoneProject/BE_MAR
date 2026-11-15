@@ -162,8 +162,10 @@ public class MqttRuntimeEvents {
     private void error(Job job,JobStep step,RobotCommandOutbox command,JsonNode p,String status) {
         if (!Set.of(JobStepStatus.PENDING,JobStepStatus.RUNNING).contains(step.getStatus())) {
             if(job.getStatus()==JobStatus.RECOVERY_REQUIRED && Set.of("FAILED","TIMED_OUT","CANCELLED").contains(status) && p.path("physicalStopConfirmed").asBoolean()) {
-                // New stop evidence can support staff review, without reversing an earlier recovery/terminal decision.
-                command.setPhysicalStopConfirmed(true);command.setState("COMPLETED");return;
+                // The shared recovery guard verifies every command before closing a stopped Job.
+                command.setPhysicalStopConfirmed(true);command.setState("COMPLETED");
+                if(!mapping.open(job.getJobId()))safety.failSettledRecovery(job);
+                return;
             }
             if(step.getInterruptionReason()!=null && step.getStatus().name().equals(status) && Boolean.TRUE.equals(command.getPhysicalStopConfirmed()) && p.path("physicalStopConfirmed").asBoolean())return;
             throw new BusinessRuleException("Error contradicts existing terminal step");
@@ -178,6 +180,7 @@ public class MqttRuntimeEvents {
             command.setInterruptionReason("PHYSICAL_STOP_UNCONFIRMED");
             safety.recovery(job,"Pi error/restart lacks confirmed physical stop");
         }
+        else if(job.getStatus()==JobStatus.RECOVERY_REQUIRED && !mapping.open(job.getJobId()))safety.failSettledRecovery(job);
         else if(step.getInterruptionReason()!=null)finishInterrupted(job,step,command,p);
         else if (next==JobStepStatus.CANCELLED && job.getStatus()==JobStatus.RUNNING) {
             if(mapping.open(job.getJobId())) {job.setCancelRequestedAt(Instant.now(clock));wakeups.request(job);return;}

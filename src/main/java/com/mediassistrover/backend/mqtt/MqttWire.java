@@ -45,7 +45,9 @@ public class MqttWire {
         return node.deepCopy();
     }
     public ObjectNode helloAck(UUID robot,UUID session,boolean accepted) {
-        return object().put("messageType","HELLO_ACK").put("robotId",robot.toString()).put("transportSessionId",session.toString()).put("contract","MAR-STEP-2").put("accepted",accepted);
+        ObjectNode ack=object().put("messageType","HELLO_ACK").put("robotId",robot.toString()).put("transportSessionId",session.toString()).put("contract","MAR-STEP-2").put("accepted",accepted);
+        if(accepted)ack.put("batteryTelemetryVersion",1);
+        return ack;
     }
     public ObjectNode eventAck(UUID robot,UUID session,UUID message,boolean accepted) {
         return object().put("messageType","EVENT_ACK").put("robotId",robot.toString()).put("transportSessionId",session.toString()).put("messageId",message.toString()).put("accepted",accepted);

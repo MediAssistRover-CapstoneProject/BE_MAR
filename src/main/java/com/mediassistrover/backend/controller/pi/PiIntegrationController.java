@@ -34,6 +34,7 @@ public class PiIntegrationController {
     private final PiJobRuntimeService jobRuntimeService;
     private final PiStepService piStepService;
     private final com.mediassistrover.backend.service.QrVerificationService qrVerificationService;
+    private final com.mediassistrover.backend.mqtt.MqttOperationRecoveryService operationRecovery;
     @PostMapping("/heartbeat") public AckResponse heartbeat(@Valid @RequestBody PiEnvelope<HeartbeatPayload> e,@AuthenticationPrincipal DevicePrincipal p){return service.heartbeat(e,p);}
     @PostMapping("/telemetry/location") public AckResponse location(@Valid @RequestBody PiEnvelope<LocationPayload> e,@AuthenticationPrincipal DevicePrincipal p){return service.location(e,p);}
     @GetMapping("/catalog/manifest") public CatalogManifestResponse manifest(@AuthenticationPrincipal DevicePrincipal p){return service.catalogManifest(p);}
@@ -44,6 +45,15 @@ public class PiIntegrationController {
     @PostMapping("/jobs/{jobId}/started") public AckResponse jobStarted(@PathVariable UUID jobId,@Valid @RequestBody PiEnvelope<JobStartedPayload> e,@AuthenticationPrincipal DevicePrincipal p){return jobRuntimeService.jobStarted(jobId,e,p);}
     @PostMapping("/jobs/{jobId}/result") public AckResponse jobResult(@PathVariable UUID jobId,@Valid @RequestBody PiEnvelope<JobResultPayload> e,@AuthenticationPrincipal DevicePrincipal p){return jobRuntimeService.jobResult(jobId,e,p);}
     @PostMapping("/jobs/{jobId}/errors") public AckResponse jobError(@PathVariable UUID jobId,@Valid @RequestBody PiEnvelope<JobErrorPayload> e,@AuthenticationPrincipal DevicePrincipal p){return jobRuntimeService.jobError(jobId,e,p);}
+    @PostMapping("/jobs/{jobId}/operations/{jobStepId}/settlement")
+    @Operation(summary="Confirm an already cancelled MOVE with committed Pi stop evidence",
+            description="Returns an idempotent settlement receipt so the assigned robot can retire delivery of historical events. Requires a cancelled Job and MOVE, a published matching command, and an accepted Pi STEP_ERROR that confirms physical stop.")
+    public com.fasterxml.jackson.databind.JsonNode settleCancelledMove(@PathVariable UUID jobId,
+            @PathVariable UUID jobStepId,
+            @Valid @RequestBody com.mediassistrover.backend.mqtt.MqttOperationRecoveryService.CancelledMoveSettlement request,
+            @AuthenticationPrincipal DevicePrincipal device) {
+        return operationRecovery.settleCancelledMove(jobId,jobStepId,request,device);
+    }
     @PostMapping("/job-steps/{jobStepId}/started") public AckResponse stepStarted(@PathVariable UUID jobStepId,@Valid @RequestBody PiEnvelope<StepStartedPayload> e,@AuthenticationPrincipal DevicePrincipal p){return jobRuntimeService.stepStarted(jobStepId,e,p);}
     @PostMapping("/job-steps/{jobStepId}/result") public AckResponse stepResult(@PathVariable UUID jobStepId,@Valid @RequestBody PiEnvelope<StepResultPayload> e,@AuthenticationPrincipal DevicePrincipal p){return jobRuntimeService.stepResult(jobStepId,e,p);}
     @PostMapping("/job-steps/{jobStepId}/errors") public AckResponse stepError(@PathVariable UUID jobStepId,@Valid @RequestBody PiEnvelope<StepErrorPayload> e,@AuthenticationPrincipal DevicePrincipal p){return jobRuntimeService.stepError(jobStepId,e,p);}

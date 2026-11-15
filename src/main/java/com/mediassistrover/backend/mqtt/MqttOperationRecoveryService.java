@@ -7,6 +7,7 @@ import com.mediassistrover.backend.enums.*;
 import com.mediassistrover.backend.exception.*;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.AccountPrincipal;
+import com.mediassistrover.backend.security.DevicePrincipal;
 import com.mediassistrover.backend.service.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
@@ -15,6 +16,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 
 /** Recovery closes an inspected operation/Job. It never replays an old physical action or declares delivery successful. */
@@ -38,6 +40,71 @@ public class MqttOperationRecoveryService {
     private final Clock clock;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager em;
+
+    public record CancelledMoveSettlement(@jakarta.validation.constraints.NotNull UUID commandId,
+            @jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Size(max=150) String operationKey) { }
+
+    @Transactional
+    public JsonNode settleCancelledMove(UUID jobId,UUID stepId,CancelledMoveSettlement request,DevicePrincipal device) {
+        if(device==null)throw new AccessDeniedException("DEVICE identity required");
+        Job job=jobs.lockById(jobId).orElseThrow(()->new ResourceNotFoundException("Job not found"));
+        if(job.getRobot()==null||!job.getRobot().getRobotId().equals(device.robotId()))
+            throw new AccessDeniedException("Job is outside this device");
+        Robot robot=robots.findByIdForUpdate(device.robotId()).orElseThrow();
+        Instant now=Instant.now(clock);
+        if(!Objects.equals(robot.getRobotCode(),device.robotCode())||robot.getDeviceTokenVersion()!=device.tokenVersion()
+                ||device.expiresAt()==null||!device.expiresAt().isAfter(now))
+            throw new AccessDeniedException("Current DEVICE token required");
+        if(!job.isBeOrchestrated()||job.getStatus()!=JobStatus.CANCELLED||job.getEndedAt()==null||mapping.open(jobId))
+            throw new BusinessRuleException("Settlement requires an already cancelled Job with no open mapping session");
+        JobStep initial=steps.findById(stepId).orElseThrow(()->new ResourceNotFoundException("JobStep not found"));
+        if(!initial.getJobTask().getJob().getJobId().equals(jobId))throw new AccessDeniedException("JobStep is outside this Job");
+        RobotCommandOutbox selected=commands.findByJobStepId(stepId)
+                .orElseThrow(()->new BusinessRuleException("No executed MQTT operation"));
+        if(request==null||!selected.getCommandId().equals(request.commandId())
+                ||!jobId.equals(selected.getJobId())||!device.robotId().equals(selected.getRobotId()))
+            throw new BusinessRuleException("Settlement command does not match the cancelled operation");
+        RobotCommandOutbox command=commands.lock(selected.getCommandId()).orElseThrow();
+        JobStep step=steps.lockById(stepId).orElseThrow();
+        if(step.getStatus()!=JobStepStatus.CANCELLED||!"MOVE".equals(step.getStepTypeSnapshot())
+                ||!Objects.equals(step.getOperationKey(),request.operationKey())
+                ||!Objects.equals(command.getOperationKey(),request.operationKey())
+                ||!"EXECUTE_STEP".equals(command.getCommandType())||command.getSendAttempts()<1
+                ||!Boolean.TRUE.equals(command.getPhysicalStopConfirmed()))
+            throw new BusinessRuleException("Settlement requires a matching cancelled MOVE with committed physical stop");
+        JsonNode stop=command.getResultEnvelopeJson();
+        if(stop==null||!"STEP_ERROR".equals(stop.path("messageType").asText())
+                ||!device.robotId().toString().equals(stop.path("robotId").asText())
+                ||!jobId.toString().equals(stop.path("jobId").asText())
+                ||!stepId.toString().equals(stop.path("jobStepId").asText())
+                ||!command.getCommandId().toString().equals(stop.path("correlationId").asText())
+                ||!request.operationKey().equals(stop.path("operationKey").asText())
+                ||!stop.path("payload").path("physicalStopConfirmed").asBoolean())
+            throw new BusinessRuleException("No matching committed Pi stop receipt for this MOVE");
+        UUID stopId;
+        try {stopId=UUID.fromString(stop.path("messageId").asText());}
+        catch(IllegalArgumentException error) {throw new BusinessRuleException("Pi stop receipt identity is invalid");}
+        var accepted=inbox.findById(stopId).orElse(null);
+        if(accepted==null||!Boolean.TRUE.equals(accepted.getAccepted())
+                ||!device.robotId().equals(accepted.getRobotId())||!"STEP_ERROR".equals(accepted.getMessageType()))
+            throw new BusinessRuleException("Pi stop receipt has not been accepted");
+        UUID receiptId=UUID.nameUUIDFromBytes((command.getCommandId()+":BE_CANCELLED_OPERATION_CONFIRMED")
+                .getBytes(StandardCharsets.UTF_8));
+        var prior=events.findById(receiptId).orElse(null);
+        if(prior!=null)return prior.getEventDataJson().deepCopy();
+        var response=wire.object().put("receiptId",receiptId.toString()).put("robotId",device.robotId().toString())
+                .put("jobId",jobId.toString()).put("jobStepId",stepId.toString()).put("commandId",command.getCommandId().toString())
+                .put("operationKey",step.getOperationKey()).put("status","CANCELLED")
+                .put("physicalStopConfirmed",true).put("stopEvidenceMessageId",stopId.toString()).put("settledAt",now.toString());
+        command.setState("COMPLETED");
+        events.save(JobEvent.builder().jobEventId(receiptId).job(job).robot(robot).jobTask(step.getJobTask()).jobStep(step)
+                .producerType(JobEventProducerType.ROBOT).producerSessionId(UUID.randomUUID()).sequenceNo(1)
+                .eventType("BE_CANCELLED_OPERATION_CONFIRMED").correlationKey(command.getCommandId().toString())
+                .statusScope("JOB_STEP").previousStatus(JobStepStatus.CANCELLED.name()).newStatus(JobStepStatus.CANCELLED.name())
+                .eventDataJson(response.deepCopy()).occurredAt(now).receivedAt(now).persistedAt(now).build());
+        updates.publishEvent(new RuntimeChanged(jobId));
+        return response;
+    }
 
     @Transactional(readOnly=true)
     public JsonNode evidence(UUID jobId,AccountPrincipal actor) {

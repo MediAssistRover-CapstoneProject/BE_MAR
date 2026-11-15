@@ -176,10 +176,7 @@ public class MqttSessionRegistry {
         robot.setStatus(next);robot.setLastHeartbeatAt(now);robot.setRuntimeVersion(p.path("runtimeVersion").asText());robot.setCurrentMap(map);
         robot.setMapAssetHash(mappingOpen || p.path("mapAssetHash").isNull()?null:p.path("mapAssetHash").asText().toLowerCase(Locale.ROOT));robot.setCapabilitiesJson(p.path("capabilities").deepCopy());
         JsonNode telemetry=p.path("telemetry"),battery=telemetry.path("battery");
-        if (battery.has("value") && !battery.path("value").isNull() && battery.path("age_sec").asDouble()<=15) {
-            robot.setBatteryRaw(battery.path("value").asInt());robot.setBatteryUnit(BatteryUnit.UNKNOWN);
-            robot.setBatteryCapturedAt(e.time().minusMillis((long)(battery.path("age_sec").asDouble()*1000)));
-        }
+        BatteryTelemetry.apply(robot,battery,e.time(),now);
         if (previous!=next && !histories.existsById(e.messageId())) histories.save(RobotStatusHistory.builder().robotStatusHistoryId(e.messageId()).robot(robot)
                 .previousStatus(previous).newStatus(next).reason("MQTT_HEARTBEAT").recordedAt(now).build());
         JsonNode pose=telemetry.path("map_pose");

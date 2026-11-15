@@ -166,9 +166,13 @@ public class NavigationProfileService {
                 && manifest.profile().path("endpoints").has(params.path("endpoint_id").asText())?manifest.profileHash():null;
     }
     public boolean publicationReady(Robot robot,RobotMqttSession session,RobotCommandOutbox command) {
+        return publicationCompatible(robot,session,command) && navigationSessions.localized(robot.getRobotId(),session);
+    }
+    /** Frozen operation identity can remain valid while a live localization sample recovers. */
+    public boolean publicationCompatible(Robot robot,RobotMqttSession session,RobotCommandOutbox command) {
         RobotNavigationProfile ack=profiles.findById(robot.getRobotId()).orElse(null);
         if(command.getNavigationProfileHash()==null || ack==null || !matches(ack,robot,session,command.getNavigationProfileHash())) return false;
-        if(!navigationSessions.localized(robot.getRobotId(),session)||!navigationSessions.commandMatches(robot.getRobotId(),command.getPayloadJson().path("navigationContext")))return false;
+        if(!navigationSessions.commandMatches(robot.getRobotId(),command.getPayloadJson().path("navigationContext")))return false;
         // Before first publication, catalog edits require a new operation, never mutation of the frozen command.
         return command.getSendAttempts()>0 || command.getNavigationProfileHash().equals(snapshot(robot).profileHash());
     }

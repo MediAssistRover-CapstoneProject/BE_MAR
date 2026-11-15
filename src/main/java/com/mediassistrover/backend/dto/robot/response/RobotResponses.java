@@ -14,6 +14,11 @@ public final class RobotResponses {
             BigDecimal batteryPercent,Instant batteryCapturedAt,Instant lastHeartbeatAt,Instant commissionedAt,
             long rowVersion,Instant createdAt,Instant updatedAt) { }
     public record DeviceSecretResponse(UUID robotId,String robotCode,String deviceSecret,Instant issuedAt) { }
+    public record BatteryResponse(UUID robotId,Integer batteryRaw,BatteryUnit batteryUnit,
+            BigDecimal voltageV,BigDecimal batteryPercent,String source,String estimateMethod,String profileId,
+            String estimateStatus,Boolean curveCalibrated,Integer seriesCells,Integer parallelCells,
+            Integer nominalCapacityMah,BigDecimal nominalVoltageV,Instant capturedAt,Double ageSec,
+            boolean fresh,Instant receivedAt) { }
     public record RobotStatusHistoryResponse(UUID robotStatusHistoryId,UUID robotId,UUID jobId,
             RobotStatus previousStatus,RobotStatus newStatus,String reason,String errorCode,Instant recordedAt) { }
     public record RobotLocationResponse(UUID robotLocationHistoryId,UUID robotId,UUID mapId,UUID jobId,

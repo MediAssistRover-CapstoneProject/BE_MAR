@@ -1,6 +1,11 @@
 /* Session scoped, short-lived autonomy control. No commands on page load. */
 (function(root){
   'use strict';
+  const RENEW_DELAY_MS=300;
+  const LEASE_MS=900;
+  const RETRY_HEADROOM_MS=150;
+  const MOVEMENT_RATE_LIMIT='Wait at least 250 ms between movement commands';
+
   class AutonomyRun {
     constructor(send,onChange,onFinish){
       this.send=send;this.onChange=onChange;this.onFinish=onFinish;
@@ -12,22 +17,35 @@
       this.context={...context};this.saveAfter=saveAfter;this.stopMessage=null;
       this.run={action:'START',runId:crypto.randomUUID(),maxDurationSec:seconds,stopOnReturn:!!stopOnReturn,saveOnComplete:!!saveAfter};
       this.active=true;this.confirmed=false;this.startedAt=performance.now();this.commandIds=new Set();this.receiptTarget=null;const generation=++this.generation;
+      this.lastDispatchAt=null;
       this.limit=setTimeout(()=>this.stop('Hết thời gian trên trình duyệt; đã ngừng gia hạn.').catch(()=>{}),(seconds+3)*1000);
       this.onChange('Đã gửi yêu cầu tự chạy; đang chờ trạng thái từ Pi.');
-      this.renew(generation,true);
+      this.renew(generation);
     }
-    async renew(generation,first=false){
+    async renew(generation,retryError=null){
       if(!this.active||generation!==this.generation)return;
       const started=performance.now();
       try{
+        if(retryError&&started+RETRY_HEADROOM_MS>=this.lastDispatchAt+LEASE_MS)throw retryError;
         if(!this.confirmed&&performance.now()-this.startedAt>3500)throw Error('Pi chưa xác nhận START; kiểm tra receipt và đồng hồ BE/Pi.');
         const receipt=await this.send({...this.run,action:this.confirmed?'RENEW':'START'},this.context);
         if(!this.active||generation!==this.generation)return;
         if(receipt?.commandId){this.commandIds.add(receipt.commandId);if(this.commandIds.size>16)this.commandIds.delete(this.commandIds.values().next().value);}
         if(['PI_REJECTED','NO_PI_ACK','PUBLISH_FAILED'].includes(receipt?.status))throw Error(receipt.errorCode||receipt.status);
         if(receipt?.status==='PI_ACCEPTED')this.confirmed=true;
-        this.timer=setTimeout(()=>this.renew(generation),Math.max(0,300-(performance.now()-started)));
-      }catch(e){if(this.active&&generation===this.generation)await this.stop('Tự chạy đã ngừng gia hạn: '+e.message).catch(()=>{});}
+        this.lastDispatchAt=started;
+        // Space requests from the response so BE processing time cannot narrow the gap.
+        this.timer=setTimeout(()=>this.renew(generation),RENEW_DELAY_MS);
+      }catch(e){
+        if(!this.active||generation!==this.generation)return;
+        if(!retryError&&this.confirmed&&this.lastDispatchAt!==null
+            &&e.status===422&&e.apiMessage===MOVEMENT_RATE_LIMIT
+            &&performance.now()+RENEW_DELAY_MS+RETRY_HEADROOM_MS<this.lastDispatchAt+LEASE_MS){
+          this.timer=setTimeout(()=>this.renew(generation,e),RENEW_DELAY_MS);
+          return;
+        }
+        await this.stop('Tự chạy đã ngừng gia hạn: '+e.message).catch(()=>{});
+      }
     }
     observeReceipt(receipt){
       if(!this.active||!this.commandIds?.has(receipt?.commandId))return;
