@@ -65,6 +65,31 @@ Resume thủ công không xóa hold SOS/VOICE/MEDIA/JOB. Gọi lại cùng thao 
 
 Holds được dựng lại từ dữ liệu nguồn sau khi BE khởi động lại. Callback sau commit giúp tránh đảo thứ tự khóa Job/Robot. Các scheduler `app.operations.scheduler-enabled` phải bật để có điều phối và reconciliation tự động.
 
+## Camera AI và phạm vi hàng đợi
+
+`media-call.html` nhận khung người/nghi té ngã qua topic LiveKit
+`mar.ai.overlay.v1` từ đúng participant robot của phiên đang xem. Video gốc
+không bị encode lại để vẽ khung. JWT chỉ cấp `canPublishData` cho robot;
+staff vẫn không được gửi metadata. AI cần trả trường `overlay` và Pi cần bản
+media bridge/fall observer tương ứng; BE/UI mới vẫn xem video bình thường khi
+Pi cũ chưa có metadata. Khung cũ hơn 1,5 giây, sai phiên, rỗng hoặc mất video
+được xóa. Đây là kết quả từ ảnh AI gần nhất, không phải overlay khớp tuyệt đối
+từng frame. Tỷ lệ phần trăm trên khung là độ tin cậy nhận diện người, không
+phải xác suất té ngã; nhãn nghi té ngã luôn cần staff xác minh.
+
+Hàng đợi nghiệp vụ nằm trong DB BE. Pi chỉ nhận một operation tại một thời
+điểm, giữ journal và trả ACK/kết quả; broker MQTT không giữ hàng đợi nghiệp vụ
+thứ hai. Job chưa gán robot có thể chờ bộ dispatch ưu tiên phân robot rảnh.
+Sau FAILED/CANCELLED đã có bằng chứng dừng, robot về IDLE và job tiếp theo
+được xét; RECOVERY_REQUIRED vẫn chặn chuyển động mới.
+
+Request delivery/voice ghim robot đang chạy nhiệm vụ thông thường có thể bị
+từ chối vì tác vụ không thể ngắt; tiếp nhận để nhường hiện được thiết kế cho
+patrol schema 3. BE đã hỗ trợ nguồn VOICE để nhường patrol, nhưng wake listener
+trên Pi hiện chỉ nghe khi IDLE: nói MA giữa một MOVE tuần tra chưa tự tạo yêu
+cầu nhường. SOS/fall qua API vẫn có thể tạo INCIDENT hold. Không coi kiểm thử
+BE/mock là bằng chứng các trường hợp này đã chạy trên robot thật.
+
 ## Triển khai và kiểm chứng
 
 * Migration mới `V61__patrol_job_suspension.sql` thêm trạng thái, dữ liệu vòng/treo và bảng holds. Triển khai cùng phiên bản BE tương ứng; không triển khai code cũ vào schema/trạng thái mới mà chưa có kế hoạch tương thích.

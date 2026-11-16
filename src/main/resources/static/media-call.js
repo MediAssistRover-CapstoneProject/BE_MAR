@@ -5,6 +5,76 @@ let room=null,current=null,refreshTimer=null,lastFrame=0,frameHandle=null;
 let accessToken='',signingIn=false,connecting=false,listPending=false;
 let patrolAlertsPending=false;
 let fallIncident=null,reviewPending=false;
+let aiOverlay=null,overlaySequence=0,overlayAt=0;
+const overlayStates=new Set(['PERSON','OBSERVING','SUSPECTED_FALL','PERSON_ON_FLOOR']);
+function clearOverlay(text='Chưa có dữ liệu nhận diện.'){
+  aiOverlay=null;overlayAt=0;
+  const canvas=$('aiOverlay');canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height);
+  $('overlayStatus').textContent=text;
+}
+function receiveOverlay(payload,participant,topic,session){
+  if(topic!=='mar.ai.overlay.v1'||participant?.identity!=='robot-'+session.robotId
+    ||!ArrayBuffer.isView(payload)||!payload.byteLength||payload.byteLength>1200)return;
+  try{
+    const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(payload)),stamp=Date.parse(value.captured_at),age=Date.now()-stamp;
+    if(value.v!==1||value.media_session_id!==session.sessionId||!Number.isSafeInteger(value.seq)||value.seq<=overlaySequence
+      ||typeof value.captured_at!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value.captured_at)
+      ||!Number.isFinite(stamp)||age < -500||age>1500
+      ||!Number.isInteger(value.width)||!Number.isInteger(value.height)||value.width<32||value.width>640||value.height<32||value.height>640
+      ||!['OK','PAUSED','DEGRADED'].includes(value.status)||!Array.isArray(value.detections)||value.detections.length>8)return;
+    for(const d of value.detections){
+      if(!d||!Array.isArray(d.bbox)||d.bbox.length!==4||d.bbox.some(n=>typeof n!=='number'||!Number.isFinite(n)||n<0||n>1)
+        ||d.bbox[2]<=0||d.bbox[3]<=0||d.bbox[0]+d.bbox[2]>1.0002||d.bbox[1]+d.bbox[3]>1.0002
+        ||typeof d.confidence!=='number'||!Number.isFinite(d.confidence)||d.confidence<0||d.confidence>1
+        ||!overlayStates.has(d.state)||(d.track_id!==null&&(!Number.isSafeInteger(d.track_id)||d.track_id<0||d.track_id>1e9))
+        ||d.distance_m!==undefined&&(typeof d.distance_m!=='number'||!Number.isFinite(d.distance_m)||d.distance_m<=0))return;
+    }
+    overlaySequence=value.seq;overlayAt=performance.now();
+    aiOverlay={...value,stamp};drawOverlay();
+  }catch{/* A malformed optional display packet never interrupts the call. */}
+}
+function drawOverlay(){
+  const canvas=$('aiOverlay'),video=$('video'),ctx=canvas.getContext('2d');
+  const w=video.clientWidth,h=video.clientHeight,scale=Math.min(window.devicePixelRatio||1,2);
+  if(canvas.width!==Math.round(w*scale)||canvas.height!==Math.round(h*scale)){
+    canvas.width=Math.round(w*scale);canvas.height=Math.round(h*scale);
+  }
+  ctx.setTransform(scale,0,0,scale,0,0);ctx.clearRect(0,0,w,h);
+  if(!aiOverlay)return;
+  const age=Date.now()-aiOverlay.stamp;
+  if(age < -500||age>1500||performance.now()-overlayAt>1500){clearOverlay('Kết quả AI đã cũ; đang chờ ảnh mới.');return;}
+  if(!liveVideo()){clearOverlay('Chờ camera và kết quả AI mới.');return;}
+  if(aiOverlay.status!=='OK'){
+    $('overlayStatus').textContent=aiOverlay.status==='PAUSED'?'AI đang tạm nhường tác vụ ưu tiên.':'AI chưa phản hồi; video vẫn hoạt động.';return;
+  }
+  const n=aiOverlay.detections.length;
+  $('overlayStatus').textContent=(n?`${n} người · `:'Chưa nhận diện người · ')+`kết quả cách đây ${Math.max(0,age/1000).toFixed(1)} giây`;
+  if(!$('overlayEnabled').checked||!video.videoWidth||!video.videoHeight)return;
+  const ratio=video.videoWidth/video.videoHeight;
+  if(Math.abs(ratio-aiOverlay.width/aiOverlay.height)>.02){$('overlayStatus').textContent='Kích thước ảnh AI chưa khớp camera.';return;}
+  const fit=Math.min(w/video.videoWidth,h/video.videoHeight),vw=video.videoWidth*fit,vh=video.videoHeight*fit;
+  const ox=(w-vw)/2,oy=(h-vh)/2;
+  ctx.lineWidth=2;ctx.font='14px system-ui,sans-serif';
+  const labels={PERSON:'Người',OBSERVING:'Đang quan sát',SUSPECTED_FALL:'Nghi té ngã',PERSON_ON_FLOOR:'Nghi nằm trên sàn'};
+  for(const d of aiOverlay.detections){
+    const [x,y,bw,bh]=d.bbox,left=ox+($('mirrorVideo').checked?1-x-bw:x)*vw,top=oy+y*vh;
+    ctx.strokeStyle=d.state==='PERSON'?'#35d98b':d.state==='OBSERVING'?'#ffda65':'#ff6060';
+    ctx.strokeRect(left,top,bw*vw,bh*vh);
+    const text=labels[d.state]+(d.track_id===null?'':` #${d.track_id}`)
+      +(['PERSON','OBSERVING'].includes(d.state)?` · người ${Math.round(d.confidence*100)}%`:'')
+      +(d.distance_m===undefined?'':` · ${d.distance_m.toFixed(1)} m`);
+    const tw=ctx.measureText(text).width+10,tx=Math.max(0,Math.min(left,w-tw)),ty=Math.max(0,top-23);
+    ctx.fillStyle='rgba(0,0,0,.8)';ctx.fillRect(tx,ty,Math.min(tw,w),23);
+    ctx.fillStyle=ctx.strokeStyle;ctx.fillText(text,tx+5,ty+17);
+  }
+}
+$('overlayEnabled').addEventListener('change',drawOverlay);
+$('mirrorVideo').addEventListener('change',()=>{
+  $('video').style.transform=$('mirrorVideo').checked?'scaleX(-1)':'';
+  drawOverlay();
+});
+new ResizeObserver(drawOverlay).observe($('videoStage'));
+setInterval(()=>{if(room)drawOverlay();},200);
 function message(value,error=false){$('status').textContent=value;$('status').className=error?'error':'';}
 async function request(path,body,token='',keepalive=false){
   const result=await fetch(path,{
@@ -146,6 +216,7 @@ async function signIn(loadToken){
   finally{signingIn=false;buttons();}
 }
 async function leave(){
+  clearOverlay();overlaySequence=0;
   const previous=room;room=null;current=null;clearInterval(refreshTimer);refreshTimer=null;
   if(frameHandle!=null&&$('video').cancelVideoFrameCallback)$('video').cancelVideoFrameCallback(frameHandle);frameHandle=null;
   if(previous){previous.removeAllListeners();await previous.disconnect();}
@@ -161,16 +232,20 @@ async function connect(openSession){
     const session=await api('/api/v1/media-sessions/'+requested.sessionId+'/accept',{});
     const join=await api('/api/v1/media-sessions/'+session.sessionId+'/join-token',{});
     current=session;lastFrame=0;const active=new sdk.Room({adaptiveStream:true,dynacast:true});room=active;
+    overlaySequence=0;clearOverlay();
+    active.on(sdk.RoomEvent.DataReceived,(payload,participant,kind,topic)=>{
+      if(room===active)receiveOverlay(payload,participant,topic,session);
+    });
     active.on(sdk.RoomEvent.TrackSubscribed,(track,publication,participant)=>{
       if(participant.identity!=='robot-'+session.robotId)return;
       if(track.kind===sdk.Track.Kind.Video){track.attach($('video'));message('Đã nhận camera robot.');}
       else if(session.mode==='ASSIST'&&track.kind===sdk.Track.Kind.Audio){const el=track.attach();el.autoplay=true;$('audio').appendChild(el);}
     });
     active.on(sdk.RoomEvent.TrackUnsubscribed,track=>track.detach().forEach(el=>{
-      if(el===$('video')){lastFrame=0;reviewButtons();}
+      if(el===$('video')){lastFrame=0;clearOverlay('Chờ camera và kết quả AI mới.');reviewButtons();}
       else el.remove();
     }));
-    active.on(sdk.RoomEvent.Reconnecting,()=>{lastFrame=0;reviewButtons();message('Đang kết nối lại cuộc gọi…');});
+    active.on(sdk.RoomEvent.Reconnecting,()=>{lastFrame=0;clearOverlay('Đang kết nối lại; khung AI đã xóa.');reviewButtons();message('Đang kết nối lại cuộc gọi…');});
     active.on(sdk.RoomEvent.Reconnected,()=>message('Đã kết nối lại.'));
     active.on(sdk.RoomEvent.Disconnected,()=>{if(room===active){leave().catch(()=>{});message('Cuộc gọi đã ngắt. Kiểm tra trạng thái phiên trước khi mở lại.');}});
     message('Đang kết nối WebRTC; chờ camera robot…');buttons();

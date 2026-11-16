@@ -58,7 +58,8 @@ public class LiveKitGateway {
         ready();
         Map<String,Object> grant=new LinkedHashMap<>();
         grant.put("room",session.room());grant.put("roomJoin",true);grant.put("canSubscribe",true);
-        grant.put("canPublishData",false);grant.put("canPublish",device || session.getMode()==MediaSession.Mode.ASSIST);
+        // The authenticated robot publishes ephemeral AI boxes alongside its video.
+        grant.put("canPublishData",device);grant.put("canPublish",device || session.getMode()==MediaSession.Mode.ASSIST);
         grant.put("canPublishSources",device
                 ? session.getMode()==MediaSession.Mode.MONITOR ? List.of("camera") : List.of("camera","microphone")
                 : session.getMode()==MediaSession.Mode.ASSIST ? List.of("microphone") : List.of());

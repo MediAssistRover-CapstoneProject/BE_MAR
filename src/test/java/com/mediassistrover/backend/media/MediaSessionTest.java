@@ -351,11 +351,14 @@ class MediaSessionTest {
     @Test void monitoringNeverGrantsStaffPublishingOrRobotMicrophone() {
         var g=signer();var s=session();s.setMode(MediaSession.Mode.MONITOR);
         var robot=grant(g.join(s,"robot",true));assertEquals(List.of("camera"),robot.get("canPublishSources"));
+        assertEquals(true,robot.get("canPublishData"));
         var staff=grant(g.join(s,"staff",false));assertEquals(false,staff.get("canPublish"));assertEquals(false,staff.get("canPublishData"));
     }
     @Test void assistOnlyGrantsStaffMicrophoneAndScopedRoom() {
         var g=signer();var s=session();var staff=grant(g.join(s,"staff",false));
         assertEquals(List.of("microphone"),staff.get("canPublishSources"));assertEquals(s.room(),staff.get("room"));
+        assertEquals(false,staff.get("canPublishData"));
+        assertEquals(true,grant(g.join(s,"robot",true)).get("canPublishData"));
         assertNull(staff.get("roomCreate"));assertNull(staff.get("roomAdmin"));assertNull(staff.get("roomRecord"));
     }
     @Test void plainHttpControlIsRestrictedToPrivateAddresses() {
