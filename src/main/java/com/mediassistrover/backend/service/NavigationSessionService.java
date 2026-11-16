@@ -32,7 +32,7 @@ public class NavigationSessionService {
     private final Clock clock;
     private final jakarta.persistence.EntityManager entityManager;
     private final org.springframework.context.ApplicationEventPublisher updates;
-    private static final List<JobStatus> HELD=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
+    private static final List<JobStatus> HELD=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.SUSPENDING,JobStatus.SUSPENDED,JobStatus.RECOVERY_REQUIRED);
     private static final Object ROUTE_READY_RESOURCE=new Object();
     private record RouteReady(UUID robot,UUID session,UUID map,long revision,UUID transport,UUID producer) { }
     public record Create(@NotNull UUID mapId,@Min(60) @Max(28800) int durationSec) { }

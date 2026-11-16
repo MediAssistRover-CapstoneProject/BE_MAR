@@ -25,7 +25,8 @@ public class RobotRealtimeSnapshotService {
                            Double heartbeatAgeSeconds,boolean dispatchReady,String sessionFailureReason,
                            UUID activeJobId,UUID selectedJobStepId,String selectedStepType,String selectedStepCode,
                            Pose latestPose,com.fasterxml.jackson.databind.JsonNode navigationSession,
-                           com.fasterxml.jackson.databind.JsonNode navigationPlan) { }
+                           com.fasterxml.jackson.databind.JsonNode navigationPlan,
+                           List<UUID> suspendedPatrolJobIds) { }
 
     private final RobotRepository robots;
     private final RobotLocationHistoryRepository locations;
@@ -47,7 +48,7 @@ public class RobotRealtimeSnapshotService {
                 &&session.getLastHeartbeatAt().isAfter(now.minusSeconds(15));
         Double heartbeatAge=session==null||session.getLastHeartbeatAt()==null?null:
                 Math.max(0,Duration.between(session.getLastHeartbeatAt(),now).toMillis()/1000.0);
-        Job active=jobs.findByRobotRobotIdAndStatusIn(robotId,List.of(JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED))
+        Job active=jobs.findByRobotRobotIdAndStatusIn(robotId,List.of(JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.SUSPENDING,JobStatus.RECOVERY_REQUIRED))
                 .stream().min(Comparator.comparing(Job::getQueuedAt)).orElse(null);
         JobStep selected=active==null?null:active.getSelectedJobStep();
         Pose pose=locations.findFirstByRobotRobotIdOrderByCapturedAtDesc(robotId).map(value->{
@@ -67,6 +68,8 @@ public class RobotRealtimeSnapshotService {
                 registry.fresh(session),session==null?"HELLO required":session.getFailureReason(),
                 active==null?null:active.getJobId(),selected==null?null:selected.getJobStepId(),
                 selected==null?null:selected.getStepTypeSnapshot(),selected==null?null:selected.getStepCodeSnapshot(),pose,
-                navigationSessions.status(robotId),navigationSessions.currentPlan(robotId,active));
+                navigationSessions.status(robotId),navigationSessions.currentPlan(robotId,active),
+                jobs.findByRobotRobotIdAndStatusIn(robotId,List.of(JobStatus.SUSPENDED)).stream()
+                    .filter(JobOccupancyPolicy::patrol).map(Job::getJobId).toList());
     }
 }

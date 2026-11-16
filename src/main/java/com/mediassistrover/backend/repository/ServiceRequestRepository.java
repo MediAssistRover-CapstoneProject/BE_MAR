@@ -9,6 +9,13 @@ import java.util.*;
 import java.time.Instant;
 import org.springframework.data.repository.query.Param;
 public interface ServiceRequestRepository extends JpaRepository<ServiceRequest,UUID> {
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from ServiceRequest r where r.serviceRequestId=:id")
+    Optional<ServiceRequest> lockById(@Param("id") UUID id);
+    @Query("select r.serviceRequestId from ServiceRequest r where r.requestType='EMERGENCY_SOS' " +
+            "and r.status='SUBMITTED' and r.archivedAt is null and r.relatedIncidentId is not null " +
+            "order by r.priority desc,r.requestedAt,r.serviceRequestId")
+    List<UUID> findPendingEmergencyIds(Pageable page);
     interface TypeCount { ServiceRequestType getRequestType(); long getTotal(); }
     Optional<ServiceRequest> findByIdempotencyKey(String key);
     Optional<ServiceRequest> findByRelatedIncidentId(UUID incidentId);

@@ -32,6 +32,7 @@ public class MediaSessionService {
     private final com.mediassistrover.backend.service.OrchestrationWorkService jobWakeups;
     private final MediaEvents events;
     private final Clock clock;
+    private final com.mediassistrover.backend.service.PatrolInterruptionEvents patrolInterruptions;
     public record View(UUID sessionId,UUID robotId,UUID incidentId,UUID staffAccountId,
                        MediaSession.Mode mode,MediaSession.State state,Instant createdAt,
                        Instant expiresAt,Instant deviceSeenAt,Instant endedAt,String endReason) { }
@@ -107,7 +108,7 @@ public class MediaSessionService {
             finish(existing,ENDED,"SOS_PREEMPTED_MONITOR");sessions.flush();
         }
         var s=newSession(robot,incident,mode);
-        sessions.saveAndFlush(s);notifyAfterCommit(s);return s.getSessionId();
+        sessions.saveAndFlush(s);stopForAssist(s);notifyAfterCommit(s);return s.getSessionId();
     }
     public View accept(UUID id,AccountPrincipal actor) {
         livekit.ready();var staff=staffScope.requireCurrentStaffOrAdmin(actor);
@@ -126,12 +127,14 @@ public class MediaSessionService {
         requireSosResponder(s.getIncident(),actor);
         if(s.getStaff()==null||!s.getStaff().getAccountId().equals(actor.accountId()))
             throw new AccessDeniedException("Accept this session before joining");
+        requireAssistStopped(s);
         return credentials(s,"staff-"+actor.accountId(),false);
     }
     public Credentials deviceToken(UUID id,DevicePrincipal actor) {
         var robot=deviceScope.requireCurrentDevice(actor);var s=locked(id);
         requireOwner(s,robot.getRobotId());requireOpen(s);
         if(s.getStaff()==null)throw new BusinessRuleException("MEDIA_WAITING_FOR_STAFF");
+        requireAssistStopped(s);
         s.setDeviceSeenAt(now());return credentials(s,"robot-"+robot.getRobotId(),true);
     }
     public View deviceState(UUID id,String state,String reason,DevicePrincipal actor) {
@@ -225,16 +228,22 @@ public class MediaSessionService {
     }
     private void stopForAssist(MediaSession s) {
         if(s.getMode()!=MediaSession.Mode.ASSIST)return;
-        // Use the normal durable cancellation pipeline; never rewrite a live Job to terminal.
-        var cancellable=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING);
-        for(var candidate:jobs.findByRobotRobotIdAndStatusIn(s.getRobot().getRobotId(),
-                cancellable)) {
-            var job=jobs.lockById(candidate.getJobId()).orElseThrow();
-            if(!cancellable.contains(job.getStatus()))continue;
-            if(job.getCancelCommandId()==null) {
-                job.setCancelCommandId(UUID.randomUUID());job.setCancelRequestedAt(now());job.setCancelRequestedByAccount(s.getStaff());
-            }
-            jobWakeups.request(job);
+        // Conversation ownership is independent of the incident. Suspend an
+        // interruptible patrol, never cancel a foreground task merely because
+        // a staff member accepted the call.
+        patrolInterruptions.hold(s.getRobot().getRobotId(), "MEDIA", s.getSessionId());
+    }
+    private void requireAssistStopped(MediaSession s) {
+        if(s.getMode()!=MediaSession.Mode.ASSIST)return;
+        for(var job:jobs.findByRobotRobotIdAndStatusIn(s.getRobot().getRobotId(),
+                List.of(JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.SUSPENDING,JobStatus.RECOVERY_REQUIRED))) {
+            if(job.getStatus()==JobStatus.RECOVERY_REQUIRED || job.getStatus()==JobStatus.SUSPENDING
+                    || com.mediassistrover.backend.service.PatrolWorkflowService.isPatrol(job.getWorkflow()))
+                throw new BusinessRuleException("MEDIA_ROBOT_STOP_PENDING");
+            var step=job.getSelectedJobStep();
+            if(step!=null && Set.of(JobStepStatus.PENDING,JobStepStatus.RUNNING,JobStepStatus.RETRYING).contains(step.getStatus())
+                    && Set.of("MOVE","CONTROL_HARDWARE").contains(step.getStepTypeSnapshot()))
+                throw new BusinessRuleException("MEDIA_ROBOT_STOP_PENDING");
         }
     }
     private void requireDeviceListener(UUID robotId) {
@@ -279,7 +288,10 @@ public class MediaSessionService {
     private View view(MediaSession s) {return new View(s.getSessionId(),s.getRobot().getRobotId(),s.getIncident()==null?null:s.getIncident().getIncidentId(),
             s.getStaff()==null?null:s.getStaff().getAccountId(),s.getMode(),s.getState(),s.getCreatedAt(),s.getExpiresAt(),s.getDeviceSeenAt(),s.getEndedAt(),s.getEndReason());}
     private void finish(MediaSession s,MediaSession.State state,String reason) {
-        s.setState(state);s.setActiveRobotId(null);s.setEndedAt(now());s.setEndReason(reason);s.setCleanupPending(true);notifyAfterCommit(s);
+        s.setState(state);s.setActiveRobotId(null);s.setEndedAt(now());s.setEndReason(reason);s.setCleanupPending(true);
+        if(s.getMode()==MediaSession.Mode.ASSIST)
+            patrolInterruptions.release(s.getRobot().getRobotId(), "MEDIA", s.getSessionId());
+        notifyAfterCommit(s);
     }
     private void notifyAfterCommit(MediaSession s) {
         UUID robot=s.getRobot().getRobotId();var event=new Event(properties.isEnabled(),view(s));

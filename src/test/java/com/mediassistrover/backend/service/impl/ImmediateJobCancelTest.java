@@ -109,4 +109,32 @@ class ImmediateJobCancelTest {
         assertEquals(JobStatus.RUNNING,job.getStatus());
         verifyNoInteractions(events,robots);
     }
+
+    @Test void schemaThreeCancelWaitsForPhysicalStopAndIsIdempotent() {
+        var job=job(JobStatus.RUNNING);job.setBeOrchestrated(true);job.setSchemaVersion(3);
+        var step=new JobStep();step.setStatus(JobStepStatus.RUNNING);
+        job.setSelectedJobStep(step);
+        service.cancel(job.getJobId(),new CancelJobRequest("stop"),actor,null);
+        service.cancel(job.getJobId(),new CancelJobRequest("stop again"),actor,null);
+        assertEquals(JobStatus.RUNNING,job.getStatus());
+        assertEquals(JobStepStatus.RUNNING,step.getStatus());
+        assertEquals(RobotStatus.BUSY,job.getRobot().getStatus());
+        assertNotNull(job.getCancelRequestedAt());assertNull(job.getEndedAt());
+        assertFalse(job.isResumeRequested());
+        verify(wakeups,times(1)).request(job);
+    }
+
+    @Test void cancellingSuspendedPatrolDoesNotReleaseItsForegroundRobot() {
+        var job=job(JobStatus.SUSPENDED);job.setBeOrchestrated(true);job.setSchemaVersion(3);job.setResumeRequested(true);
+        service.cancel(job.getJobId(),new CancelJobRequest("end patrol permanently"),actor,null);
+        assertEquals(JobStatus.SUSPENDED,job.getStatus());assertFalse(job.isResumeRequested());
+        assertNotNull(job.getCancelRequestedAt());assertEquals(RobotStatus.BUSY,job.getRobot().getStatus());
+    }
+
+    @Test void uncertainSchemaThreeOperationRequiresRecoveryInsteadOfFakeCancellation() {
+        var job=job(JobStatus.RECOVERY_REQUIRED);job.setBeOrchestrated(true);job.setSchemaVersion(3);
+        assertThrows(com.mediassistrover.backend.exception.BusinessRuleException.class,
+                ()->service.cancel(job.getJobId(),new CancelJobRequest("stop"),actor,null));
+        assertEquals(JobStatus.RECOVERY_REQUIRED,job.getStatus());assertNull(job.getCancelRequestedAt());
+    }
 }

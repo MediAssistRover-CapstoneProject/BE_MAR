@@ -11,6 +11,7 @@ import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
 public interface EmergencyIncidentRepository extends JpaRepository<EmergencyIncident,UUID> {
+    java.util.List<EmergencyIncident> findByRobotRobotIdAndStatusInAndArchivedAtIsNull(UUID robotId, Collection<EmergencyIncidentStatus> statuses);
     Page<EmergencyIncident> findByStatus(EmergencyIncidentStatus status,Pageable pageable);
     Optional<EmergencyIncident> findByDetectionEventDetectionEventId(UUID detectionEventId);
     boolean existsByRobotRobotIdAndIncidentTypeAndStatusInAndArchivedAtIsNull(UUID robotId, String incidentType,

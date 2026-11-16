@@ -39,8 +39,7 @@ public class PatrolWorkflowService {
     public static final String FALL_CAPABILITY = "PATROL_FALL";
     private static final Set<EmergencyIncidentStatus> OPEN_INCIDENTS = Set.of(EmergencyIncidentStatus.OPEN,
             EmergencyIncidentStatus.ACKNOWLEDGED, EmergencyIncidentStatus.IN_PROGRESS);
-    private static final Set<JobStatus> OCCUPIED = Set.of(
-            JobStatus.QUEUED, JobStatus.ACCEPTED, JobStatus.RUNNING, JobStatus.RECOVERY_REQUIRED);
+    private static final Set<JobStatus> OCCUPIED = JobOccupancyPolicy.MOTION_OWNERS;
 
     private final WorkflowService workflows;
     private final WorkflowRepository definitions;
@@ -71,7 +70,17 @@ public class PatrolWorkflowService {
                          @DecimalMin("0.05") @DecimalMax("0.60") Double maxSpeedMps,
                          @Min(15) @Max(120) Integer moveTimeoutSec,
                          @Min(1) @Max(30) Integer sensingWindowSec,
-                         Boolean fallDetection) { }
+                         Boolean fallDetection,
+                         @Min(0) @Max(1000) Integer repeatCount) {
+        public Create(String name, UUID mapId, List<Checkpoint> checkpoints, Double maxSpeedMps,
+                      Integer moveTimeoutSec, Integer sensingWindowSec, Boolean fallDetection) {
+            this(name, mapId, checkpoints, maxSpeedMps, moveTimeoutSec, sensingWindowSec, fallDetection, null);
+        }
+        public Create(String name, UUID mapId, List<Checkpoint> checkpoints, Double maxSpeedMps,
+                      Integer moveTimeoutSec, Integer sensingWindowSec) {
+            this(name, mapId, checkpoints, maxSpeedMps, moveTimeoutSec, sensingWindowSec, null, null);
+        }
+    }
 
     public record Result(UUID workflowId, UUID mapId, int checkpointCount) { }
 
@@ -105,6 +114,8 @@ public class PatrolWorkflowService {
     }
 
     GraphCreateRequest graph(Create request, String code) {
+        int repeats = request.repeatCount() == null ? 1 : request.repeatCount();
+        if (repeats < 0 || repeats > 1000) throw new BusinessRuleException("Patrol repeatCount must be 0 (continuous) or 1..1000");
         double speed = request.maxSpeedMps() == null ? .25 : request.maxSpeedMps();
         int moveTimeout = request.moveTimeoutSec() == null ? 60 : request.moveTimeoutSec();
         int window = request.sensingWindowSec() == null ? 12 : request.sensingWindowSec();
@@ -134,9 +145,11 @@ public class PatrolWorkflowService {
             edges.add(new GraphTransitionRequest(from, null, TransitionOutcome.TIMEOUT, null, 1, true, TerminalStatus.FAILED));
         }
         var schema = json.createObjectNode().put("type", "object").put("additionalProperties", false);
-        schema.putObject("properties").putObject("map_id").put("type", "string").put("format", "uuid");
+        var fields = schema.putObject("properties");
+        fields.putObject("map_id").put("type", "string").put("format", "uuid");
+        fields.putObject("patrol_repeat_count").put("type", "integer").put("minimum", 0).put("maximum", 1000);
         schema.putArray("required").add("map_id");
-        var defaults = json.createObjectNode().put("map_id", request.mapId().toString());
+        var defaults = json.createObjectNode().put("map_id", request.mapId().toString()).put("patrol_repeat_count", repeats);
         int duration = request.checkpoints().size() * (moveTimeout + window + 10) + 30;
         var workflow = new WorkflowUpsertRequest(code, 1, request.name(), SERVICE,
                 "Finite patrol with one sensing window after each successful MOVE", schema, json.createObjectNode(),
@@ -178,7 +191,7 @@ public class PatrolWorkflowService {
         FacilityMap map = robot.getCurrentMap();
         if (map == null || !mapId.equals(map.getMapId()) || map.getStatus() != MapStatus.ACTIVE
                 || map.getAssetHash() == null || !map.getAssetHash().equalsIgnoreCase(robot.getMapAssetHash())) return null;
-        if (!jobs.findByRobotRobotIdAndStatusIn(robotId, OCCUPIED).isEmpty()
+        if (jobs.existsNonterminalPatrol(robotId) || !jobs.findByRobotRobotIdAndStatusIn(robotId, OCCUPIED).isEmpty()
                 || jobs.existsHigherPriorityQueuedForMap(mapId, priority)
                 || mediaSessions.findByActiveRobotId(robotId).filter(s -> s.getMode() == MediaSession.Mode.ASSIST).isPresent()
                 || incidents.existsByRobotRobotIdAndIncidentTypeAndStatusInAndArchivedAtIsNull(

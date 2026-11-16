@@ -21,5 +21,11 @@ public final class JobResponses {
         JobEventProducerType producerType,UUID producerSessionId,long sequenceNo,String eventType,String correlationKey,
         Integer attemptNo,String previousStatus,String newStatus,String statusScope,JsonNode eventDataJson,
         Instant occurredAt,Instant receivedAt,Instant persistedAt) {}
-    public record JobDetailResponse(JobResponse job,List<JobTaskResponse> tasks,List<JobStepResponse> steps) {}
+    public record SuspensionHoldResponse(String source,UUID sourceId,Instant createdAt) {}
+    public record PatrolJobState(int round,int repeatCount,boolean continuous,boolean resumeRequested,
+        Instant suspendRequestedAt,Instant suspendedAt,long suspendedDurationMs,UUID selectedStepId,
+        UUID targetEndpointId,String phase,String resumeBlockedReason,List<SuspensionHoldResponse> holds) {}
+    public record JobDetailResponse(JobResponse job,List<JobTaskResponse> tasks,List<JobStepResponse> steps,PatrolJobState patrol) {
+        public JobDetailResponse(JobResponse job,List<JobTaskResponse> tasks,List<JobStepResponse> steps){this(job,tasks,steps,null);}
+    }
 }

@@ -30,8 +30,9 @@ public class MqttPublicationPlans {
     private final com.mediassistrover.backend.ai.AiSensingService ai;
     private final MqttRolloutService rollout;
     private final com.mediassistrover.backend.validation.StepExecutionPolicy executionPolicy;
+    private final com.mediassistrover.backend.service.RobotTaskArbitrationService arbitration;
     public record Publication(UUID id,UUID robotId,UUID sessionId,JsonNode payload) { }
-    @Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
+    @Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRES_NEW,isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public Publication command(UUID id) {
         RobotCommandOutbox initial=commands.findById(id).orElseThrow();
         Job job=jobs.lockById(initial.getJobId()).orElseThrow();robots.findByIdForUpdate(initial.getRobotId()).orElseThrow();
@@ -39,13 +40,16 @@ public class MqttPublicationPlans {
         entityManager.refresh(command,jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
         boolean cancel="CANCEL_STEP".equals(command.getCommandType());
         JobStep action=steps.findById(command.getJobStepId()).orElseThrow();boolean cleanup=action.isMappingCleanup();
+        // No new patrol execution may slip through while an interruption callback
+        // waits for this Job lock. Stop commands remain publishable.
+        if(!cancel && !cleanup && arbitration.patrolPublicationBlocked(job))return null;
         if(!cancel && !cleanup && !rollout.dispatchAllowed())return null;
         if(!properties.manages(command.getRobotId()) || !cancel && !cleanup && (!properties.isDispatchEnabled()
                 || !properties.getEnabledStepTypes().contains(command.getPayloadJson().path("step").path("stepType").asText())))return null;
         if (!cancel && !cleanup && (executionPolicy.isServer(action, action.getResolvedInputsJson())
                 || !registry.advertises(session, action.getStepTypeSnapshot()))) return null;
         if (!Set.of("PENDING","PUBLISHING","PUBLISHED").contains(command.getState())
-                || job.getStatus()!=JobStatus.RUNNING && !(cancel && job.getStatus()==JobStatus.RECOVERY_REQUIRED)) return null;
+                || job.getStatus()!=JobStatus.RUNNING && !(cancel && Set.of(JobStatus.RECOVERY_REQUIRED,JobStatus.SUSPENDING).contains(job.getStatus()))) return null;
         if(!cancel && (job.getCancelRequestedAt()!=null && !cleanup || commands.findByJobStepIdAndCommandType(command.getJobStepId(),"CANCEL_STEP").isPresent()))return null;
         Instant now=Instant.now(clock);
         if (!command.getExpiresAt().isAfter(now)) {

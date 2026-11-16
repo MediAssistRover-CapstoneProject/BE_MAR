@@ -12,6 +12,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 public interface VoiceInteractionRepository extends JpaRepository<VoiceInteraction, UUID> {
+    java.util.List<VoiceInteraction> findByRobotRobotIdAndStatus(UUID robotId, VoiceInteractionStatus status);
     @Query("select v from VoiceInteraction v where (:robotId is null or v.robot.robotId=:robotId) " +
             "and (:status is null or v.status=:status) and (:from is null or v.startedAt>=:from) " +
             "and (:to is null or v.startedAt<:to)")

@@ -78,6 +78,7 @@ public class JobStepInputResolverImpl implements JobStepInputResolver {
         Map<String, JobStep> latest = new LinkedHashMap<>();
         jobStepRepository.findByJobId(job.getJobId()).stream()
                 .filter(step -> step.getStatus() == JobStepStatus.SUCCEEDED && step.getResultJson() != null)
+                .filter(step -> step.getPatrolRound()==job.getPatrolRound())
                 .sorted(Comparator.comparingLong(JobStep::getExecutionSequenceNo))
                 .forEach(step -> latest.put(step.getStepCodeSnapshot(), step));
         latest.forEach((code, step) -> outputs.set(code, step.getResultJson().deepCopy()));

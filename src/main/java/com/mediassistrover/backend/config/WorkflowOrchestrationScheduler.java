@@ -42,8 +42,11 @@ public class WorkflowOrchestrationScheduler {
         } while (batch.size()==100);
     }
     static boolean needsDeadlineWork(JobRepository.DeadlineCandidate job,java.time.Instant now) {
+        java.time.Instant started=job.getPatrolRoundStartedAt()==null?job.getStartedAt():job.getPatrolRoundStartedAt();
+        long paused=job.getSuspendedDurationMs()==null?0:job.getSuspendedDurationMs();
+        long baseline=job.getPatrolRoundSuspendedBaseMs()==null?0:job.getPatrolRoundSuspendedBaseMs();
         if(job.getCancelRequestedAt()!=null||job.getInterruptionRequestedAt()!=null||job.getStartedAt()==null||job.getMaxDurationSec()==null
-            ||!job.getStartedAt().plusSeconds(job.getMaxDurationSec()).isAfter(now))return true;
+            ||!started.plusSeconds(job.getMaxDurationSec()).plusMillis(Math.max(0,paused-baseline)).isAfter(now))return true;
         if(job.getStepType()==null||!java.util.Set.of("MOVE","CONTROL_HARDWARE","EXECUTE_SENSING","INTERACT").contains(job.getStepType()))return true;
         if(job.getStepStatus()==com.mediassistrover.backend.enums.JobStepStatus.PENDING
             &&job.getCommandState()!=null&&java.util.Set.of("PENDING","PUBLISHING","PUBLISHED","ACKNOWLEDGED").contains(job.getCommandState())

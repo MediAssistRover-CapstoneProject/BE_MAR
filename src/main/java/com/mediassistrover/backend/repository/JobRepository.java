@@ -8,6 +8,15 @@ import org.springframework.data.repository.query.Param;
 import java.time.Instant;
 import java.util.*;
 public interface JobRepository extends JpaRepository<Job,UUID> {
+    @Query("select distinct j.robot.robotId from Job j where j.robot is not null and j.beOrchestrated=true " +
+            "and j.workflow.serviceType='PATROL' and j.status in ('QUEUED','ACCEPTED','RUNNING','SUSPENDING','SUSPENDED')")
+    List<UUID> findPatrolArbitrationRobotIds(Pageable page);
+    @Query("select j from Job j where j.beOrchestrated=true and j.workflow.serviceType='PATROL' " +
+            "and j.robot is not null and j.status in ('QUEUED','ACCEPTED','RUNNING','SUSPENDING','SUSPENDED') order by j.queuedAt,j.jobId")
+    List<Job> findYieldablePatrolCandidates(Pageable page);
+    @Query("select count(j)>0 from Job j where j.robot.robotId=:robotId and j.workflow.serviceType='PATROL' " +
+            "and j.status in ('QUEUED','ACCEPTED','RUNNING','SUSPENDING','SUSPENDED','RECOVERY_REQUIRED')")
+    boolean existsNonterminalPatrol(@Param("robotId") UUID robotId);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select j from Job j where j.jobId=:id")
     Optional<Job> lockById(@Param("id") UUID id);
@@ -23,14 +32,19 @@ public interface JobRepository extends JpaRepository<Job,UUID> {
         Instant getStepStartedAt(); Integer getStepTimeoutSec();
         String getCommandState(); Instant getCommandExpiresAt();
         Instant getInterruptionRequestedAt();
+        Long getSuspendedDurationMs();
+        Instant getPatrolRoundStartedAt();
+        Long getPatrolRoundSuspendedBaseMs();
     }
     @Query("select j.jobId as jobId,j.startedAt as startedAt,w.maxDurationSec as maxDurationSec," +
            "j.cancelRequestedAt as cancelRequestedAt,s.status as stepStatus,s.stepTypeSnapshot as stepType," +
            "s.startedAt as stepStartedAt,s.timeoutSecSnapshot as stepTimeoutSec," +
-           "c.state as commandState,c.expiresAt as commandExpiresAt,s.interruptionRequestedAt as interruptionRequestedAt " +
+           "c.state as commandState,c.expiresAt as commandExpiresAt,s.interruptionRequestedAt as interruptionRequestedAt," +
+           "j.suspendedDurationMs as suspendedDurationMs,j.patrolRoundStartedAt as patrolRoundStartedAt," +
+           "j.patrolRoundSuspendedBaseMs as patrolRoundSuspendedBaseMs " +
            "from Job j join j.workflow w left join j.selectedJobStep s " +
            "left join RobotCommandOutbox c on c.jobStepId=s.jobStepId and c.commandType='EXECUTE_STEP' " +
-           "where j.beOrchestrated=true and j.status='RUNNING' order by j.jobId")
+           "where j.beOrchestrated=true and j.status in ('RUNNING','SUSPENDING') order by j.jobId")
     List<DeadlineCandidate> findBeDeadlineCandidates(Pageable pageable);
     @Query("select j.jobId from Job j where j.beOrchestrated=true and j.status='QUEUED' and j.robot.status='IDLE' order by j.queuedAt")
     List<UUID> findReadyBeJobIds(Pageable page);

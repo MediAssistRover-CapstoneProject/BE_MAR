@@ -38,6 +38,8 @@ public class WorkflowOrchestratorService {
     private final StepExecutionPolicy executionPolicy;
     private final DeliveryRequestRepository deliveries;
     private final StaffDutyService staffDuty;
+    private final JobSuspensionService suspension;
+    private final RobotTaskArbitrationService arbitration;
 
     @Transactional
     public void advance(UUID jobId) {
@@ -48,11 +50,15 @@ public class WorkflowOrchestratorService {
         long generation=row.getRequestedGeneration();
         row.setProcessedGeneration(generation);
         Instant now=Instant.now(clock);
+        if(job.getStatus()==JobStatus.SUSPENDED && job.getCancelRequestedAt()!=null) {
+            job.setResumeRequested(false);finish(job,TerminalStatus.CANCELLED);return;
+        }
         if (job.getStatus()==JobStatus.QUEUED && job.getCancelRequestedAt()!=null) {
             finish(job,TerminalStatus.CANCELLED); return;
         }
         if (job.getStatus()==JobStatus.QUEUED) {
             if (job.getRobot()==null) return; // assign-robot will wake the same durable work
+            if (!arbitration.canStart(job)) return;
             Robot robot=robots.findByIdForUpdate(job.getRobot().getRobotId()).orElseThrow();
             if (robot.getStatus()!=RobotStatus.IDLE) return;
             if (jobs.findByRobotRobotIdAndStatusIn(robot.getRobotId(),List.of(JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED))
@@ -60,9 +66,27 @@ public class WorkflowOrchestratorService {
             now=clock.instant();
             if (rejectExpiredDelivery(job,now)) return;
             job.setStatus(JobStatus.RUNNING); job.setAcceptedAt(now); job.setStartedAt(now); robot.setStatus(RobotStatus.BUSY);
+            if(suspension.isPatrol(job)) {
+                if(job.getPatrolRound()<1)job.setPatrolRound(1);
+                if(job.getPatrolRoundStartedAt()==null)job.setPatrolRoundStartedAt(now);
+            }
             if (job.getServiceRequest()!=null) job.getServiceRequest().setStatus(ServiceRequestStatus.IN_PROGRESS);
             event(job,null,"BE_JOB_STARTED",json.createObjectNode());
         }
+        if(job.getStatus()==JobStatus.SUSPENDING) {
+            JobStep interrupted=job.getSelectedJobStep();
+            if(interrupted!=null && !executionPolicy.isServer(interrupted,interrupted.getResolvedInputsJson())) {
+                mqttControl.handle(job,interrupted);
+            } else {
+                if(interrupted!=null && Set.of(JobStepStatus.PENDING,JobStepStatus.RUNNING,JobStepStatus.RETRYING).contains(interrupted.getStatus())) {
+                    interrupted.setInterruptionReason("JOB_SUSPEND");interrupted.setInterruptionRequestedAt(now);
+                    interrupted.setStatus(JobStepStatus.CANCELLED);interrupted.setEndedAt(now);
+                }
+                suspension.settled(job);
+            }
+            return;
+        }
+        if(job.getStatus()==JobStatus.SUSPENDED && !suspension.tryResume(job))return;
         if (job.getStatus()!=JobStatus.RUNNING) return;
         if(mqttControl.handle(job,job.getSelectedJobStep()))return;
         JobStep cleanup=job.getSelectedJobStep();
@@ -77,7 +101,7 @@ public class WorkflowOrchestratorService {
             // Active Pi operations are handled above; completed stop evidence governs a server/UI wait.
             finish(job,mqttControl.hasUnresolvedPiWork(visits)?TerminalStatus.RECOVERY_REQUIRED:TerminalStatus.CANCELLED); return;
         }
-        if (!job.getStartedAt().plusSeconds(job.getWorkflow().getMaxDurationSec()).isAfter(now)) {
+        if (!suspension.deadline(job).isAfter(now)) {
             job.setErrorCode("WORKFLOW_DURATION_EXCEEDED");
             finish(job,mqttControl.hasUnresolvedPiWork(visits)?TerminalStatus.RECOVERY_REQUIRED:TerminalStatus.FAILED); return;
         }
@@ -94,12 +118,22 @@ public class WorkflowOrchestratorService {
             }
         }
         Step target;
+        boolean continuation=selected!=null && JobSuspensionService.suspendedExecution(selected);
         if (selected==null) target=job.getWorkflow().getStartStep();
+        else if(continuation) target=selected.getStep();
         else if (Set.of(JobStepStatus.SUCCEEDED,JobStepStatus.FAILED,JobStepStatus.TIMED_OUT).contains(selected.getStatus())
                 || selected.getStatus()==JobStepStatus.CANCELLED && "STEP_TIMEOUT".equals(selected.getInterruptionReason())) {
             StepTransition route=transitions.resolve(selected);
-            if (route.getToStep()==null) { finish(job,route.getTerminalStatus()); return; }
-            target=route.getToStep();
+            if (route.getToStep()==null) {
+                if(route.getTerminalStatus()==TerminalStatus.SUCCEEDED && suspension.isPatrol(job)
+                        && (job.getPatrolRepeatCount()==0 || job.getPatrolRound()<job.getPatrolRepeatCount())) {
+                    job.setPatrolRound(Math.addExact(job.getPatrolRound(),1));job.setPatrolRoundStartedAt(now);
+                    job.setPatrolRoundSuspendedBaseMs(job.getSuspendedDurationMs());
+                    job.setSelectedJobStep(null);selected=null;
+                    target=job.getWorkflow().getStartStep();
+                    event(job,null,"BE_PATROL_ROUND_STARTED",json.createObjectNode().put("round",job.getPatrolRound()));
+                } else {finish(job,route.getTerminalStatus());return;}
+            } else target=route.getToStep();
         } else {
             if (selected.getStatus()==JobStepStatus.PENDING && executionPolicy.isServer(selected,selected.getResolvedInputsJson()))
                 server.execute(selected);
@@ -108,15 +142,19 @@ public class WorkflowOrchestratorService {
         }
         if (target==null || !target.isEnabled() || !target.getWorkflow().getWorkflowId().equals(job.getWorkflow().getWorkflowId()))
             throw new BusinessRuleException("Selected graph target is invalid");
-        long total=visits.stream().filter(s->s.getSelectedAt()!=null).count();
-        long count=visits.stream().filter(s->s.getSelectedAt()!=null && s.getStep().getStepId().equals(target.getStepId())).count();
+        long total=visits.stream().filter(s->s.getPatrolRound()==job.getPatrolRound() && s.getSelectedAt()!=null && !JobSuspensionService.suspendedExecution(s)).count();
+        long count=visits.stream().filter(s->s.getPatrolRound()==job.getPatrolRound() && s.getSelectedAt()!=null && !JobSuspensionService.suspendedExecution(s) && s.getStep().getStepId().equals(target.getStepId())).count();
         boolean targetIsStop=target.getStepType()==StepType.EXECUTE_SENSING && "MAPPING".equals(target.getParamsJson().path("sensing_type").asText()) && "STOP".equals(target.getParamsJson().path("action").asText());
         int totalLimit=job.getWorkflow().getMaxTotalVisits()-(mapping.open(jobId) && !targetIsStop?1:0);
         if (total>=totalLimit || count>=target.getMaxVisits()) {
             job.setErrorCode("WORKFLOW_VISIT_LIMIT");
             finish(job,mqttControl.hasUnresolvedPiWork(visits)?TerminalStatus.RECOVERY_REQUIRED:TerminalStatus.FAILED); return;
         }
+        if(continuation && visits.stream().filter(s->s.getPatrolRound()==job.getPatrolRound() && s.getStep().getStepId().equals(target.getStepId()) && s.getResumedFromJobStepId()!=null).count()>=100) {
+            job.setErrorCode("PATROL_CONTINUATION_LIMIT");finish(job,TerminalStatus.RECOVERY_REQUIRED);return;
+        }
         JobStep next=visits.stream().filter(s->s.getStep().getStepId().equals(target.getStepId())
+                && s.getPatrolRound()==job.getPatrolRound()
                 && s.getStatus()==JobStepStatus.PENDING && s.getSelectedAt()==null).findFirst().orElse(null);
         if (next==null) {
             JobTask task=tasks.findByJobJobIdOrderBySequenceNoAsc(jobId).stream()
@@ -126,8 +164,11 @@ public class WorkflowOrchestratorService {
                     .stepCodeSnapshot(target.getStepCode()).stepTypeSnapshot(target.getStepType().name())
                     .executionSequenceNo(visits.stream().mapToLong(JobStep::getExecutionSequenceNo).max().orElse(0)+1)
                     .status(JobStepStatus.PENDING).attemptNo(1).timeoutSecSnapshot(target.getTimeoutSec())
+                    .resumedFromJobStepId(continuation?selected.getJobStepId():null)
+                    .patrolRound(job.getPatrolRound())
                     .resolvedInputsJson(json.createObjectNode()).operationKey(jobId+":"+target.getStepCode()+":"+visit).build());
         } else next.setExecutionSequenceNo(visits.stream().mapToLong(JobStep::getExecutionSequenceNo).max().orElse(0)+1);
+        if(continuation)next.setResumedFromJobStepId(selected.getJobStepId());
         guard.requireStartAllowed(next);
         mapping.prepareSelection(job,target);
         job.setSelectedJobStep(next);
@@ -202,7 +243,8 @@ public class WorkflowOrchestratorService {
             var selected=all.stream().filter(s->s.getJobTask().getJobTaskId().equals(task.getJobTaskId()) && s.getSelectedAt()!=null).toList();
             if (selected.isEmpty()) task.setStatus(JobTaskStatus.NOT_VISITED);
             else if (terminal!=TerminalStatus.RECOVERY_REQUIRED) {
-                boolean succeeded=selected.stream().allMatch(s->s.getStatus()==JobStepStatus.SUCCEEDED);
+                var executed=selected.stream().filter(s->!JobSuspensionService.suspendedExecution(s)).toList();
+                boolean succeeded=!executed.isEmpty() && executed.stream().allMatch(s->s.getStatus()==JobStepStatus.SUCCEEDED);
                 task.setStatus(succeeded?JobTaskStatus.SUCCEEDED:terminal==TerminalStatus.CANCELLED?JobTaskStatus.CANCELLED:JobTaskStatus.FAILED);
                 task.setEndedAt(now);
             }
@@ -217,7 +259,9 @@ public class WorkflowOrchestratorService {
         }
         if (job.getRobot()!=null) {
             if (terminal==TerminalStatus.RECOVERY_REQUIRED) job.getRobot().setStatus(RobotStatus.ERROR);
-            else if (job.getRobot().getStatus()==RobotStatus.BUSY) job.getRobot().setStatus(RobotStatus.IDLE);
+            else if (job.getRobot().getStatus()==RobotStatus.BUSY && jobs.findByRobotRobotIdAndStatusIn(job.getRobot().getRobotId(),
+                    List.of(JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.SUSPENDING,JobStatus.RECOVERY_REQUIRED)).stream()
+                    .noneMatch(other->!other.getJobId().equals(job.getJobId()))) job.getRobot().setStatus(RobotStatus.IDLE);
         }
         event(job,job.getSelectedJobStep(),"BE_JOB_"+terminal.name(),json.createObjectNode());
         updates.publishEvent(new RuntimeChanged(job.getJobId()));

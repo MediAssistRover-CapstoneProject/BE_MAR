@@ -34,6 +34,7 @@ public class JobServiceImpl implements JobService {
     private final com.mediassistrover.backend.mqtt.MqttSessionRegistry mqttSessions;
     private final RobotMqttSessionRepository robotSessions;
     private final JobHardDeleteService hardDelete;
+    private final PatrolJobStateService patrolStates;
 
     private void reconcileStoppedMappingWait(Job job,JobStatus terminal) {
         if(!mapping.open(job.getJobId()))return;
@@ -69,7 +70,7 @@ public class JobServiceImpl implements JobService {
             if(task.getStartedAt()!=null && task.getEndedAt()==null){task.setStatus(terminal==JobStatus.CANCELLED?JobTaskStatus.CANCELLED:JobTaskStatus.FAILED);task.setEndedAt(now);}
     }
     @Override public Page<JobResponse> list(JobStatus status,UUID workflowId,UUID requestId,UUID robotId,Instant from,Instant to,boolean includeDeleted,AccountPrincipal a,Pageable p){validateWindow(from,to);staffScope.requireCurrentStaffOrAdmin(a);if(includeDeleted&&a.role()!=Role.ADMIN)throw new AccessDeniedException("includeDeleted requires ADMIN");var query=includeDeleted?jobRepository.search(status,workflowId,requestId,robotId,from,to,p):jobRepository.searchActive(status,workflowId,requestId,robotId,from,to,p);if(a.role()==Role.ADMIN)return query.map(this::safeJob);List<Job> scoped=query.getContent().stream().filter(j->staffScope.canAccessJob(j,a)).toList();return page(scoped,p).map(this::safeJob);}
-    @Override public JobDetailResponse get(UUID id,boolean includeDeleted,AccountPrincipal a){Job j=job(id);scope(j,a);if(!includeDeleted&&j.getArchivedAt()!=null)throw new ResourceNotFoundException("Job not found: "+id);return new JobDetailResponse(safeJob(j),taskRepository.findByJobJobIdOrderBySequenceNoAsc(id).stream().map(mapper::toResponse).toList(),stepRepository.findByJobId(id).stream().map(this::safeStep).toList());}
+    @Override public JobDetailResponse get(UUID id,boolean includeDeleted,AccountPrincipal a){Job j=job(id);scope(j,a);if(!includeDeleted&&j.getArchivedAt()!=null)throw new ResourceNotFoundException("Job not found: "+id);return new JobDetailResponse(safeJob(j),taskRepository.findByJobJobIdOrderBySequenceNoAsc(id).stream().map(mapper::toResponse).toList(),stepRepository.findByJobId(id).stream().map(this::safeStep).toList(),patrolStates.snapshot(j));}
     @Override public Page<JobEventResponse> events(UUID id,AccountPrincipal a,Pageable p){scope(job(id),a);return eventRepository.findByJobJobId(id,p).map(e->safeEvent(e,a));}
     @Override @Transactional
     public JobResponse cancel(UUID id, CancelJobRequest request, AccountPrincipal actor, RequestMetadata metadata) {
@@ -78,6 +79,15 @@ public class JobServiceImpl implements JobService {
         scope(job, actor);
         if (job.getStatus() == JobStatus.CANCELLED) return mapper.toResponse(job);
         if (terminal(job.getStatus())) throw new BusinessRuleException("Job is already terminal");
+        if(job.isBeOrchestrated()) {
+            if(job.getStatus()==JobStatus.RECOVERY_REQUIRED)throw new BusinessRuleException("Reconcile the uncertain physical operation before cancelling this job");
+            if(job.getCancelRequestedAt()!=null)return mapper.toResponse(job);
+            job.setCancelCommandId(UUID.randomUUID());job.setCancelRequestedAt(clock.instant());
+            job.setCancelRequestedByAccount(account(actor.accountId()));job.setResumeRequested(false);
+            event(job,actor,"JOB_CANCEL_REQUESTED",job.getStatus().name(),job.getStatus().name(),objectMapper.createObjectNode().put("reason",request.reason()));
+            wakeups.request(job);audit(actor,"JOB_CANCEL_REQUESTED",job,metadata);
+            return mapper.toResponse(job);
+        }
         Robot robot = job.getRobot() == null ? null
                 : robotRepository.findByIdForUpdate(job.getRobot().getRobotId()).orElseThrow();
         Instant now = Instant.now(clock);

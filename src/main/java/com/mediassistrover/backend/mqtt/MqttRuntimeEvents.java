@@ -35,7 +35,7 @@ public class MqttRuntimeEvents {
     public void apply(Job job,MqttWire.Envelope e) {
         if (job==null || !job.isBeOrchestrated() || job.getSchemaVersion()!=3 || job.getRobot()==null || !job.getRobot().getRobotId().equals(e.robotId()))
             throw new BusinessRuleException("MQTT event is outside orchestrated Job/Robot scope");
-        if(job.getStatus()==JobStatus.CANCELLED)
+        if(job.getStatus()==JobStatus.CANCELLED && !acceptedExecuteAck(e))
             throw new BusinessRuleException("Job is already cancelled");
         UUID acknowledged="COMMAND_ACK".equals(e.messageType())?UUID.fromString(e.payload().path("commandId").asText()):e.correlationId();
         RobotCommandOutbox correlated=commands.lock(acknowledged).orElseThrow(()->new BusinessRuleException("No command for MQTT event"));
@@ -52,6 +52,18 @@ public class MqttRuntimeEvents {
             throw new BusinessRuleException("MQTT operation scope mismatch / event does not match a published command");
         RobotCommandOutbox command=correlated;
         if(cancelAck){command=commands.findByJobStepId(step.getJobStepId()).orElseThrow();command=commands.lock(command.getCommandId()).orElseThrow();}
+        // A delayed acceptance receipt can be delivered after the matching stop
+        // completed, with a different MQTT messageId. The inbox still commits
+        // and ACKs it, but it must never request another start, overwrite the
+        // terminal result, or recover the new foreground owner. Scope and the
+        // original published operation were validated above; only affirmative
+        // EXECUTE_STEP acceptance with durable stop evidence is harmless.
+        if(acceptedExecuteAck(e) && "EXECUTE_STEP".equals(correlated.getCommandType())
+                && Boolean.TRUE.equals(command.getPhysicalStopConfirmed())
+                && Set.of("COMPLETED","RESOLVED_BY_STAFF").contains(command.getState())
+                && Set.of(JobStepStatus.SUCCEEDED,JobStepStatus.FAILED,JobStepStatus.TIMED_OUT,JobStepStatus.CANCELLED).contains(step.getStatus()))
+            return;
+        if(job.getStatus()==JobStatus.CANCELLED)throw new BusinessRuleException("Job is already cancelled");
         boolean lateTerminal=Set.of(JobStatus.SUCCEEDED,JobStatus.FAILED,JobStatus.CANCELLED).contains(job.getStatus());
         if(lateTerminal && !cancelAck && !(step.getInterruptionReason()!=null && Set.of("STEP_ERROR","STEP_RESULT").contains(e.messageType())))
             throw new BusinessRuleException("New MQTT event arrived after Job terminal");
@@ -111,6 +123,12 @@ public class MqttRuntimeEvents {
                 .eventDataJson(p.deepCopy()).occurredAt(e.time()).receivedAt(now).persistedAt(now).build());
         updates.publishEvent(new com.mediassistrover.backend.service.RuntimeChanged(job.getJobId()));
     }
+    private static boolean acceptedExecuteAck(MqttWire.Envelope envelope) {
+        JsonNode payload=envelope.payload();
+        return "COMMAND_ACK".equals(envelope.messageType()) && payload!=null && payload.isObject()
+                && "EXECUTE_STEP".equals(payload.path("commandType").asText())
+                && payload.path("accepted").isBoolean() && payload.path("accepted").booleanValue();
+    }
     /** Validate all combined-start metadata before either acceptance or start mutates state. */
     private boolean startRequested(Job job,JobStep step,RobotCommandOutbox command,JsonNode payload,boolean cancelAck) {
         boolean frozen="ACCEPT_AND_START".equals(command.getPayloadJson().path("startMode").asText());
@@ -155,7 +173,8 @@ public class MqttRuntimeEvents {
             command.setInterruptionReason("PHYSICAL_STOP_UNCONFIRMED");
             safety.recovery(job,"Successful physical action has no confirmed stop");
         }
-        if("MOVE".equals(step.getStepTypeSnapshot()) && job.getStatus()==JobStatus.RUNNING && step.getInterruptionReason()==null
+        if("MOVE".equals(step.getStepTypeSnapshot()) && (job.getStatus()==JobStatus.RUNNING || job.getStatus()==JobStatus.SUSPENDING)
+                && (step.getInterruptionReason()==null || "JOB_SUSPEND".equals(step.getInterruptionReason()))
                 && p.path("physicalStopConfirmed").asBoolean() && step.getResultJson().path("reached").asBoolean()) { navigationTargets.reached(step); deliveryNotices.arrived(step); }
         finishInterrupted(job,step,command,p);
     }
@@ -215,6 +234,9 @@ public class MqttRuntimeEvents {
                     JsonNode output=p.path("result").path("result");
                     if(!output.isObject()) {safety.recovery(job,"Cancel journal succeeded but successful output is missing");return;}
                     outputs.validate(step,output,e.time());ai.completed(step,execute,output,e.time());mapping.completed(step,output,true);step.setResultJson(output.deepCopy());
+                    if("JOB_SUSPEND".equals(step.getInterruptionReason()) && "MOVE".equals(step.getStepTypeSnapshot()) && output.path("reached").asBoolean()) {
+                        navigationTargets.reached(step);deliveryNotices.arrived(step);
+                    }
                 }
                 step.setStatus(JobStepStatus.valueOf(status));step.setEndedAt(Instant.now(clock));
                 step.setErrorCode("BE_"+step.getInterruptionReason());step.setErrorDetailsJson(p.deepCopy());

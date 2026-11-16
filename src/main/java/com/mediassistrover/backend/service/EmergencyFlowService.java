@@ -39,6 +39,7 @@ public class EmergencyFlowService {
     private final SosResponderRouting sosRouting;
     private final AuditService auditService;
     private final Clock clock;
+    private final PatrolInterruptionEvents patrolInterruptions;
 
     @Transactional
     public Result create(Command command) {
@@ -67,6 +68,7 @@ public class EmergencyFlowService {
                 .build();
         sosRouting.assign(incident, now);
         incidentRepository.saveAndFlush(incident);
+        patrolInterruptions.hold(command.robot().getRobotId(), "INCIDENT", incident.getIncidentId());
 
         ObjectNode data = command.data().deepCopy();
         data.put("incident_id", incident.getIncidentId().toString());
@@ -104,11 +106,7 @@ public class EmergencyFlowService {
 
         Job job = null;
         if (automaticDispatch && incident.getSosResponder() != null) {
-            if (command.robot().getStatus() == RobotStatus.IDLE
-                    && jobRepository.findByRobotRobotIdAndStatusIn(command.robot().getRobotId(),
-                    List.of(JobStatus.QUEUED, JobStatus.ACCEPTED, JobStatus.RUNNING,
-                            JobStatus.RECOVERY_REQUIRED)).isEmpty()
-                    && canDispatch(command.robot())) {
+            if (canAcceptEmergency(command.robot()) && canDispatch(command.robot())) {
                 job = jobExecutionService.createForRequest(request);
                 job.setAssignedStaffAccount(incident.getSosResponder());
                 request.setStatus(ServiceRequestStatus.QUEUED);
@@ -126,6 +124,19 @@ public class EmergencyFlowService {
         auditService.record(null, command.auditAction(), "EmergencyIncident", incident.getIncidentId(),
                 null, auditData, command.metadata());
         return new Result(incident, request, alert, job);
+    }
+
+    private boolean canAcceptEmergency(Robot robot) {
+        if (!Set.of(RobotStatus.IDLE, RobotStatus.BUSY).contains(robot.getStatus())) return false;
+        var active = jobRepository.findByRobotRobotIdAndStatusIn(robot.getRobotId(),
+                List.of(JobStatus.QUEUED, JobStatus.ACCEPTED, JobStatus.RUNNING,
+                        JobStatus.SUSPENDING, JobStatus.RECOVERY_REQUIRED));
+        // Admission may queue behind interruptible patrol, but never interrupt
+        // an unrelated foreground task or recovery merely by creating an SOS.
+        return active.isEmpty() || active.stream().allMatch(job -> job.isBeOrchestrated()
+                && job.getSchemaVersion() == 3 && job.getWorkflow() != null
+                && "PATROL".equalsIgnoreCase(job.getWorkflow().getServiceType())
+                && job.getStatus() != JobStatus.RECOVERY_REQUIRED);
     }
 
     private boolean canDispatch(Robot robot) {

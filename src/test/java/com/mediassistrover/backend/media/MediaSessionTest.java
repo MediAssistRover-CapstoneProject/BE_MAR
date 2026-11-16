@@ -49,7 +49,8 @@ class MediaSessionTest {
     final JobRepository jobs=mock(JobRepository.class);
     final OrchestrationWorkService wakeups=mock(OrchestrationWorkService.class);
     final MediaEvents events=mock(MediaEvents.class);
-    final MediaSessionService service=new MediaSessionService(properties,gateway,sessions,robots,incidents,staff,device,jobs,wakeups,events,clock);
+    final com.mediassistrover.backend.service.PatrolInterruptionEvents interruptions=mock(com.mediassistrover.backend.service.PatrolInterruptionEvents.class);
+    final MediaSessionService service=new MediaSessionService(properties,gateway,sessions,robots,incidents,staff,device,jobs,wakeups,events,clock,interruptions);
 
     MediaSession session() {
         var s=new MediaSession();s.setSessionId(UUID.randomUUID());
@@ -313,6 +314,31 @@ class MediaSessionTest {
     @Test void reconnectDeadlineIsNotExtendedByRepeatedReports() {
         var s=session();var started=instant.minusSeconds(20);s.setReconnectStartedAt(started);
         service.deviceState(s.getSessionId(),"RECONNECTING",null,device(s.getRobot()));assertEquals(started,s.getReconnectStartedAt());
+    }
+    @Test void acceptingAssistAddsScopedMediaHoldWithoutCancellingForegroundJob() {
+        var s=session();s.setState(MediaSession.State.RINGING);
+        when(events.isListening(s.getRobot().getRobotId())).thenReturn(true);
+        service.accept(s.getSessionId(),actor(s.getStaff()));
+        verify(interruptions).hold(s.getRobot().getRobotId(),"MEDIA",s.getSessionId());
+        verifyNoInteractions(jobs,wakeups);
+        assertEquals(MediaSession.State.CONNECTING,s.getState());
+    }
+    @Test void assistCredentialsWaitForConfirmedPatrolStop() {
+        var s=session();
+        var patrol=Job.builder().jobId(UUID.randomUUID()).status(JobStatus.SUSPENDING).build();
+        when(jobs.findByRobotRobotIdAndStatusIn(eq(s.getRobot().getRobotId()),anyCollection())).thenReturn(List.of(patrol));
+        var error=assertThrows(BusinessRuleException.class,()->service.staffToken(s.getSessionId(),actor(s.getStaff())));
+        assertEquals("MEDIA_ROBOT_STOP_PENDING",error.getMessage());
+        verify(gateway,never()).createRoom(any());verify(gateway,never()).join(any(),any(),anyBoolean());
+    }
+    @Test void endingCallReleasesOnlyMediaHoldAndLeavesOpenIncidentUnresolved() {
+        var s=session();
+        var incident=EmergencyIncident.builder().incidentId(UUID.randomUUID()).status(EmergencyIncidentStatus.OPEN).build();
+        s.setIncident(incident);
+        service.end(s.getSessionId(),"STAFF_ENDED",actor(s.getStaff()));
+        verify(interruptions).release(s.getRobot().getRobotId(),"MEDIA",s.getSessionId());
+        verify(interruptions,never()).release(any(),eq("INCIDENT"),any());
+        assertEquals(EmergencyIncidentStatus.OPEN,incident.getStatus());
     }
     LiveKitGateway signer() {
         properties.setEnabled(true);properties.setUrl("wss://media.example.org");properties.setApiKey("TEST_API");

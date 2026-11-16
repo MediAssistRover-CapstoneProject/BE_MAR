@@ -30,6 +30,8 @@ public class MqttOperationControlService {
     private final Clock clock;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
     private final StepExecutionPolicy executionPolicy;
+    private final JobSuspensionService suspension;
+    private final JobRepository jobs;
     private static final Set<JobStepStatus> TERMINAL=EnumSet.of(JobStepStatus.SUCCEEDED,JobStepStatus.FAILED,JobStepStatus.TIMED_OUT,JobStepStatus.CANCELLED);
     public boolean hasUnresolvedPiWork(List<JobStep> visits) {
         for(JobStep step:visits)if(!executionPolicy.isServer(step,step.getResolvedInputsJson())) {
@@ -47,10 +49,15 @@ public class MqttOperationControlService {
         var session=job.getRobot()==null?null:sessions.lock(job.getRobot().getRobotId()).orElse(null);
         var execute=commands.findByJobStepId(step.getJobStepId()).orElse(null);
         Instant now=Instant.now(clock);
-        boolean jobExpired=job.getStartedAt()!=null && !job.getStartedAt().plusSeconds(job.getWorkflow().getMaxDurationSec()).isAfter(now);
+        boolean jobExpired=job.getStartedAt()!=null && !suspension.deadline(job).isAfter(now);
         String reason=step.getInterruptionReason();
+        if("JOB_SUSPEND".equals(reason) && job.getStatus()==JobStatus.RUNNING && job.getCancelRequestedAt()==null
+                && TERMINAL.contains(step.getStatus()) && (execute==null || Boolean.TRUE.equals(execute.getPhysicalStopConfirmed())))
+            return false; // Settled old operation: the resumed job must reach continuation/graph selection.
+        if(job.getCancelRequestedAt()!=null && "JOB_SUSPEND".equals(reason)) {reason="JOB_CANCEL";step.setInterruptionReason(reason);}
         if(reason==null) {
             if(job.getCancelRequestedAt()!=null && !step.isMappingCleanup())reason="JOB_CANCEL";
+            else if(job.getStatus()==JobStatus.SUSPENDING)reason="JOB_SUSPEND";
             else if(jobExpired && !step.isMappingCleanup())reason="WORKFLOW_TIMEOUT";
             else if(!TERMINAL.contains(step.getStatus()) && (step.getStartedAt()!=null && !step.getStartedAt().plusSeconds(step.getTimeoutSecSnapshot()).isAfter(now)
                     || execute!=null && "ACKNOWLEDGED".equals(execute.getState()) && !execute.getExpiresAt().isAfter(now)))reason="STEP_TIMEOUT";
@@ -63,7 +70,7 @@ public class MqttOperationControlService {
         }
         if(execute==null || execute.getSendAttempts()==0) {
             if(execute!=null) {execute.setState("ABANDONED");execute.setPhysicalStopConfirmed(true);}
-            step.setStatus("JOB_CANCEL".equals(reason)?JobStepStatus.CANCELLED:JobStepStatus.TIMED_OUT);step.setEndedAt(now);step.setErrorCode("BE_"+reason+"_BEFORE_PUBLISH");
+            step.setStatus(Set.of("JOB_CANCEL","JOB_SUSPEND").contains(reason)?JobStepStatus.CANCELLED:JobStepStatus.TIMED_OUT);step.setEndedAt(now);step.setErrorCode("BE_"+reason+"_BEFORE_PUBLISH");
             completeStopped(job,step,execute,reason);return !"STEP_TIMEOUT".equals(reason);
         }
         var cancel=commands.findByJobStepIdAndCommandType(step.getJobStepId(),"CANCEL_STEP").orElse(null);
@@ -95,6 +102,14 @@ public class MqttOperationControlService {
         if(execute!=null && !Set.of("ABANDONED","RESOLVED_BY_STAFF").contains(execute.getState()))execute.setState("COMPLETED");
         // An existing recovery decision is never silently undone by late ACK/result.
         if(job.getStatus()==JobStatus.RECOVERY_REQUIRED)return;
+        boolean selected=job.getSelectedJobStep()!=null && job.getSelectedJobStep().getJobStepId().equals(step.getJobStepId());
+        if("JOB_SUSPEND".equals(reason) && selected && job.getCancelRequestedAt()!=null)reason="JOB_CANCEL";
+        if("JOB_SUSPEND".equals(reason)) {
+            // Late evidence for an older resumed visit must never suspend the current operation again.
+            if(job.getStatus()==JobStatus.SUSPENDING && job.getSelectedJobStep()!=null
+                    && job.getSelectedJobStep().getJobStepId().equals(step.getJobStepId()))suspension.settled(job);
+            return;
+        }
         if("JOB_CANCEL".equals(reason) || "WORKFLOW_TIMEOUT".equals(reason)) {
             if(mapping.open(job.getJobId())) {mapping.deferTerminal(job,"JOB_CANCEL".equals(reason)?TerminalStatus.CANCELLED:TerminalStatus.FAILED);updates.publishEvent(new RuntimeChanged(job.getJobId()));return;}
             Instant now=Instant.now(clock);JobStatus status="JOB_CANCEL".equals(reason)?JobStatus.CANCELLED:JobStatus.FAILED;
@@ -108,7 +123,10 @@ public class MqttOperationControlService {
                 if(task.getStartedAt()==null)task.setStatus(JobTaskStatus.NOT_VISITED);
                 else {task.setStatus(status==JobStatus.CANCELLED?JobTaskStatus.CANCELLED:JobTaskStatus.FAILED);task.setEndedAt(now);}
             }
-            if(job.getRobot()!=null && job.getRobot().getStatus()==RobotStatus.BUSY)job.getRobot().setStatus(RobotStatus.IDLE);
+            job.setResumeRequested(false);
+            if(job.getRobot()!=null && job.getRobot().getStatus()==RobotStatus.BUSY
+                    && jobs.findByRobotRobotIdAndStatusIn(job.getRobot().getRobotId(),JobOccupancyPolicy.EXECUTING).stream()
+                    .noneMatch(other->!other.getJobId().equals(job.getJobId())))job.getRobot().setStatus(RobotStatus.IDLE);
             record(job,step,"BE_JOB_"+status.name(),wire.object().put("reason",reason));
         }
         wakeups.request(job);updates.publishEvent(new RuntimeChanged(job.getJobId()));

@@ -56,6 +56,7 @@ public class VoiceServiceImpl implements VoiceService {
     private final Clock clock;
     private final MediaFileValidator mediaValidator;
     private final S3ObjectStorageService storage;
+    private final com.mediassistrover.backend.service.PatrolInterruptionEvents patrolInterruptions;
 
     @Override
     @Transactional
@@ -65,6 +66,8 @@ public class VoiceServiceImpl implements VoiceService {
         VoiceInteraction existing = interactionRepository.findById(envelope.messageId()).orElse(null);
         if (existing != null) {
             ensureRobot(existing, robot);
+            if (existing.getStatus() == VoiceInteractionStatus.ACTIVE)
+                patrolInterruptions.hold(robot.getRobotId(), "VOICE", existing.getVoiceInteractionId());
             return ack(envelope, robot, true);
         }
         InteractionStartPayload payload = envelope.payload();
@@ -76,6 +79,7 @@ public class VoiceServiceImpl implements VoiceService {
                 .status(VoiceInteractionStatus.ACTIVE)
                 .startedAt(payload.startedAt())
                 .build());
+        patrolInterruptions.hold(robot.getRobotId(), "VOICE", envelope.messageId());
         return ack(envelope, robot, false);
     }
 
@@ -94,6 +98,7 @@ public class VoiceServiceImpl implements VoiceService {
         }
         if (interaction.getStatus() != VoiceInteractionStatus.ACTIVE) {
             if (interaction.getStatus() == payload.status()) {
+                patrolInterruptions.release(robot.getRobotId(), "VOICE", interactionId);
                 return ack(envelope, robot, true);
             }
             throw new ConflictException("Voice interaction is already terminal with status " + interaction.getStatus());
@@ -114,6 +119,9 @@ public class VoiceServiceImpl implements VoiceService {
         interaction.setDetectedIntent(trimToNull(payload.detectedIntent()));
         interaction.setTranscriptSummary(trimToNull(payload.transcriptSummary()));
         if(requestedAudio!=null)interaction.setAudioUri(requestedAudio);
+        // Completion is the device's conversation/playback completion boundary.
+        // Release only this interaction; SOS/media/job holds remain independent.
+        patrolInterruptions.release(robot.getRobotId(), "VOICE", interactionId);
         return ack(envelope, robot, false);
     }
 

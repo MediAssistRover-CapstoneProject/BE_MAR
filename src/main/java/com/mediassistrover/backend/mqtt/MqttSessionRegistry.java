@@ -36,7 +36,7 @@ public class MqttSessionRegistry {
     private final org.springframework.context.ApplicationEventPublisher applicationEvents;
     private final com.mediassistrover.backend.service.NavigationSessionService navigationSessions;
     private final com.mediassistrover.backend.mapping.MappingCompletionService mappingCompletion;
-    private static final List<JobStatus> OCCUPIED=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
+    private static final List<JobStatus> OCCUPIED=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.SUSPENDING,JobStatus.RECOVERY_REQUIRED);
 
     public boolean owned(RobotMqttSession session) {
         UUID currentConnection=connection.connectionId();
@@ -169,7 +169,7 @@ public class MqttSessionRegistry {
             }
         }
         RobotStatus previous=robot.getStatus();
-        boolean held=active.stream().anyMatch(j->Set.of(JobStatus.RUNNING,JobStatus.ACCEPTED).contains(j.getStatus()));
+        boolean held=active.stream().anyMatch(j->com.mediassistrover.backend.service.JobOccupancyPolicy.EXECUTING.contains(j.getStatus()));
         boolean recovery=active.stream().anyMatch(j->j.getStatus()==JobStatus.RECOVERY_REQUIRED);
         RobotStatus next=recovery || "ERROR".equals(p.path("status").asText())?RobotStatus.ERROR:
                 held || "BUSY".equals(p.path("status").asText()) || mappingOpen?RobotStatus.BUSY:RobotStatus.IDLE;

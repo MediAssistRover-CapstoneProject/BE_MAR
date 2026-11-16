@@ -16,7 +16,7 @@ import java.util.*;
 
 @Service @RequiredArgsConstructor @Transactional @lombok.extern.slf4j.Slf4j
 public class JobExecutionServiceImpl implements JobExecutionService {
-    private static final Set<JobStatus> ACTIVE=EnumSet.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
+    private static final Set<JobStatus> ACTIVE=com.mediassistrover.backend.service.JobOccupancyPolicy.MOTION_OWNERS;
     private static final Set<ServiceRequestType> ROBOT_PINNED=EnumSet.of(ServiceRequestType.CROWD_MONITORING,
             ServiceRequestType.FALL_DETECTION_RESPONSE,ServiceRequestType.RESTRICTED_AREA_MONITORING,
             ServiceRequestType.AUTO_CHARGING,ServiceRequestType.NAVIGATION_RECOVERY,ServiceRequestType.ROBOT_STARTUP_STANDBY);
@@ -37,6 +37,7 @@ public class JobExecutionServiceImpl implements JobExecutionService {
     private final com.mediassistrover.backend.mqtt.MqttRolloutService rollout;
     private final com.mediassistrover.backend.service.NavigationSessionService navigationSessions;
     private final PatrolWorkflowService patrol;
+    private final com.mediassistrover.backend.service.RobotTaskArbitrationService arbitration;
     @Override public Job createForTest(UUID workflowId,UUID robotId,UUID mapId,UUID sessionId,JsonNode input) {
         var policy=rollout.lockForRuntimeCreation();
         Workflow workflow=workflowRepository.findById(workflowId).orElseThrow(()->new ResourceNotFoundException("Workflow not found"));
@@ -112,7 +113,9 @@ public class JobExecutionServiceImpl implements JobExecutionService {
         boolean sessionPinned=request.getRequestDataJson().hasNonNull("navigation_session_id");
         if(sessionPinned){if(request.getRequestedRobot()==null||map==null)throw new BusinessRuleException("Navigation session requires its selected robot/map");
             navigationSessions.requireReadyContext(request.getRequestedRobot().getRobotId(),UUID.fromString(request.getRequestDataJson().path("navigation_session_id").asText()),map.getMapId());}
-        Robot robot=ROBOT_PINNED.contains(request.getRequestType())||sessionPinned?selectPinnedRobot(request.getRequestedRobot()):selectRobot(request.getRequestedRobot(),map,workflow);JsonNode input=inputSnapshots.forRequest(workflow,request);Job job=create(workflow,request,null,robot,map,request.getPriority(),input,null,null);job.setRecoveryOfJob(recoverySource(request));return job;}
+        Robot robot=selectRequestRobot(request,map,workflow,ROBOT_PINNED.contains(request.getRequestType())||sessionPinned
+                || request.getRequestType()==ServiceRequestType.EMERGENCY_SOS);
+        JsonNode input=inputSnapshots.forRequest(workflow,request);Job job=create(workflow,request,null,robot,map,request.getPriority(),input,null,null);job.setRecoveryOfJob(recoverySource(request));return job;}
     @Override public Job createForSchedule(Schedule schedule, Instant fireAt, JsonNode input) {
         var policy = rollout.lockForRuntimeCreation();
         if (jobRepository.existsByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(schedule.getScheduleId(), fireAt, "DEFAULT")) {
@@ -141,7 +144,7 @@ public class JobExecutionServiceImpl implements JobExecutionService {
         if (workflow.getStatus() != WorkflowStatus.PUBLISHED || !workflow.isAcceptsNewJobs()) {
             throw new BusinessRuleException("Schedule workflow does not accept new jobs");
         }
-        Robot robot = selectRobot(schedule.getRobot(), null, workflow);
+        Robot robot = selectRobot(schedule.getRobot(), null, workflow, schedule.getPriority());
         return create(workflow, null, schedule, robot, robot == null ? null : robot.getCurrentMap(),
                 schedule.getPriority(), inputSnapshots.forWorkflow(workflow, input), fireAt, "DEFAULT");
     }
@@ -151,14 +154,36 @@ public class JobExecutionServiceImpl implements JobExecutionService {
         readiness.requireReady(workflow);if(robot!=null && workflow.getSchemaVersion()==2 && mqttProperties.manages(robot.getRobotId()))throw new BusinessRuleException("Enrolled MQTT robots require a schema 3 workflow; do not switch active Job transport");Instant now=Instant.now(clock);Job job=jobRepository.saveAndFlush(Job.builder().workflow(workflow).serviceRequest(request).schedule(schedule).robot(robot).map(map).assignedStaffAccount(request!=null&&request.getRequestedByAccount()!=null&&request.getRequestedByAccount().getRole()==Role.STAFF?request.getRequestedByAccount():null).jobCode("JOB-"+UUID.randomUUID().toString().replace("-","").substring(0,20).toUpperCase(Locale.ROOT)).status(JobStatus.QUEUED).priority(priority).inputJson(input).contextJson(objectMapper.createObjectNode()).workflowHash(workflow.getDefinitionHash()).protocolVersion(1).schemaVersion(workflow.getSchemaVersion()).graphVersion(workflow.getGraphVersion()).beOrchestrated(workflow.getSchemaVersion()==3).scheduleFireAt(fireAt).scheduleItemKey(itemKey).dispatchCommandId(robot==null||workflow.getSchemaVersion()==3?null:UUID.randomUUID()).dispatchExpiresAt(robot==null||workflow.getSchemaVersion()==3?null:now.plusSeconds(60)).queuedAt(now).scheduledAt(fireAt).build());
         Map<UUID,JobTask> runtimeTasks=new HashMap<>();for(Task task:taskRepository.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId())){JobTask jt=jobTaskRepository.save(JobTask.builder().job(job).task(task).sequenceNo(task.getSequenceNo()).taskNameSnapshot(task.getTaskName()).configSnapshotJson(copy(task.getConfigJson())).status(JobTaskStatus.PENDING).build());runtimeTasks.put(task.getTaskId(),jt);}jobTaskRepository.flush();
         long seq=0;for(Step step:stepRepository.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId())){if(!step.isEnabled())continue;jobStepRepository.save(JobStep.builder().jobTask(runtimeTasks.get(step.getTask().getTaskId())).step(step).visitNo(1).executionSequenceNo(++seq).stepCodeSnapshot(step.getStepCode()).stepTypeSnapshot(step.getStepType().getStepTypeCode()).resolvedInputsJson(objectMapper.createObjectNode()).status(JobStepStatus.PENDING).attemptNo(1).operationKey(job.getJobId()+":"+step.getStepCode()+":1").timeoutSecSnapshot(step.getTimeoutSec()).build());}
+        if(com.mediassistrover.backend.service.JobOccupancyPolicy.patrol(job)) {
+            job.setPatrolRepeatCount(input.path("patrol_repeat_count").asInt(1));job.setPatrolRound(1);
+        }
         event(job,"JOB_QUEUED",null,JobStatus.QUEUED.name(),objectMapper.createObjectNode());deliveryEvents.publishEvent(new com.mediassistrover.backend.service.DeliveryNoticeService.Created(job));wakeups.request(job);return job;
+    }
+    private Robot selectRequestRobot(ServiceRequest request, FacilityMap map, Workflow workflow, boolean pinned) {
+        Robot preferred=request.getRequestedRobot();
+        if(preferred!=null) {
+            Robot locked=robotRepository.findByIdForUpdate(preferred.getRobotId()).orElseThrow(()->new ResourceNotFoundException("Robot not found"));
+            if(!readiness.acceptsRobot(workflow,locked))throw new BusinessRuleException("Selected robot does not support this workflow transport");
+            boolean sameMap=map==null || locked.getCurrentMap()!=null && map.getMapId().equals(locked.getCurrentMap().getMapId());
+            if(!sameMap && pinned)throw new BusinessRuleException("Requested robot is not on the requested map");
+            if(sameMap && (locked.getStatus()==RobotStatus.IDLE && jobRepository.findByRobotRobotIdAndStatusIn(locked.getRobotId(),ACTIVE).isEmpty()
+                    || workflow.getSchemaVersion()==3 && arbitration.yieldingPatrol(locked,request.getPriority())))return locked;
+            if(pinned)throw new BusinessRuleException("Requested robot is busy with a non-interruptible task");
+        }
+        if(pinned)throw new BusinessRuleException("Operational request requires a robot");
+        return selectRobot(preferred,map,workflow);
     }
     private Workflow workflowFor(ServiceRequest request,com.mediassistrover.backend.mqtt.MqttRolloutService.State policy){ServiceRequestType type=request.getRequestType();String serviceType=switch(type){case INFORMATION->"INFORMATION";case NAVIGATION->"NAVIGATION";case ESCORT->"ESCORT";case DELIVERY->"DELIVERY";case EMERGENCY_SOS->"EMERGENCY";case CROWD_MONITORING->"CROWD_MONITORING";case FALL_DETECTION_RESPONSE->"FALL_DETECTION_RESPONSE";case RESTRICTED_AREA_MONITORING->"RESTRICTED_AREA_MONITORING";case AUTO_CHARGING->"AUTO_CHARGING";case NAVIGATION_RECOVERY->"NAVIGATION_RECOVERY";case ROBOT_STARTUP_STANDBY->"ROBOT_STARTUP_STANDBY";};Workflow selected=type==ServiceRequestType.NAVIGATION?navigationRepository.findById(request.getServiceRequestId()).map(NavigationRequest::getWorkflow).orElse(null):null;if(selected!=null){if(selected.getStatus()!=WorkflowStatus.PUBLISHED||!selected.isAcceptsNewJobs()||!serviceType.equalsIgnoreCase(selected.getServiceType()))throw new BusinessRuleException("Selected workflow is not compatible with request type "+type);return selected;}return (policy.mode()==com.mediassistrover.backend.mqtt.MqttRolloutService.Mode.LEGACY_COMPATIBLE?workflowRepository.findFirstByServiceTypeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(serviceType,WorkflowStatus.PUBLISHED):workflowRepository.findFirstByServiceTypeIgnoreCaseAndStatusAndAcceptsNewJobsTrueAndSchemaVersionOrderByVersionNoDesc(serviceType,WorkflowStatus.PUBLISHED,3)).orElseThrow(()->new BusinessRuleException("No published workflow accepts request type "+type));}
     private Robot selectRobot(Robot preferred,FacilityMap map,Workflow workflow){
+        return selectRobot(preferred,map,workflow,-1);
+    }
+    private Robot selectRobot(Robot preferred,FacilityMap map,Workflow workflow,int priority){
         if(preferred!=null){
             Robot locked=robotRepository.findByIdForUpdate(preferred.getRobotId()).orElseThrow(()->new ResourceNotFoundException("Robot not found: "+preferred.getRobotId()));
             if(!readiness.acceptsRobot(workflow,locked))throw new BusinessRuleException("Selected robot does not support this workflow transport");
             if(locked.getStatus()==RobotStatus.IDLE && (map==null || locked.getCurrentMap()!=null && map.getMapId().equals(locked.getCurrentMap().getMapId())) && jobRepository.findByRobotRobotIdAndStatusIn(locked.getRobotId(),ACTIVE).isEmpty())return locked;
+            if(workflow.getSchemaVersion()==3 && priority>=0 && (map==null || locked.getCurrentMap()!=null && map.getMapId().equals(locked.getCurrentMap().getMapId()))
+                    && arbitration.yieldingPatrol(locked,priority))return locked;
         }
         List<Robot> candidates=map==null?robotRepository.findByStatusOrderByRobotCodeAsc(RobotStatus.IDLE):robotRepository.findByStatusAndCurrentMapMapIdOrderByRobotCodeAsc(RobotStatus.IDLE,map.getMapId());
         return candidates.stream().filter(r->readiness.acceptsRobot(workflow,r))

@@ -44,6 +44,15 @@ public class Job {
     @Column(name="started_at") private Instant startedAt;
     @Column(name="cancel_command_id",columnDefinition="BINARY(16)") private UUID cancelCommandId;
     @Column(name="cancel_requested_at") private Instant cancelRequestedAt;
+    @Column(name="suspend_requested_at") private Instant suspendRequestedAt;
+    @Column(name="suspended_at") private Instant suspendedAt;
+    @Column(name="suspended_duration_ms",nullable=false) private long suspendedDurationMs;
+    @Column(name="resume_requested",nullable=false) private boolean resumeRequested;
+    @Column(name="suspended_map_asset_hash",length=64) private String suspendedMapAssetHash;
+    @Builder.Default @Column(name="patrol_repeat_count",nullable=false) private int patrolRepeatCount=1;
+    @Builder.Default @Column(name="patrol_round",nullable=false) private int patrolRound=1;
+    @Column(name="patrol_round_started_at") private Instant patrolRoundStartedAt;
+    @Column(name="patrol_round_suspended_base_ms",nullable=false) private long patrolRoundSuspendedBaseMs;
     @Column(name="ended_at") private Instant endedAt;
     @Column(name="error_code",length=100) private String errorCode;
     @Column(name="failure_reason",columnDefinition="TEXT") private String failureReason;

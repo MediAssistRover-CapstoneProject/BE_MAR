@@ -27,7 +27,7 @@ public class MqttInboxProcessor {
     @Transactional(isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public MqttPublicationPlans.Publication process(UUID id) {
         RobotMqttInbox initial=inbox.findById(id).orElseThrow();MqttWire.Envelope e=wire.envelope((com.fasterxml.jackson.databind.node.ObjectNode)initial.getRawEnvelope());
-        List<Job> active=jobs.lockRobotJobs(e.robotId(),List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED));
+        List<Job> active=jobs.lockRobotJobs(e.robotId(),List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.SUSPENDING,JobStatus.RECOVERY_REQUIRED));
         UUID boundJob=e.jobId();
         if(boundJob==null && "COMMAND_ACK".equals(e.messageType())) {
             var command=commands.findById(UUID.fromString(e.payload().path("commandId").asText())).orElse(null);
@@ -90,7 +90,7 @@ public class MqttInboxProcessor {
     @Transactional(isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public MqttPublicationPlans.Publication reject(UUID id,String reason) {
         RobotMqttInbox initial=inbox.findById(id).orElseThrow();
-        List<Job> active=jobs.lockRobotJobs(initial.getRobotId(),List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED));
+        List<Job> active=jobs.lockRobotJobs(initial.getRobotId(),List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.SUSPENDING,JobStatus.RECOVERY_REQUIRED));
         robots.findByIdForUpdate(initial.getRobotId()).orElseThrow();
         RobotMqttSession session=sessions.lock(initial.getRobotId()).orElse(null);
         RobotMqttInbox row=initial;entityManager.refresh(row,jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
@@ -110,7 +110,7 @@ public class MqttInboxProcessor {
     /** Preserve the original receipt, but stop graph advancement after conflicting producer identity. */
     @Transactional(isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public void protocolConflict(UUID robotId) {
-        List<Job> active=jobs.lockRobotJobs(robotId,List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED));
+        List<Job> active=jobs.lockRobotJobs(robotId,List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.SUSPENDING,JobStatus.RECOVERY_REQUIRED));
         robots.findByIdForUpdate(robotId).orElseThrow();sessions.lock(robotId);
         for(Job job:active)safety.recovery(job,"MQTT identity reused with conflicting business content");
     }

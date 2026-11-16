@@ -32,7 +32,7 @@ public class NavigationProfileService {
     private final OrchestrationWorkService work;
     private final Clock clock;
     private final NavigationSessionService navigationSessions;
-    private static final List<JobStatus> HELD=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED);
+    private static final List<JobStatus> HELD=List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.SUSPENDING,JobStatus.RECOVERY_REQUIRED);
     private static final List<String> IN_FLIGHT=List.of("PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED","RECOVERY_REQUIRED");
     @Transactional(readOnly=true)
     public JsonNode zoneStatus(UUID robotId) {
