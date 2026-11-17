@@ -33,7 +33,12 @@ public class RobotFallEventService {
     public record Request(@NotNull UUID eventId, @NotNull UUID monitoringSessionId, @NotNull Instant detectedAt,
                           @NotNull @DecimalMin("0") @DecimalMax("1") BigDecimal confidence,
                           @NotBlank @Size(max = 100) String algorithm, @NotNull DetectionKind detectionKind,
-                          PatientLocation patientLocation) { }
+                          PatientLocation patientLocation, boolean visualReview) {
+        public Request(UUID eventId, UUID monitoringSessionId, Instant detectedAt, BigDecimal confidence,
+                       String algorithm, DetectionKind detectionKind, PatientLocation patientLocation) {
+            this(eventId, monitoringSessionId, detectedAt, confidence, algorithm, detectionKind, patientLocation, false);
+        }
+    }
     public record Result(UUID detectionEventId, UUID incidentId, boolean duplicate) { }
     private final DeviceResourceScopePolicy scope;
     private final RobotRepository robots;
@@ -63,6 +68,7 @@ public class RobotFallEventService {
                 .put("monitoring_session_id", request.monitoringSessionId().toString())
                 .put("detected_at", request.detectedAt().toString()).put("confidence", request.confidence())
                 .put("algorithm", request.algorithm()).put("detection_kind", request.detectionKind().name());
+        if (request.visualReview()) payload.put("visual_review", true);
         if (request.patientLocation() != null) payload.set("patient_location_candidate", PatrolFallEventService.patientPayload(request.patientLocation(), wire));
         var replay = receipts.duplicateContinuousFall(request.eventId(), robot, payload);
         if (replay.isPresent()) {
@@ -81,7 +87,9 @@ public class RobotFallEventService {
         var map = robot.getCurrentMap();
         if (map == null) throw new BusinessRuleException("Fall observation requires an assigned robot map");
 
-        // A map projection is optional: unknown location must not suppress a real fall transition.
+        boolean personOnFloor = request.detectionKind() == DetectionKind.PERSON_ON_FLOOR;
+        boolean cameraOnly = personOnFloor && request.visualReview() && request.patientLocation() == null;
+        // A camera-only report may still have a verified robot viewpoint, independent of the patient position.
         var session = sessions.findById(robot.getRobotId()).orElse(null);
         PatrolFallEventService.Viewpoint viewpoint = null;
         PatientLocation patient = null;
@@ -90,13 +98,14 @@ public class RobotFallEventService {
             try {
                 navigation.requireReadyContext(robot.getRobotId(), session.getSessionId(), map.getMapId());
                 viewpoint = locationEvidence.viewpoint(session, request.detectedAt());
-                patient = PatrolFallEventService.verifiedPatientLocation(request.detectedAt(), request.patientLocation(),
-                        session, map, viewpoint);
+                if (request.patientLocation() != null)
+                    patient = PatrolFallEventService.verifiedPatientLocation(request.detectedAt(), request.patientLocation(),
+                            session, map, viewpoint);
             } catch (BusinessRuleException unavailable) {
                 // The suspicion still reaches staff; invalid map data is not presented as a patient location.
             }
         }
-        PatrolFallEventService.requireFloorEvidence(request.detectionKind(), patient);
+        if (!cameraOnly) PatrolFallEventService.requireFloorEvidence(request.detectionKind(), patient);
 
         var previous = incidents.findFirstByRobotRobotIdAndIncidentTypeAndArchivedAtIsNullOrderByOccurredAtDesc(
                 robot.getRobotId(), EmergencyIncident.SUSPECTED_FALL_TYPE).orElse(null);
@@ -110,6 +119,7 @@ public class RobotFallEventService {
         if (detections.existsById(request.eventId())) throw new ConflictException("Detection event ID already exists");
         var data = payload.deepCopy().put("staff_review_required", true);
         data.remove("patient_location_candidate");
+        if (personOnFloor) data.put("floor_evidence", cameraOnly ? "CAMERA_ONLY" : "RGBD_VERIFIED");
         data.put("patient_location_status", patient != null ? "AVAILABLE"
                 : request.patientLocation() == null ? "UNAVAILABLE" : "REJECTED");
         if (viewpoint != null) data.putObject("robot_viewpoint").put("x_m", viewpoint.x()).put("y_m", viewpoint.y())
@@ -134,8 +144,9 @@ public class RobotFallEventService {
                 .confidenceScore(request.confidence().setScale(4, RoundingMode.HALF_UP))
                 .xM(x).yM(y).locationBasis(basis).modelVersion(request.algorithm())
                 .eventPayloadJson(data.deepCopy()).detectedAt(request.detectedAt()).receivedAt(now).build());
-        String description = request.detectionKind() == DetectionKind.PERSON_ON_FLOOR
-                ? "Robot phát hiện người có tư thế nằm gần sàn. Vui lòng xác minh qua camera."
+        String description = cameraOnly
+                ? "Camera robot phát hiện người có tư thế nghi nằm trên sàn. Vui lòng xác minh qua camera."
+                : personOnFloor ? "Robot phát hiện người có tư thế nằm gần sàn. Vui lòng xác minh qua camera."
                 : "Robot phát hiện người nghi té ngã. Vui lòng xác minh qua camera.";
         var incident = emergencies.createForStaffReview(new EmergencyFlowService.Command(
                 "CONTINUOUS_FALL:" + request.eventId(), robot, map, null, detection,

@@ -106,6 +106,45 @@ class VisionDetectionIngestionServiceTest {
     }
 
     @Test
+    void optedInCameraOnlyFloorObservationCreatesStaffReviewWithoutCoordinates() {
+        var f = new ContinuousFixture(now);
+        var request = new RobotFallEventService.Request(UUID.randomUUID(), UUID.randomUUID(), now,
+                new java.math.BigDecimal(".9"), "test-model", PatrolFallEventService.DetectionKind.PERSON_ON_FLOOR,
+                null, true);
+        assertFalse(f.service.record(request, f.device, null).duplicate());
+        verify(f.detections).saveAndFlush(argThat(detection -> detection.getLocationBasis() == DetectionLocationBasis.UNKNOWN
+                && detection.getXM() == null && detection.getYM() == null
+                && detection.getEventPayloadJson().path("floor_evidence").asText().equals("CAMERA_ONLY")));
+        verify(f.emergencies).createForStaffReview(argThat(command -> command.xM() == null && command.yM() == null
+                && !command.data().has("robot_viewpoint") && !command.data().has("patient_location")
+                && command.data().path("patient_location_status").asText().equals("UNAVAILABLE")
+                && command.data().path("floor_evidence").asText().equals("CAMERA_ONLY")));
+        verify(f.emergencies, never()).create(any());
+        verifyNoInteractions(f.navigation);
+    }
+
+    @Test
+    void cameraOnlyFloorObservationRetainsVerifiedRobotViewpoint() {
+        var f = new ContinuousFixture(now);
+        var session = new RobotNavigationSession();
+        session.setSessionId(UUID.randomUUID());
+        session.setMap(f.map);
+        session.setMapAssetHash(f.map.getAssetHash());
+        session.setExpiresAt(now.plusSeconds(3600));
+        when(f.sessions.findById(f.robotId)).thenReturn(Optional.of(session));
+        when(f.locationEvidence.viewpoint(session, now)).thenReturn(
+                new PatrolFallEventService.Viewpoint(java.math.BigDecimal.ONE, java.math.BigDecimal.ONE, now));
+        var request = new RobotFallEventService.Request(UUID.randomUUID(), UUID.randomUUID(), now,
+                new java.math.BigDecimal(".9"), "test-model", PatrolFallEventService.DetectionKind.PERSON_ON_FLOOR,
+                null, true);
+        f.service.record(request, f.device, null);
+        verify(f.emergencies).createForStaffReview(argThat(command -> command.xM() == null && command.yM() == null
+                && !command.data().has("patient_location")
+                && command.data().path("robot_viewpoint").path("x_m").asDouble() == 1.0
+                && command.data().path("robot_viewpoint").path("captured_at").asText().equals(now.toString())));
+    }
+
+    @Test
     void continuousSuspicionCoalescesAnActiveIncidentInsteadOfOpeningAnotherCall() {
         var f = new ContinuousFixture(now);
         var detectionId = UUID.randomUUID();
@@ -170,6 +209,7 @@ class VisionDetectionIngestionServiceTest {
         assertFalse(f.service.record(f.request(PatrolFallEventService.DetectionKind.PERSON_ON_FLOOR, location), f.device, null).duplicate());
         verify(f.emergencies).createForStaffReview(argThat(command ->
                 command.data().path("detection_kind").asText().equals("PERSON_ON_FLOOR")
+                && command.data().path("floor_evidence").asText().equals("RGBD_VERIFIED")
                 && command.data().path("patient_location").path("floor_height_m").asDouble() == .2
                 && command.description().contains("nằm gần sàn")));
         verify(f.emergencies, never()).create(any());

@@ -85,9 +85,11 @@ public class MediaSessionService {
             var s=old.get();
             if(s.getStaff()!=null && s.getStaff().getAccountId().equals(staff.getAccountId()) && s.getMode()==mode
                     && Objects.equals(incidentId,s.getIncident()==null?null:s.getIncident().getIncidentId()))return view(s);
-            throw new ConflictException("ROBOT_MEDIA_SESSION_ALREADY_OPEN");
+            if(!canPreemptManualMonitorForFall(incident,s))
+                throw new ConflictException("ROBOT_MEDIA_SESSION_ALREADY_OPEN");
         }
         requireDeviceListener(robotId);
+        old.ifPresent(s -> endPreemptedMonitor(s,"FALL_REVIEW_PREEMPTED_MONITOR"));
         var s=newSession(robot,incident,mode);s.setStaff(staff);s.setStaffTokenVersion(staff.getTokenVersion());s.setAcceptedAt(now());s.setState(CONNECTING);
         sessions.saveAndFlush(s);stopForAssist(s);notifyAfterCommit(s);return view(s);
     }
@@ -104,11 +106,24 @@ public class MediaSessionService {
             if(existing.getMode()==mode && existing.getIncident()!=null
                     && Objects.equals(existing.getIncident().getIncidentId(),incident.getIncidentId()))
                 return existing.getSessionId();
-            if(mode==MediaSession.Mode.MONITOR || existing.getMode()==MediaSession.Mode.ASSIST)return null;
-            finish(existing,ENDED,"SOS_PREEMPTED_MONITOR");sessions.flush();
+            if(mode==MediaSession.Mode.MONITOR) {
+                if(!canPreemptManualMonitorForFall(incident,existing))return null;
+                endPreemptedMonitor(existing,"FALL_REVIEW_PREEMPTED_MONITOR");
+            } else {
+                if(existing.getMode()==MediaSession.Mode.ASSIST)return null;
+                endPreemptedMonitor(existing,"SOS_PREEMPTED_MONITOR");
+            }
         }
         var s=newSession(robot,incident,mode);
         sessions.saveAndFlush(s);stopForAssist(s);notifyAfterCommit(s);return s.getSessionId();
+    }
+    private boolean canPreemptManualMonitorForFall(EmergencyIncident incident, MediaSession existing) {
+        return incident!=null && incident.isSuspectedFall() && incident.getSosResponder()!=null
+                && existing.getMode()==MediaSession.Mode.MONITOR && existing.getIncident()==null;
+    }
+    private void endPreemptedMonitor(MediaSession existing,String reason) {
+        finish(existing,ENDED,reason);
+        sessions.flush();
     }
     public View accept(UUID id,AccountPrincipal actor) {
         livekit.ready();var staff=staffScope.requireCurrentStaffOrAdmin(actor);

@@ -4,6 +4,21 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class SosRouteGridTest {
+    @Test void blockedDestinationUsesAFreeCellOnTheObservedSideWithinRange() {
+        var grid = new SosRouteGrid(7, 1, .25, 0, 0, 0,
+                new boolean[]{true, true, true, false, true, true, true});
+        var target = new SosRouteGrid.Point(.90, .125);
+        var observation = new SosRouteGrid.Point(.375, .125);
+        var otherSide = new SosRouteGrid.Point(1.375, .125);
+
+        assertTrue(grid.hasClearView(otherSide, target));
+        assertTrue(grid.shortestToVisibleNeighbor(List.of(otherSide), target, observation, .75).isEmpty());
+        assertTrue(grid.shortestToVisibleNeighbor(List.of(observation), target, observation, .25).isEmpty());
+        var route = grid.shortestToVisibleNeighbor(List.of(observation), target, observation, .75).orElseThrow();
+        assertEquals(new SosRouteGrid.Point(.625, .125), route.points().getLast());
+        assertTrue(route.points().stream().allMatch(grid::walkable));
+    }
+
     @Test void shortestChoosesNearestOriginAndAvoidsBlockedCorners() {
         var grid = new SosRouteGrid(3,3,.1,0,0,0,
                 new boolean[]{true,false,true, true,true,true, true,true,true});

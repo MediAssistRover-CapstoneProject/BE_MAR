@@ -64,9 +64,22 @@ class SosResponseRouteServiceTest {
         assertEquals("ROBOT_VIEWPOINT", fallRoute.destinationBasis());
         assertEquals(observedAt, fallRoute.destinationCapturedAt());
 
+        // Continuous observations can carry a verified robot viewpoint without patient coordinates.
+        evidence.put("source", "CONTINUOUS_VISION_AI");
+        incident.getDetectionEvent().setLocationBasis(DetectionLocationBasis.UNKNOWN);
+        incident.setXM(null);
+        incident.setYM(null);
+        var observedRoute = service.route(incident.getIncidentId(), null);
+        assertEquals("FOUND", observedRoute.status());
+        assertEquals("ROBOT_VIEWPOINT", observedRoute.destinationBasis());
+        assertEquals(observedRoute.robotObservationLocation(), observedRoute.destination());
+        assertNull(observedRoute.patientLocation());
+
         viewpoint.put("captured_at", observedAt.minusSeconds(5).toString());
         assertEquals("FALL_VIEWPOINT_UNAVAILABLE", service.route(incident.getIncidentId(), null).reason());
         viewpoint.put("captured_at", observedAt.toString()).put("map_asset_hash", "changed");
+        assertNull(service.route(incident.getIncidentId(), null).destination());
+        viewpoint.remove("map_asset_hash");
         assertNull(service.route(incident.getIncidentId(), null).destination());
     }
 
@@ -111,6 +124,19 @@ class SosResponseRouteServiceTest {
         Arrays.fill(open, true);
         when(maps.responseRouteGrid(map.getMapId())).thenReturn(new SosRouteGrid(12, 1, .25, 0, 0, 0, open));
 
+        incident.setStatus(EmergencyIncidentStatus.OPEN);
+        var preview = service.preview(incident.getIncidentId(), null);
+        assertEquals("PREVIEW", preview.status());
+        assertEquals("PATIENT_RGBD", preview.destinationBasis());
+        assertEquals(215, preview.patientLocation().xCm(), 1e-9);
+        assertEquals(preview.patientLocation(), preview.destination());
+        assertTrue(preview.points().isEmpty());
+        assertNull(preview.origin());
+        assertNull(preview.robotApproach());
+        verifyNoInteractions(maps);
+        assertThrows(BusinessRuleException.class, () -> service.route(incident.getIncidentId(), null));
+        incident.setStatus(EmergencyIncidentStatus.IN_PROGRESS);
+
         var direct = service.route(incident.getIncidentId(), null);
         assertEquals("PATIENT_RGBD", direct.destinationBasis());
         assertEquals(215, direct.patientLocation().xCm(), 1e-9);
@@ -122,13 +148,20 @@ class SosResponseRouteServiceTest {
         assertEquals("PATIENT_RGBD", service.route(incident.getIncidentId(), null).destinationBasis());
 
         open[8] = false;
+        when(endpoints.findByMapMapIdOrderByEndpointCodeAsc(map.getMapId())).thenReturn(List.of());
         var nearby = service.route(incident.getIncidentId(), null);
-        assertEquals("PATIENT_RGBD_STANDOFF", nearby.destinationBasis());
-        assertEquals(65, nearby.destination().xCm(), 1e-9);
+        assertEquals("FOUND", nearby.status());
+        assertEquals("PATIENT_RGBD_NEARBY_WALKABLE", nearby.destinationBasis());
+        assertEquals(187.5, nearby.destination().xCm(), 1e-9);
+        assertEquals(nearby.destination(), nearby.points().getLast());
         assertEquals(215, nearby.patientLocation().xCm(), 1e-9);
-        open[4] = false;
+        assertNull(nearby.robotApproach());
+        when(endpoints.findByRoomRoomIdOrderByEndpointCodeAsc(room.getRoomId())).thenReturn(List.of(
+                Endpoint.builder().map(map).active(true).accessible(true)
+                        .xM(BigDecimal.valueOf(2.9)).yM(BigDecimal.valueOf(.10)).build()));
         var blocked = service.route(incident.getIncidentId(), null);
         assertEquals("UNAVAILABLE", blocked.status());
+        assertTrue(blocked.points().isEmpty());
         assertNull(blocked.robotApproach());
         assertEquals(215, blocked.patientLocation().xCm(), 1e-9);
 

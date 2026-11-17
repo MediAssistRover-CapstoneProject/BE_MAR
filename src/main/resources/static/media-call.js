@@ -3,7 +3,7 @@
 const $=id=>document.getElementById(id),sdk=window.LivekitClient;
 let room=null,current=null,refreshTimer=null,lastFrame=0,frameHandle=null;
 let accessToken='',signingIn=false,connecting=false,listPending=false;
-let patrolAlertsPending=false;
+let patrolAlertsPending=false,fallAlertsPending=false;
 let fallIncident=null,reviewPending=false;
 let aiOverlay=null,overlaySequence=0,overlayAt=0;
 // Sender and viewer clocks need not agree. Expire optional drawing only by
@@ -104,33 +104,52 @@ function buttons(){
   reviewButtons();
 }
 function liveVideo(){return !!room&&lastFrame>0&&performance.now()-lastFrame<3000;}
+function fallReviewVideo(){return current?.mode==='MONITOR'&&current.incidentId===fallIncident?.incidentId&&liveVideo();}
 function reviewButtons(){
-  $('confirmFall').disabled=reviewPending||connecting||!liveVideo();
-  $('confirmFall').hidden=fallIncident?.status==='IN_PROGRESS';
-  $('showResponseRoute').hidden=fallIncident?.status!=='IN_PROGRESS';
+  const pending=['OPEN','ACKNOWLEDGED'].includes(fallIncident?.status);
+  const handling=fallIncident?.status==='IN_PROGRESS';
+  $('confirmFall').disabled=reviewPending||connecting||!fallReviewVideo();
+  $('confirmFall').hidden=!pending;
+  $('showResponseRoute').hidden=!handling;
   $('showResponseRoute').disabled=reviewPending;
+  $('fallResolution').hidden=!pending&&!handling;
+  $('resolveFall').hidden=!handling;
+  $('dismissFall').hidden=!pending;
+  $('resolveFall').disabled=$('dismissFall').disabled=reviewPending||!$('fallResolutionNote').value.trim();
 }
 function clearReview(){
   fallIncident=null;
   $('fallReview').hidden=true;
   $('responseMap').hidden=true;
+  $('fallResolutionNote').value='';
   $('routeStatus').textContent='';
+}
+function selectFall(incident){
+  if(fallIncident?.incidentId!==incident.incidentId)clearReview();
+  fallIncident=incident;
+  $('fallReview').hidden=false;
+  $('fallReviewStatus').textContent=incident.status==='IN_PROGRESS'
+    ?'Đang xử lý. Cập nhật kết quả sau khi hỗ trợ xong.'
+    :'Quan sát camera trực tiếp trước khi xác nhận.';
+  reviewButtons();
 }
 async function loadReview(session){
   if(session.mode!=='MONITOR'||!session.incidentId)return;
   const incident=await api('/api/v1/emergency-incidents/'+session.incidentId);
   if(current?.sessionId!==session.sessionId||incident.robotId!==session.robotId||incident.incidentType!=='AI_SUSPECTED_FALL')return;
-  fallIncident=incident;
-  $('fallReview').hidden=false;
-  $('fallReviewStatus').textContent=incident.status==='IN_PROGRESS'?'Staff đã xác nhận.':'Quan sát camera trực tiếp trước khi xác nhận.';
-  reviewButtons();
+  selectFall(incident);
+  await drawResponseRoute(incident);
 }
 async function drawResponseRoute(incident){
-  const route=await api('/api/v1/emergency-incidents/'+incident.incidentId+'/response-route');
-  if(fallIncident?.incidentId!==incident.incidentId)return;
+  const kind=incident.status==='IN_PROGRESS'?'response-route':'location';
+  const route=await api('/api/v1/emergency-incidents/'+incident.incidentId+'/'+kind);
+  if(fallIncident!==incident)return;
+  const routeIssue=route.reason==='ORIGIN_ENDPOINT_MISSING_ON_MAP'?'Phòng SOS cần một điểm xuất phát trên bản đồ này.'
+    :route.reason==='FALL_VIEWPOINT_UNAVAILABLE'?'Chưa có tọa độ RGB-D hoặc pose hợp lệ tại lúc phát hiện.'
+    :route.reason||'';
   if(route.status!=='FOUND'&&(!route.mapId||!route.patientLocation&&!route.robotObservationLocation)){
     $('responseMap').hidden=true;
-    $('routeStatus').textContent='Chưa có đường đi · '+route.reason;
+    $('routeStatus').textContent=routeIssue||'Chưa có vị trí trên bản đồ.';
     return;
   }
   const mapUrl='/api/v1/maps/'+route.mapId;
@@ -143,7 +162,7 @@ async function drawResponseRoute(incident){
   const mapGeometry=window.SavedMapNavigation.geometry(meta);
   const bitmap=await createImageBitmap(await imageResponse.blob());
   try{
-    if(fallIncident?.incidentId!==incident.incidentId)return;
+    if(fallIncident!==incident)return;
     if(bitmap.width!==meta.width_px||bitmap.height!==meta.height_px)throw Error('Kích thước ảnh không khớp bản đồ.');
     const canvas=$('responseMap');canvas.width=bitmap.width;canvas.height=bitmap.height;
     const ctx=canvas.getContext('2d');ctx.drawImage(bitmap,0,0);
@@ -152,37 +171,51 @@ async function drawResponseRoute(incident){
       ctx.lineWidth=2;ctx.strokeStyle='#065fd4';ctx.lineJoin='round';ctx.beginPath();
       points.forEach(({u,v},i)=>i?ctx.lineTo(u,v):ctx.moveTo(u,v));ctx.stroke();
     }
-    const markers=[[route.origin,'#065fd4'],[route.patientLocation||route.destination,'#af1717'],
-      [route.robotObservationLocation,'#d87800'],[route.robotApproach?.position,'#15803d']];
+    const nearby=route.destinationBasis==='PATIENT_RGBD_NEARBY_WALKABLE';
+    const markers=[[route.origin,'#065fd4'],[nearby?route.destination:null,'#065fd4'],
+      [route.robotObservationLocation,'#d87800'],[route.patientLocation,'#af1717']];
     for(const [position,color] of markers){
       if(!position)continue;
       const point=window.SavedMapNavigation.mapToPixel(mapGeometry,position.xCm/100,position.yCm/100);
       ctx.fillStyle=color;ctx.beginPath();ctx.arc(point.u,point.v,3,0,Math.PI*2);ctx.fill();
     }
     canvas.hidden=false;
-    const target=route.patientLocation?'người nghi té ngã (đỏ)':'điểm robot quan sát';
+    const target=nearby||route.destinationBasis==='PATIENT_RGBD_STANDOFF'?'ô đi bộ gần người (xanh dương)'
+      :route.patientLocation?'người nghi té ngã (đỏ)':'vị trí robot lúc quan sát (cam)';
     let summary=route.status==='FOUND'?'Phòng SOS (xanh dương) → '+target+' · '+(route.distanceCm/100).toFixed(1)+' m'
-      :'Đã đánh dấu vị trí. Chưa có đường đi · '+route.reason;
+      :route.status==='PREVIEW'?'Vị trí đã ghi nhận · Xác nhận qua camera để vẽ đường đi bộ.'
+      :'Đã đánh dấu vị trí. Chưa có đường đi · '+routeIssue;
     if(route.patientLocation){
-      summary+=' · Robot lúc quan sát (cam)';
+      summary+=' · Vị trí người (đỏ)';
       if(Number.isFinite(route.cameraRangeM))summary+=' · Depth tại hông '+route.cameraRangeM.toFixed(2)+' m';
     }
-    if(route.robotApproach)summary+=' · Điểm gần người (xanh lá) '+(route.robotApproach.endpointName||route.robotApproach.endpointCode);
+    if(route.robotObservationLocation)summary+=' · Robot lúc quan sát (cam)';
     if(route.destinationCapturedAt)summary+=' · Ghi nhận '+new Date(route.destinationCapturedAt).toLocaleTimeString('vi-VN');
     $('routeStatus').textContent=summary;
   }finally{bitmap.close();}
 }
 async function reviewOperation(confirm){
-  if(reviewPending||!fallIncident||confirm&&!liveVideo())return;
+  if(reviewPending||!fallIncident||confirm&&!fallReviewVideo())return;
   const incident=fallIncident;reviewPending=true;reviewButtons();
   try{
     if(confirm){
       const verified=await api('/api/v1/emergency-incidents/'+incident.incidentId+'/confirm',{});
       if(fallIncident?.incidentId!==incident.incidentId)return;
-      fallIncident=verified;
-      $('fallReviewStatus').textContent='Staff đã xác nhận.';
+      selectFall(verified);
     }
     await drawResponseRoute(fallIncident);
+  }catch(error){if(fallIncident?.incidentId===incident.incidentId)$('routeStatus').textContent=error.message;}
+  finally{reviewPending=false;reviewButtons();}
+}
+async function finishFall(action){
+  const note=$('fallResolutionNote').value.trim();
+  if(reviewPending||!fallIncident||!note)return;
+  const incident=fallIncident;reviewPending=true;reviewButtons();
+  try{
+    await api('/api/v1/emergency-incidents/'+incident.incidentId+'/'+action,{resolutionNote:note});
+    if(fallIncident?.incidentId===incident.incidentId)clearReview();
+    message(action==='resolve'?'Đã ghi nhận xử lý xong.':'Đã ghi nhận báo nhầm.');
+    await refreshFallAlerts();
   }catch(error){if(fallIncident?.incidentId===incident.incidentId)$('routeStatus').textContent=error.message;}
   finally{reviewPending=false;reviewButtons();}
 }
@@ -197,6 +230,8 @@ function clearSignIn(label){
   $('sessions').replaceChildren();
   $('patrolAlerts').replaceChildren();
   $('patrolAlertStatus').textContent='';
+  $('fallAlerts').replaceChildren();
+  $('fallAlertStatus').textContent='';
   clearReview();
   authView(label);
 }
@@ -213,6 +248,14 @@ async function signIn(loadToken){
     authView('Đã đăng nhập · '+(account.fullName||account.username));
     message('Đang chờ phiên được giao.');
     await refreshPanel();
+    if(requestedIncident){
+      const incident=await api('/api/v1/emergency-incidents/'+encodeURIComponent(requestedIncident));
+      if(accessToken===token&&incident.incidentType==='AI_SUSPECTED_FALL'
+        &&['OPEN','ACKNOWLEDGED','IN_PROGRESS'].includes(incident.status)){
+        selectFall(incident);
+        await drawResponseRoute(incident);
+      }
+    }
   }catch(e){authView(e.message);}
   finally{signingIn=false;buttons();}
 }
@@ -333,7 +376,44 @@ async function refreshPatrolAlerts(){
     if(token===accessToken)status.textContent='Chưa tải được cảnh báo tuần tra: '+error.message;
   }finally{patrolAlertsPending=false;}
 }
-function refreshPanel(){return Promise.all([refresh(),refreshPatrolAlerts()]);}
+async function refreshFallAlerts(){
+  if(!accessToken||fallAlertsPending)return;
+  const token=accessToken;
+  const list=$('fallAlerts'),status=$('fallAlertStatus');
+  const routing={
+    ASSIGNED:'Đã phân công staff SOS',
+    NO_ACTIVE_SHIFT:'Chưa có staff đang trực tại phòng SOS',
+    AMBIGUOUS_SHIFT:'Có nhiều staff đang trực tại phòng SOS',
+    NO_MONITORING_ROOM:'Chưa cấu hình phòng SOS',
+    ROOM_UNAVAILABLE:'Phòng SOS không khả dụng'
+  };
+  fallAlertsPending=true;
+  try{
+    const page=await api('/api/v1/emergency-incidents?type=AI_SUSPECTED_FALL&size=10');
+    if(token!==accessToken)return;
+    const items=(page.content||[]).filter(incident=>['OPEN','ACKNOWLEDGED','IN_PROGRESS'].includes(incident.status));
+    status.textContent=items.length?'':'Không có cảnh báo nghi té ngã đang mở trong phạm vi tài khoản.';
+    list.replaceChildren(...items.map(incident=>{
+      const item=document.createElement('li');
+      const time=new Date(incident.occurredAt).toLocaleString('vi-VN');
+      const review=incident.status==='IN_PROGRESS'?'Đang xử lý':'Chờ xác minh';
+      const open=document.createElement('button');
+      open.textContent=incident.status==='IN_PROGRESS'?'Xem đường đi':'Xem vị trí';
+      open.onclick=()=>{
+        if(reviewPending||connecting)return;
+        selectFall(incident);
+        drawResponseRoute(incident).catch(error=>{
+          if(fallIncident===incident)$('routeStatus').textContent=error.message;
+        });
+      };
+      item.append([incident.description,time,review,routing[incident.sosRoutingStatus]].filter(Boolean).join(' · ')+' ',open);
+      return item;
+    }));
+  }catch(error){
+    if(token===accessToken)status.textContent='Chưa tải được cảnh báo nghi té ngã: '+error.message;
+  }finally{fallAlertsPending=false;}
+}
+function refreshPanel(){return Promise.all([refresh(),refreshPatrolAlerts(),refreshFallAlerts()]);}
 $('staffLogin').addEventListener('submit',event=>{
   event.preventDefault();
   const username=$('username').value.trim(),password=$('password').value;
@@ -359,6 +439,9 @@ $('create').onclick=()=>connect(()=>{
 $('refresh').onclick=refreshPanel;
 $('confirmFall').onclick=()=>reviewOperation(true);
 $('showResponseRoute').onclick=()=>reviewOperation(false);
+$('fallResolutionNote').oninput=reviewButtons;
+$('resolveFall').onclick=()=>finishFall('resolve');
+$('dismissFall').onclick=()=>finishFall('false-alarm');
 $('video').addEventListener('timeupdate',()=>{
   if(room&&!$('video').requestVideoFrameCallback&&$('video').srcObject){lastFrame=performance.now();reviewButtons();}
 });
@@ -368,10 +451,7 @@ $('enableAudio').onclick=()=>room?.startAudio().catch(e=>message(e.message,true)
 $('mic').onclick=async()=>{try{if(room)await room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled,{echoCancellation:true,noiseSuppression:true});}catch(e){message(e.message,true);}};
 $('end').onclick=async()=>{try{if(current)await api('/api/v1/media-sessions/'+current.sessionId+'/end',{reason:'STAFF_ENDED'});await leave();message('Đã kết thúc phiên.');}catch(e){message(e.message,true);}};
 window.addEventListener('pagehide',()=>{if(room)room.disconnect();});
-const query=new URLSearchParams(location.search);
-if(query.get('incidentId')){
-  $('incident').value=query.get('incidentId');
-  $('manualCall').open=true;
-}
+const requestedIncident=new URLSearchParams(location.search).get('incidentId');
+if(requestedIncident)$('incident').value=requestedIncident;
 authView('');
 })();

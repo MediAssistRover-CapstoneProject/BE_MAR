@@ -23,6 +23,7 @@ import java.util.*;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class SosResponseRouteService {
+    private static final double PATIENT_WALKING_OFFSET_M = .75;
     private final EmergencyIncidentRepository incidents;
     private final StaffOperationalScopePolicy scope;
     private final RuntimeSettingService settings;
@@ -53,11 +54,21 @@ public class SosResponseRouteService {
         }
     }
 
+    public Response preview(UUID id, AccountPrincipal actor) {
+        EmergencyIncident incident = incidentForView(id, actor);
+        if (!incident.isSuspectedFall() || !Set.of(EmergencyIncidentStatus.OPEN,
+                EmergencyIncidentStatus.ACKNOWLEDGED, EmergencyIncidentStatus.IN_PROGRESS).contains(incident.getStatus()))
+            throw new BusinessRuleException("An active suspected fall incident is required");
+        FacilityMap map = incident.getMap();
+        if (map == null) return unavailable(null, null, "MAP_MISSING");
+        Destination destination = destination(incident, map);
+        if (destination == null) return unavailable(map, null, "FALL_VIEWPOINT_UNAVAILABLE");
+        return response("PREVIEW", null, map, null, Point.centimetres(destination.point()), List.of(), null,
+                destination.basis(), destination, null);
+    }
+
     public Response route(UUID id, AccountPrincipal actor) {
-        EmergencyIncident incident = incidents.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Incident not found"));
-        scope.requireIncidentAccess(incident, actor);
-        if (incident.getArchivedAt() != null) throw new ResourceNotFoundException("Incident not found");
+        EmergencyIncident incident = incidentForView(id, actor);
         if (!incident.supportsResponderConfirmation() || incident.getStatus() != EmergencyIncidentStatus.IN_PROGRESS)
             throw new BusinessRuleException("An IN_PROGRESS SOS or confirmed fall incident is required");
         FacilityMap map = incident.getMap();
@@ -99,10 +110,13 @@ public class SosResponseRouteService {
         var target = destination.point();
         var basis = destination.basis();
         var route = grid.shortest(origins, target).orElse(null);
-        if (route == null && approach != null) {
-            target = approach.point();
-            basis = "PATIENT_RGBD_STANDOFF";
-            route = grid.shortest(origins, target).orElse(null);
+        if (route == null && destination.patient() != null && !grid.walkable(target)) {
+            route = grid.shortestToVisibleNeighbor(origins, target, destination.observation(), PATIENT_WALKING_OFFSET_M)
+                    .orElse(null);
+            if (route != null) {
+                target = route.points().getLast();
+                basis = "PATIENT_RGBD_NEARBY_WALKABLE";
+            }
         }
         if (route == null) {
             String reason = grid.walkable(destination.point()) ? "NO_PATH"
@@ -113,6 +127,14 @@ public class SosResponseRouteService {
         List<Point> points = route.points().stream().map(Point::centimetres).toList();
         return response("FOUND", null, map, points.getFirst(), Point.centimetres(target), points,
                 route.distance() * 100, basis, destination, approach);
+    }
+
+    private EmergencyIncident incidentForView(UUID id, AccountPrincipal actor) {
+        EmergencyIncident incident = incidents.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Incident not found"));
+        scope.requireIncidentAccess(incident, actor);
+        if (incident.getArchivedAt() != null) throw new ResourceNotFoundException("Incident not found");
+        return incident;
     }
 
     private Candidate approach(FacilityMap map, SosRouteGrid grid, Destination destination) {
@@ -145,9 +167,8 @@ public class SosResponseRouteService {
 
     private Destination destination(EmergencyIncident incident, FacilityMap map) {
         BigDecimal x = incident.getXM(), y = incident.getYM();
-        if (x == null || y == null) return null;
-        var point = new SosRouteGrid.Point(x.doubleValue(), y.doubleValue());
-        if (!incident.isSuspectedFall()) return new Destination(point, "INCIDENT_POSITION",
+        var point = x == null || y == null ? null : new SosRouteGrid.Point(x.doubleValue(), y.doubleValue());
+        if (!incident.isSuspectedFall()) return point == null ? null : new Destination(point, "INCIDENT_POSITION",
                 incident.getOccurredAt(), null, null, null);
 
         // Both the estimated patient position and robot viewpoint are frozen at detection time.
@@ -162,12 +183,19 @@ public class SosResponseRouteService {
                 || "CONTINUOUS_VISION_AI".equals(data.path("source").asText()))) return null;
         JsonNode viewpoint = data.path("robot_viewpoint");
         if (detection.getLocationBasis() == DetectionLocationBasis.OBJECT) {
-            return patientDestination(point, x, y, detection, map, data.path("patient_location"), viewpoint);
+            return point == null ? null : patientDestination(point, x, y, detection, map, data.path("patient_location"), viewpoint);
         }
-        if (detection.getLocationBasis() != DetectionLocationBasis.ROBOT) return null;
-        if (!sameCoordinate(viewpoint.path("x_m"), x) || !sameCoordinate(viewpoint.path("y_m"), y)) return null;
+        if (detection.getLocationBasis() == DetectionLocationBasis.ROBOT) {
+            if (point == null || !sameCoordinate(viewpoint.path("x_m"), x) || !sameCoordinate(viewpoint.path("y_m"), y))
+                return null;
+        } else if (detection.getLocationBasis() != DetectionLocationBasis.UNKNOWN || x != null || y != null
+                || !viewpoint.hasNonNull("map_asset_hash")) {
+            return null;
+        }
         Instant captured = capture(viewpoint, detection, map);
-        return captured == null ? null : new Destination(point, "ROBOT_VIEWPOINT", captured, null, point, null);
+        var observed = storedPoint(viewpoint);
+        return captured == null || observed == null ? null
+                : new Destination(observed, "ROBOT_VIEWPOINT", captured, null, observed, null);
     }
 
     private Destination patientDestination(SosRouteGrid.Point point, BigDecimal x, BigDecimal y,

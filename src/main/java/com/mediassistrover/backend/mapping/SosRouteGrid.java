@@ -42,6 +42,46 @@ public record SosRouteGrid(int width, int height, double resolution, double orig
         return true;
     }
 
+    /** A blocking cell can be approached from the observed side without routing through it. */
+    public Optional<Route> shortestToVisibleNeighbor(List<Point> origins, Point target, Point observation,
+                                                     double maximumDistance) {
+        int blocked = cell(target);
+        if (blocked < 0 || free[blocked] || observation == null || !hasClearView(observation, target))
+            return Optional.empty();
+        int samples = (int) Math.ceil(distance(observation, target) / (.25 * resolution));
+        int observedSide = cell(observation);
+        for (int sample = 1; sample < samples; sample++) {
+            double fraction = (double) sample / samples;
+            int index = cell(new Point(target.x() + fraction * (observation.x() - target.x()),
+                    target.y() + fraction * (observation.y() - target.y())));
+            if (index != blocked) {
+                observedSide = index;
+                break;
+            }
+        }
+        if (observedSide < 0 || !free[observedSide]) return Optional.empty();
+        Point anchor = centre(observedSide);
+        Point candidate = distance(anchor, target) <= maximumDistance && hasClearView(anchor, target) ? anchor : null;
+        double bestDistance = candidate == null ? maximumDistance : distance(candidate, target);
+        int radius = (int) Math.ceil(Math.min(Math.max(width, height), maximumDistance / resolution));
+        int x = blocked % width, y = blocked / width;
+        for (int row = Math.max(0, y - radius); row <= Math.min(height - 1, y + radius); row++) {
+            for (int column = Math.max(0, x - radius); column <= Math.min(width - 1, x + radius); column++) {
+                int index = row * width + column;
+                if (!free[index] || index == observedSide) continue;
+                Point point = centre(index);
+                double offset = distance(point, target);
+                if (offset > bestDistance || (candidate != null && offset == bestDistance)
+                        || !hasClearView(point, target) || !hasClearView(point, anchor)) continue;
+                candidate = point;
+                bestDistance = offset;
+            }
+        }
+        // Every candidate is connected to the same known-free anchor. If the chosen one cannot
+        // be reached from the SOS room, choosing another nearby cell would not restore access.
+        return candidate == null ? Optional.empty() : shortest(origins, candidate);
+    }
+
     private Point centre(int cell) {
         double x = (cell % width + .5) * resolution;
         double y = (cell / width + .5) * resolution;

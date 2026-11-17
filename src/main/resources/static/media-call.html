@@ -33,6 +33,9 @@ body{font:16px system-ui,sans-serif;max-width:1000px;margin:24px auto;padding:0 
 </details>
 <small>Staff chỉ mở phiên cho sự cố thuộc phạm vi được phép. SOS ưu tiên micro/loa và dừng chuyển động của robot; phiên gọi hoạt động độc lập với AMCL.</small>
 <ol id="sessions"></ol>
+<h2>Cảnh báo nghi té ngã</h2>
+<p id="fallAlertStatus" role="status"></p>
+<ul id="fallAlerts"></ul>
 <h2>Cảnh báo tuần tra</h2>
 <p id="patrolAlertStatus" role="status"></p>
 <ul id="patrolAlerts"></ul>
@@ -55,6 +58,9 @@ body{font:16px system-ui,sans-serif;max-width:1000px;margin:24px auto;padding:0 
 <button id="showResponseRoute" hidden>Tải đường đi từ phòng SOS</button>
 <p id="routeStatus" role="status"></p>
 <canvas id="responseMap" hidden aria-label="Vị trí người nghi té ngã và đường đi từ phòng SOS" style="width:min(100%,680px);image-rendering:pixelated"></canvas>
+<div id="fallResolution" hidden><label>Ghi chú xử lý<textarea id="fallResolutionNote" maxlength="4000"></textarea></label></div>
+<button id="resolveFall" hidden>Đã xử lý xong</button>
+<button id="dismissFall" hidden>Báo nhầm</button>
 </section>
 <script src="/vendor/livekit-client.umd.min.js"></script><script src="/map-navigation.js"></script><script src="/media-call.js"></script>
 </html>

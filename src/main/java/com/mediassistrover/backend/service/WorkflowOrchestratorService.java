@@ -118,6 +118,10 @@ public class WorkflowOrchestratorService {
             }
         }
         Step target;
+        // The Pi finished its sensing window to yield to staff review. The incident
+        // row can be visible before the after-commit suspension listener gets this Job lock.
+        if (selected != null && JobSuspensionService.stoppedForFallReview(selected)
+                && job.getRobot() != null && arbitration.robotEventHeld(job.getRobot().getRobotId())) return;
         boolean continuation=selected!=null && JobSuspensionService.suspendedExecution(selected);
         if (selected==null) target=job.getWorkflow().getStartStep();
         else if(continuation) target=selected.getStep();

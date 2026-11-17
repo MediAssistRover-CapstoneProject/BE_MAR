@@ -311,6 +311,54 @@ class MediaSessionTest {
         assertThrows(BusinessRuleException.class, () -> service.requireActiveFallReview(incident, actor));
         verifyNoInteractions(jobs, wakeups);
     }
+    @Test void assignedFallPreemptsManualMonitorAndKeepsOldRoomQueuedForCleanup() {
+        properties.setEnabled(true);
+        var monitor = session();monitor.setMode(MediaSession.Mode.MONITOR);
+        var robot = monitor.getRobot();
+        var reviewer = Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).build();
+        var incident = EmergencyIncident.builder().incidentId(UUID.randomUUID()).robot(robot)
+                .incidentType(EmergencyIncident.SUSPECTED_FALL_TYPE).status(EmergencyIncidentStatus.OPEN)
+                .sosRoutingStatus(EmergencyIncident.SosRoutingStatus.ASSIGNED).sosResponder(reviewer).build();
+        when(events.isListening(robot.getRobotId())).thenReturn(true);
+        when(sessions.findByActiveRobotId(robot.getRobotId())).thenReturn(Optional.of(monitor));
+        when(sessions.saveAndFlush(any())).thenAnswer(call -> {
+            MediaSession review = call.getArgument(0);
+            review.setSessionId(UUID.randomUUID());
+            return review;
+        });
+
+        var reviewId = service.openSos(incident);
+
+        assertEquals(MediaSession.State.ENDED, monitor.getState());
+        assertEquals("FALL_REVIEW_PREEMPTED_MONITOR", monitor.getEndReason());
+        assertTrue(monitor.isCleanupPending());
+        var order = inOrder(sessions);
+        order.verify(sessions).flush();
+        order.verify(sessions).saveAndFlush(argThat(review -> reviewId.equals(review.getSessionId())
+                && review.getState() == MediaSession.State.RINGING && review.getMode() == MediaSession.Mode.MONITOR
+                && review.getIncident().equals(incident)));
+        verifyNoInteractions(jobs, wakeups, interruptions, gateway);
+    }
+
+    @Test void fallReviewPreservesAnExistingIncidentMonitorOrAssistCall() {
+        properties.setEnabled(true);
+        var call = session();
+        var robot = call.getRobot();
+        var incident = EmergencyIncident.builder().incidentId(UUID.randomUUID()).robot(robot)
+                .incidentType(EmergencyIncident.SUSPECTED_FALL_TYPE).status(EmergencyIncidentStatus.OPEN)
+                .sosRoutingStatus(EmergencyIncident.SosRoutingStatus.ASSIGNED).sosResponder(call.getStaff()).build();
+        when(events.isListening(robot.getRobotId())).thenReturn(true);
+        when(sessions.findByActiveRobotId(robot.getRobotId())).thenReturn(Optional.of(call));
+
+        assertNull(service.openSos(incident));
+        call.setMode(MediaSession.Mode.MONITOR);
+        call.setIncident(EmergencyIncident.builder().incidentId(UUID.randomUUID()).build());
+        assertNull(service.openSos(incident));
+        assertEquals(MediaSession.State.ACTIVE, call.getState());
+        verify(sessions, never()).saveAndFlush(any());
+        verify(sessions, never()).flush();
+    }
+
     @Test void reconnectDeadlineIsNotExtendedByRepeatedReports() {
         var s=session();var started=instant.minusSeconds(20);s.setReconnectStartedAt(started);
         service.deviceState(s.getSessionId(),"RECONNECTING",null,device(s.getRobot()));assertEquals(started,s.getReconnectStartedAt());

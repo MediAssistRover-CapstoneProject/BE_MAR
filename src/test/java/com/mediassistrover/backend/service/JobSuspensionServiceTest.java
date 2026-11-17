@@ -88,6 +88,26 @@ class JobSuspensionServiceTest {
         assertEquals("INCIDENT_ACTIVE",service.resumeBlockReason(job));assertFalse(service.tryResume(job));
     }
 
+    @Test void stoppedFallSensingContinuesWhetherThePiErrorOrCancelJournalArrivesFirst(){
+        var snapshot = json.createObjectNode().put("status", "FAILED")
+                .put("errorCode", "PATROL_FALL_REVIEW_REQUIRED").put("physicalStopConfirmed", true);
+        var sensing = JobStep.builder().status(JobStepStatus.FAILED).stepTypeSnapshot("EXECUTE_SENSING")
+                .resolvedInputsJson(json.createObjectNode().put("fall_detection", true)).errorDetailsJson(snapshot).build();
+        assertTrue(JobSuspensionService.suspendedExecution(sensing));
+        sensing.setInterruptionReason("JOB_SUSPEND");
+        sensing.setErrorCode("BE_JOB_SUSPEND");
+        sensing.setErrorDetailsJson(json.createObjectNode().set("result", snapshot));
+        assertTrue(JobSuspensionService.suspendedExecution(sensing));
+
+        snapshot.put("physicalStopConfirmed", false);
+        assertFalse(JobSuspensionService.suspendedExecution(sensing));
+        snapshot.put("physicalStopConfirmed", true).put("errorCode", "PATROL_FALL_REPORT_UNCONFIRMED");
+        assertFalse(JobSuspensionService.suspendedExecution(sensing));
+        snapshot.put("errorCode", "PATROL_FALL_REVIEW_REQUIRED");
+        sensing.setInterruptionReason("JOB_CANCEL");
+        assertFalse(JobSuspensionService.suspendedExecution(sensing));
+    }
+
     @Test void foregroundJobAndPermanentCancelBothPreventResume(){
         job.setStatus(JobStatus.SUSPENDED);job.setResumeRequested(true);robot.setStatus(RobotStatus.IDLE);
         var foreground=Job.builder().jobId(UUID.randomUUID()).status(JobStatus.QUEUED).build();

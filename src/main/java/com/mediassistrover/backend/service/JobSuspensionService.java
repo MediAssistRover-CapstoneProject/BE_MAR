@@ -145,7 +145,26 @@ public class JobSuspensionService {
         Instant base=job.getPatrolRoundStartedAt()==null?job.getStartedAt():job.getPatrolRoundStartedAt();
         return base.plusSeconds(job.getWorkflow().getMaxDurationSec()).plusMillis(Math.max(0,job.getSuspendedDurationMs()-job.getPatrolRoundSuspendedBaseMs()));
     }
-    public static boolean suspendedExecution(JobStep step){return step.getStatus()==JobStepStatus.CANCELLED && "JOB_SUSPEND".equals(step.getInterruptionReason());}
+    public static boolean suspendedExecution(JobStep step) {
+        String reason = step.getInterruptionReason();
+        return "JOB_SUSPEND".equals(reason) && step.getStatus() == JobStepStatus.CANCELLED
+                || stoppedForFallReview(step);
+    }
+
+    static boolean stoppedForFallReview(JobStep step) {
+        String reason = step.getInterruptionReason();
+        var inputs = step.getResolvedInputsJson();
+        var receipt = step.getErrorDetailsJson();
+        if ((reason != null && !"JOB_SUSPEND".equals(reason)) || step.getStatus() != JobStepStatus.FAILED
+                || !"EXECUTE_SENSING".equals(step.getStepTypeSnapshot())
+                || inputs == null || !inputs.path("fall_detection").asBoolean() || receipt == null)
+            return false;
+        // A cancel ACK can deliver the same completed Pi journal before its STEP_ERROR.
+        var snapshot = "FAILED".equals(receipt.path("result").path("status").asText())
+                ? receipt.path("result") : receipt;
+        return "PATROL_FALL_REVIEW_REQUIRED".equals(snapshot.path("errorCode").asText())
+                && (receipt.path("physicalStopConfirmed").asBoolean() || snapshot.path("physicalStopConfirmed").asBoolean());
+    }
     private void event(Job job,String type,String source,UUID sourceId) {
         Instant now=clock.instant();var data=json.createObjectNode();
         if(source!=null)data.put("source",source);if(sourceId!=null)data.put("source_id",sourceId.toString());

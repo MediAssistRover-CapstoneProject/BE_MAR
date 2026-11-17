@@ -41,9 +41,15 @@ public class EmergencyController {
     public IncidentResponse confirm(@PathVariable UUID id, @AuthenticationPrincipal AccountPrincipal actor, HttpServletRequest request) {
         return service.confirm(id, actor, RequestMetadataFactory.from(request));
     }
+    @GetMapping("/{id}/location")
+    @io.swagger.v3.oas.annotations.Operation(summary="View the saved location of a suspected fall")
+    public com.mediassistrover.backend.service.SosResponseRouteService.Response location(
+            @PathVariable UUID id, @AuthenticationPrincipal AccountPrincipal actor) {
+        return responseRoutes.preview(id, actor);
+    }
     @GetMapping("/{id}/response-route")
     @io.swagger.v3.oas.annotations.Operation(summary="Shortest grid route from the SOS room to a confirmed incident, in centimetres",
-            description="For a patrol fall the destination is the recorded robot viewpoint at detection, with its capture time, rather than a live robot or patient location.")
+            description="For a suspected fall, the target is the recorded RGB-D patient location, a nearby endpoint, or the robot viewpoint saved at detection.")
     public com.mediassistrover.backend.service.SosResponseRouteService.Response responseRoute(
             @PathVariable UUID id, @AuthenticationPrincipal AccountPrincipal actor) {
         return responseRoutes.route(id, actor);
