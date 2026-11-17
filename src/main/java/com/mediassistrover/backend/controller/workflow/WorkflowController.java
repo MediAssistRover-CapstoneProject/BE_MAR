@@ -37,6 +37,10 @@ public class WorkflowController {
                                                      HttpServletRequest request) {
         return service.createGraph(staffQrDelivery.build(), actor.accountId(), RequestMetadataFactory.from(request));
     }
+    @PostMapping("/staff-face-delivery-draft") @PreAuthorize("hasRole('ADMIN')")
+    public WorkflowDetailResponse createFaceDraft(@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request) {
+        return service.createGraph(staffQrDelivery.build(com.mediassistrover.backend.enums.DeliveryAuthenticationMethod.FACE_VERIFICATION),actor.accountId(),RequestMetadataFactory.from(request));
+    }
     @PostMapping("/graph") @ResponseStatus(HttpStatus.CREATED) @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary="Create Workflow and complete graph atomically")
     public WorkflowDetailResponse createGraph(@Valid @RequestBody GraphCreateRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.createGraph(body,actor.accountId(),RequestMetadataFactory.from(request));}

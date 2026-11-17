@@ -21,7 +21,7 @@
 </head>
 <body><main>
   <h1>Giao nhận hàng với MAR</h1>
-  <p>Đăng nhập tài khoản staff được giao nhiệm vụ để hiện mã cho MAR quét. Không cần mở video camera để hiện QR.</p>
+  <p>Staff gửi chọn QR hoặc khuôn mặt khi tạo đơn. Với khuôn mặt, nhìn vào camera robot khi đến lượt giao nhận.</p>
   <section id="loginSection">
     <form id="login">
       <label>Tài khoản<input id="username" autocomplete="username" maxlength="100" required></label>
@@ -57,6 +57,8 @@
         <fieldset id="deliveryFields">
           <label>Bản đồ đang hoạt động<select id="deliveryMap" required></select></label>
           <label>Điểm lấy hàng<select id="pickupEndpoint" required></select></label>
+          <label>Phương thức xác thực<select id="authenticationMethod"><option value="QR_CODE">QR</option><option value="FACE_VERIFICATION">Khuôn mặt (demo)</option></select></label>
+          <p id="faceReadiness" role="status"></p>
           <label>Staff nhận đang trực<select id="receiverShift" required></select></label>
           <img id="receiverAvatar" alt="Ảnh staff nhận" width="64" hidden>
           <p id="receiverHelp">Chọn staff nhận. Server tự xác định phòng theo ca đã check-in.</p>

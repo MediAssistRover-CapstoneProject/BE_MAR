@@ -86,6 +86,7 @@ public class RequestJobInputSnapshotFactory {
 
     private void delivery(ObjectNode result, ServiceRequest request) {
         DeliveryRequest d = deliveries.findById(request.getServiceRequestId()).orElseThrow(() -> new BusinessRuleException("Delivery request detail is missing"));
+        result.put("authentication_method",d.getAuthenticationMethod().name());
         result.put("map_id", d.getMap().getMapId().toString())
                 .put("pickup_endpoint_id", d.getPickupEndpoint().getEndpointId().toString())
                 .put("target_mode", d.getTargetMode().name()).put("compartment_id", "CART_MAIN");

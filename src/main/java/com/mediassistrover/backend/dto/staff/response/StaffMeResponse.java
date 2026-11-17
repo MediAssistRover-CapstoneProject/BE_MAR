@@ -21,6 +21,8 @@ public record StaffMeResponse(
             String url,
             boolean active,
             Instant createdAt,
+            String faceStatus,
+            UUID faceAvatarVersion,
             Instant updatedAt
     ) {
     }

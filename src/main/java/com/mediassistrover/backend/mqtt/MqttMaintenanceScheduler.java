@@ -26,6 +26,7 @@ public class MqttMaintenanceScheduler {
     private final Clock clock;
     private final com.mediassistrover.backend.service.NavigationSessionService navigation;
     private final QrVerificationService qrVerification;
+    private final com.mediassistrover.backend.service.FaceAuthService face;
     @Scheduled(fixedDelay=250)
     public void durableWork() {
         if (!properties.isEnabled() || !transport.connected()) return;
@@ -55,6 +56,7 @@ public class MqttMaintenanceScheduler {
                 } catch (RuntimeException ex) {
                     log.warn("QR scan window unavailable for {} ({})", session.getRobotId(), ex.getClass().getSimpleName());
                 }
+                try { face.scanWindow(session).ifPresent(w -> message.set("staffFaceScan",wire.object().put("jobId",w.jobId().toString()).put("authJobStepId",w.authJobStepId().toString()).put("sessionId",w.sessionId().toString()).put("expiresAt",w.expiresAt().toString()))); } catch(RuntimeException ex) { log.warn("Face window unavailable for {}",session.getRobotId()); }
                 transport.publish(MqttTopics.topic(session.getRobotId(),"event-acks"),wire.bytes(message),1);
             }
         }

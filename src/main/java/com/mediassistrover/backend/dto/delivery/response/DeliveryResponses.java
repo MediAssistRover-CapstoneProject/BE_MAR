@@ -19,5 +19,5 @@ public final class DeliveryResponses {
                                    Instant pickedUpAt,Instant deliveredAt,Instant pickupCompartmentConfirmedAt,
                                    Instant deliveryCompartmentConfirmedAt,Instant pickupPayloadConfirmedAt,
                                    Instant deliveryPayloadConfirmedAt,String deliveryNote,long rowVersion,
-                                   List<ItemResponse> items) { }
+                                   List<ItemResponse> items, com.mediassistrover.backend.enums.DeliveryAuthenticationMethod authenticationMethod) { }
 }

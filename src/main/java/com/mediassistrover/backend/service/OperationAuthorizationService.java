@@ -21,6 +21,7 @@ public class OperationAuthorizationService {
     private final DeliveryRequestRepository deliveries;
     private final ObjectMapper json;
     private final Clock clock;
+    private final org.springframework.beans.factory.ObjectProvider<FaceAuthService> face;
 
     /** Called while selecting a step, before freezing its resolved input. Never accepts a client grant. */
     @Transactional
@@ -73,6 +74,7 @@ public class OperationAuthorizationService {
             fail("Authorization cannot be issued after the workflow deadline");
     }
     private void requireVerification(Job job,JobStep current,AuthVerification verification) {
+        if(verification.getMethod()==AuthVerificationMethod.FACE_VERIFICATION)face.getObject().requireGrant(verification);
         Instant now=Instant.now(clock);
         JobStep auth=verification.getAuthJobStep();
         String permission=verification.getPurpose()==AuthVerificationPurpose.DELIVERY_SENDER?"DELIVERY_SEND":"DELIVERY_RECEIVE";
