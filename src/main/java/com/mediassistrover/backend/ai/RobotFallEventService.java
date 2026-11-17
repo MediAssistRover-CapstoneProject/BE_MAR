@@ -76,7 +76,7 @@ public class RobotFallEventService {
         var link = links.findById(robot.getRobotId()).orElse(null);
         if (robot.getStatus() == RobotStatus.RETIRED || link == null || link.isClosed()
                 || link.getHelloJson() == null || link.getHelloJson().path("simulation").asBoolean()
-                || !registry.fresh(link) || !continuousCapable(link))
+                || !registry.observationFresh(link) || !continuousCapable(link))
             throw new BusinessRuleException("Continuous fall observation requires a live opted-in Pi");
         var map = robot.getCurrentMap();
         if (map == null) throw new BusinessRuleException("Fall observation requires an assigned robot map");

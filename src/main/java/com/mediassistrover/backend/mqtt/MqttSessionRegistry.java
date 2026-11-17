@@ -49,7 +49,11 @@ public class MqttSessionRegistry {
         return session;
     }
     public boolean fresh(RobotMqttSession session) {
-        return owned(session) && session.isHandshakeAcked() && session.isDispatchReady() && session.getLastHeartbeatAt()!=null
+        return observationFresh(session) && session.isDispatchReady();
+    }
+    /** A physical-operation recovery hold must not suppress independent camera alerts. */
+    public boolean observationFresh(RobotMqttSession session) {
+        return owned(session) && session.isHandshakeAcked() && session.getLastHeartbeatAt()!=null
                 && session.getLastHeartbeatAt().isAfter(Instant.now(clock).minusSeconds(15));
     }
     public boolean advertises(RobotMqttSession session, String stepType) {

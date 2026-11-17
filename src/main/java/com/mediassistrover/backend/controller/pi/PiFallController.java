@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequiredArgsConstructor
+@lombok.extern.slf4j.Slf4j
 @RequestMapping("/api/v1/pi/fall-events")
 @PreAuthorize("hasRole('DEVICE')")
 @SecurityRequirement(name = OpenApiConfig.DEVICE_BEARER_SCHEME)
@@ -26,6 +27,13 @@ public class PiFallController {
     public RobotFallEventService.Result record(@Valid @RequestBody RobotFallEventService.Request input,
                                                @AuthenticationPrincipal DevicePrincipal device,
                                                HttpServletRequest request) {
-        return service.record(input, device, RequestMetadataFactory.from(request));
+        try {
+            return service.record(input, device, RequestMetadataFactory.from(request));
+        } catch (com.mediassistrover.backend.exception.BusinessRuleException error) {
+            // Service reasons are protocol messages; never log credentials or frames.
+            log.warn("FALL_EVENT_REJECTED event={} robot={} reason={}", input.eventId(),
+                    device == null ? null : device.robotId(), error.getMessage());
+            throw error;
+        }
     }
 }

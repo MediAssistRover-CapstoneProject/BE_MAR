@@ -6,6 +6,9 @@ let accessToken='',signingIn=false,connecting=false,listPending=false;
 let patrolAlertsPending=false;
 let fallIncident=null,reviewPending=false;
 let aiOverlay=null,overlaySequence=0,overlayAt=0;
+// Sender and viewer clocks need not agree. Expire optional drawing only by
+// elapsed time since this browser received the latest authenticated packet.
+const overlayIdleMs=3000;
 const overlayStates=new Set(['PERSON','OBSERVING','SUSPECTED_FALL','PERSON_ON_FLOOR']);
 function clearOverlay(text='Chưa có dữ liệu nhận diện.'){
   aiOverlay=null;overlayAt=0;
@@ -16,10 +19,8 @@ function receiveOverlay(payload,participant,topic,session){
   if(topic!=='mar.ai.overlay.v1'||participant?.identity!=='robot-'+session.robotId
     ||!ArrayBuffer.isView(payload)||!payload.byteLength||payload.byteLength>1200)return;
   try{
-    const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(payload)),stamp=Date.parse(value.captured_at),age=Date.now()-stamp;
+    const value=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(payload));
     if(value.v!==1||value.media_session_id!==session.sessionId||!Number.isSafeInteger(value.seq)||value.seq<=overlaySequence
-      ||typeof value.captured_at!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/.test(value.captured_at)
-      ||!Number.isFinite(stamp)||age < -500||age>1500
       ||!Number.isInteger(value.width)||!Number.isInteger(value.height)||value.width<32||value.width>640||value.height<32||value.height>640
       ||!['OK','PAUSED','DEGRADED'].includes(value.status)||!Array.isArray(value.detections)||value.detections.length>8)return;
     for(const d of value.detections){
@@ -30,7 +31,7 @@ function receiveOverlay(payload,participant,topic,session){
         ||d.distance_m!==undefined&&(typeof d.distance_m!=='number'||!Number.isFinite(d.distance_m)||d.distance_m<=0))return;
     }
     overlaySequence=value.seq;overlayAt=performance.now();
-    aiOverlay={...value,stamp};drawOverlay();
+    aiOverlay=value;drawOverlay();
   }catch{/* A malformed optional display packet never interrupts the call. */}
 }
 function drawOverlay(){
@@ -41,14 +42,14 @@ function drawOverlay(){
   }
   ctx.setTransform(scale,0,0,scale,0,0);ctx.clearRect(0,0,w,h);
   if(!aiOverlay)return;
-  const age=Date.now()-aiOverlay.stamp;
-  if(age < -500||age>1500||performance.now()-overlayAt>1500){clearOverlay('Kết quả AI đã cũ; đang chờ ảnh mới.');return;}
+  const age=performance.now()-overlayAt;
+  if(age>overlayIdleMs){clearOverlay('Đang chờ kết quả AI mới; video vẫn hoạt động.');return;}
   if(!liveVideo()){clearOverlay('Chờ camera và kết quả AI mới.');return;}
   if(aiOverlay.status!=='OK'){
     $('overlayStatus').textContent=aiOverlay.status==='PAUSED'?'AI đang tạm nhường tác vụ ưu tiên.':'AI chưa phản hồi; video vẫn hoạt động.';return;
   }
   const n=aiOverlay.detections.length;
-  $('overlayStatus').textContent=(n?`${n} người · `:'Chưa nhận diện người · ')+`kết quả cách đây ${Math.max(0,age/1000).toFixed(1)} giây`;
+  $('overlayStatus').textContent=(n?`${n} người · `:'Chưa nhận diện người · ')+`đã nhận kết quả ${Math.max(0,age/1000).toFixed(1)} giây trước`;
   if(!$('overlayEnabled').checked||!video.videoWidth||!video.videoHeight)return;
   const ratio=video.videoWidth/video.videoHeight;
   if(Math.abs(ratio-aiOverlay.width/aiOverlay.height)>.02){$('overlayStatus').textContent='Kích thước ảnh AI chưa khớp camera.';return;}

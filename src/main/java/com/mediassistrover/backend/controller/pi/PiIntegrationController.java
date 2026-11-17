@@ -46,8 +46,8 @@ public class PiIntegrationController {
     @PostMapping("/jobs/{jobId}/result") public AckResponse jobResult(@PathVariable UUID jobId,@Valid @RequestBody PiEnvelope<JobResultPayload> e,@AuthenticationPrincipal DevicePrincipal p){return jobRuntimeService.jobResult(jobId,e,p);}
     @PostMapping("/jobs/{jobId}/errors") public AckResponse jobError(@PathVariable UUID jobId,@Valid @RequestBody PiEnvelope<JobErrorPayload> e,@AuthenticationPrincipal DevicePrincipal p){return jobRuntimeService.jobError(jobId,e,p);}
     @PostMapping("/jobs/{jobId}/operations/{jobStepId}/settlement")
-    @Operation(summary="Confirm an already cancelled MOVE with committed Pi stop evidence",
-            description="Returns an idempotent settlement receipt so the assigned robot can retire delivery of historical events. Requires a cancelled Job and MOVE, a published matching command, and an accepted Pi STEP_ERROR that confirms physical stop.")
+    @Operation(summary="Settle a terminal MOVE with committed Pi stop evidence",
+            description="Returns an idempotent settlement receipt so the assigned robot can retire historical events. Requires a cancelled Job and MOVE, or an explicitly staff-reconciled failed Job and its selected failed MOVE. Both require a published matching command and an accepted Pi STEP_ERROR confirming physical stop.")
     public com.fasterxml.jackson.databind.JsonNode settleCancelledMove(@PathVariable UUID jobId,
             @PathVariable UUID jobStepId,
             @Valid @RequestBody com.mediassistrover.backend.mqtt.MqttOperationRecoveryService.CancelledMoveSettlement request,

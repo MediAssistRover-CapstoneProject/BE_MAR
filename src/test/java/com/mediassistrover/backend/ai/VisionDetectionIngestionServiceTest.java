@@ -82,12 +82,19 @@ class VisionDetectionIngestionServiceTest {
     @Test
     void continuousTransitionDuringMoveReportsWithoutAJobOrReadyPose() {
         var f = new ContinuousFixture(now);
+        // A recovery hold disables dispatch, while an authenticated camera
+        // observation still reaches staff for review.
+        f.robot.setStatus(RobotStatus.ERROR);
+        var link = f.links.findById(f.robotId).orElseThrow();
+        link.setDispatchReady(false);
         var result = f.service.record(f.request(PatrolFallEventService.DetectionKind.FALL_TRANSITION, null), f.device, null);
         assertFalse(result.duplicate());
         verify(f.emergencies).createForStaffReview(argThat(command -> command.xM() == null && command.yM() == null
                 && command.data().path("location_basis").asText().equals("UNKNOWN")));
         verify(f.emergencies, never()).create(any());
         verifyNoInteractions(f.navigation);
+        verify(f.registry).observationFresh(link);
+        verify(f.registry, never()).fresh(any());
     }
 
     @Test
@@ -203,7 +210,7 @@ class VisionDetectionIngestionServiceTest {
             when(robots.findByIdForUpdate(robotId)).thenReturn(Optional.of(robot));
             var link = new RobotMqttSession();
             link.setHelloJson(new ObjectMapper().createObjectNode().set("capabilities", new ObjectMapper().createArrayNode().add("continuous-fall-v1")));
-            when(links.findById(robotId)).thenReturn(Optional.of(link));when(registry.fresh(link)).thenReturn(true);
+            when(links.findById(robotId)).thenReturn(Optional.of(link));when(registry.observationFresh(link)).thenReturn(true);
             when(settings.getLong(anyString(), anyLong(), anyLong(), anyLong())).thenReturn(30L);
             when(detections.saveAndFlush(any())).thenAnswer(call -> call.getArgument(0));
             when(emergencies.createForStaffReview(any())).thenReturn(new EmergencyFlowService.Result(

@@ -137,4 +137,80 @@ class ImmediateJobCancelTest {
                 ()->service.cancel(job.getJobId(),new CancelJobRequest("stop"),actor,null));
         assertEquals(JobStatus.RECOVERY_REQUIRED,job.getStatus());assertNull(job.getCancelRequestedAt());
     }
+
+    private record Settlement(com.mediassistrover.backend.mqtt.MqttOperationRecoveryService service,
+                              Job job,JobStep step,RobotCommandOutbox command,
+                              com.mediassistrover.backend.security.DevicePrincipal device,
+                              com.mediassistrover.backend.mqtt.MqttOperationRecoveryService.CancelledMoveSettlement request,
+                              RobotMqttInbox stopReceipt) { }
+
+    private Settlement settlement(JobStatus outcome,boolean reconciled) {
+        var operation=mock(com.mediassistrover.backend.mqtt.MqttOperationRecoveryService.class,CALLS_REAL_METHODS);
+        var commandRepository=mock(RobotCommandOutboxRepository.class);
+        var inboxRepository=mock(RobotMqttInboxRepository.class);
+        Map<String,Object> fields=Map.of("jobs",jobs,"robots",robots,"steps",steps,"commands",commandRepository,
+                "inbox",inboxRepository,"events",events,"wire",new com.mediassistrover.backend.mqtt.MqttWire(),
+                "clock",Clock.systemUTC(),"mapping",mock(com.mediassistrover.backend.mapping.MappingLifecycleService.class),
+                "updates",mock(org.springframework.context.ApplicationEventPublisher.class));
+        fields.forEach((name,value)->ReflectionTestUtils.setField(operation,name,value));
+        var job=job(outcome);job.setBeOrchestrated(true);job.setEndedAt(Instant.now());
+        job.getRobot().setRobotCode("mar-v1");
+        if(reconciled){job.setReconciledAt(Instant.now());job.setReconciledByAccount(account);job.setReconciliationNote("Inspected and closed");}
+        var task=new JobTask();task.setJob(job);
+        var step=new JobStep();step.setJobStepId(UUID.randomUUID());step.setJobTask(task);
+        step.setStatus(outcome==JobStatus.FAILED?JobStepStatus.FAILED:JobStepStatus.CANCELLED);
+        step.setStepTypeSnapshot("MOVE");step.setOperationKey(job.getJobId()+":MOVE:1");job.setSelectedJobStep(step);
+        var command=RobotCommandOutbox.builder().commandId(UUID.randomUUID()).jobId(job.getJobId())
+                .jobStepId(step.getJobStepId()).robotId(job.getRobot().getRobotId()).operationKey(step.getOperationKey())
+                .sendAttempts(1).physicalStopConfirmed(true).state("COMPLETED").build();
+        var stopId=UUID.randomUUID();var wire=new com.mediassistrover.backend.mqtt.MqttWire();
+        var envelope=wire.object().put("messageType","STEP_ERROR").put("messageId",stopId.toString())
+                .put("robotId",command.getRobotId().toString()).put("jobId",job.getJobId().toString())
+                .put("jobStepId",step.getJobStepId().toString()).put("correlationId",command.getCommandId().toString())
+                .put("operationKey",step.getOperationKey());
+        envelope.putObject("payload").put("physicalStopConfirmed",true);command.setResultEnvelopeJson(envelope);
+        var stopReceipt=new RobotMqttInbox();stopReceipt.setRobotId(command.getRobotId());
+        stopReceipt.setMessageType("STEP_ERROR");stopReceipt.setAccepted(true);
+        when(inboxRepository.findById(stopId)).thenReturn(Optional.of(stopReceipt));
+        when(steps.findById(step.getJobStepId())).thenReturn(Optional.of(step));
+        when(steps.lockById(step.getJobStepId())).thenReturn(Optional.of(step));
+        when(commandRepository.findByJobStepId(step.getJobStepId())).thenReturn(Optional.of(command));
+        when(commandRepository.lock(command.getCommandId())).thenReturn(Optional.of(command));
+        var device=new com.mediassistrover.backend.security.DevicePrincipal(command.getRobotId(),"mar-v1",
+                job.getRobot().getDeviceTokenVersion(),"device",Instant.now().plusSeconds(600));
+        var request=new com.mediassistrover.backend.mqtt.MqttOperationRecoveryService.CancelledMoveSettlement(command.getCommandId(),step.getOperationKey());
+        return new Settlement(operation,job,step,command,device,request,stopReceipt);
+    }
+
+    @Test void terminalMoveSettlementRetiresCancelledAndExplicitlyReconciledFailedOperations() {
+        for(var outcome:List.of(JobStatus.CANCELLED,JobStatus.FAILED)) {
+            var f=settlement(outcome,outcome==JobStatus.FAILED);
+            if(outcome==JobStatus.FAILED) {
+                f.step.setStatus(JobStepStatus.RECOVERY_REQUIRED);
+                f.command.setState("RECOVERY_REQUIRED");
+            }
+            var receipt=f.service.settleCancelledMove(f.job.getJobId(),f.step.getJobStepId(),f.request,f.device);
+            assertEquals(outcome.name(),receipt.path("status").asText());
+            assertTrue(receipt.path("physicalStopConfirmed").asBoolean());
+            assertEquals(outcome,f.job.getStatus());
+            assertEquals(outcome.name(),f.step.getStatus().name());
+            assertEquals("COMPLETED",f.command.getState());
+            assertEquals("STEP_ERROR",f.command.getResultEnvelopeJson().path("messageType").asText());
+            if(outcome==JobStatus.FAILED)assertEquals("CONFIRM_FAILED",receipt.path("reconciliationOutcome").asText());
+        }
+    }
+
+    @Test void failedSettlementRejectsUnreconciledOrUnconfirmedPhysicalStop() {
+        var unreconciled=settlement(JobStatus.FAILED,false);
+        assertThrows(com.mediassistrover.backend.exception.BusinessRuleException.class,()->unreconciled.service
+                .settleCancelledMove(unreconciled.job.getJobId(),unreconciled.step.getJobStepId(),unreconciled.request,unreconciled.device));
+        var f=settlement(JobStatus.FAILED,true);
+        f.command.setPhysicalStopConfirmed(false);
+        assertThrows(com.mediassistrover.backend.exception.BusinessRuleException.class,()->f.service
+                .settleCancelledMove(f.job.getJobId(),f.step.getJobStepId(),f.request,f.device));
+        f.command.setPhysicalStopConfirmed(true);f.stopReceipt.setAccepted(false);
+        assertThrows(com.mediassistrover.backend.exception.BusinessRuleException.class,()->f.service
+                .settleCancelledMove(f.job.getJobId(),f.step.getJobStepId(),f.request,f.device));
+        verify(events,never()).save(any());
+    }
 }

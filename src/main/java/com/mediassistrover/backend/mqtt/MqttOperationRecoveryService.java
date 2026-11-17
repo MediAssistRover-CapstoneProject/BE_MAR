@@ -55,23 +55,33 @@ public class MqttOperationRecoveryService {
         if(!Objects.equals(robot.getRobotCode(),device.robotCode())||robot.getDeviceTokenVersion()!=device.tokenVersion()
                 ||device.expiresAt()==null||!device.expiresAt().isAfter(now))
             throw new AccessDeniedException("Current DEVICE token required");
-        if(!job.isBeOrchestrated()||job.getStatus()!=JobStatus.CANCELLED||job.getEndedAt()==null||mapping.open(jobId))
-            throw new BusinessRuleException("Settlement requires an already cancelled Job with no open mapping session");
+        boolean reconciledFailure=job.getStatus()==JobStatus.FAILED&&job.getReconciledAt()!=null
+                &&job.getReconciledByAccount()!=null&&job.getReconciliationNote()!=null&&!job.getReconciliationNote().isBlank();
+        if(!job.isBeOrchestrated()||job.getStatus()!=JobStatus.CANCELLED&&!reconciledFailure
+                ||job.getEndedAt()==null||mapping.open(jobId))
+            throw new BusinessRuleException("Settlement requires a cancelled or explicitly reconciled failed Job with no open mapping session");
         JobStep initial=steps.findById(stepId).orElseThrow(()->new ResourceNotFoundException("JobStep not found"));
         if(!initial.getJobTask().getJob().getJobId().equals(jobId))throw new AccessDeniedException("JobStep is outside this Job");
         RobotCommandOutbox selected=commands.findByJobStepId(stepId)
                 .orElseThrow(()->new BusinessRuleException("No executed MQTT operation"));
         if(request==null||!selected.getCommandId().equals(request.commandId())
                 ||!jobId.equals(selected.getJobId())||!device.robotId().equals(selected.getRobotId()))
-            throw new BusinessRuleException("Settlement command does not match the cancelled operation");
+            throw new BusinessRuleException("Settlement command does not match the terminal operation");
         RobotCommandOutbox command=commands.lock(selected.getCommandId()).orElseThrow();
         JobStep step=steps.lockById(stepId).orElseThrow();
-        if(step.getStatus()!=JobStepStatus.CANCELLED||!"MOVE".equals(step.getStepTypeSnapshot())
+        JobStepStatus settledStatus=reconciledFailure?JobStepStatus.FAILED:JobStepStatus.CANCELLED;
+        JobStepStatus previousStatus=step.getStatus();
+        // The generic Job reconciliation can leave its selected step in
+        // RECOVERY_REQUIRED. Retire it only after the same committed stop proof.
+        boolean compatibleStep=previousStatus==settledStatus
+                ||reconciledFailure&&previousStatus==JobStepStatus.RECOVERY_REQUIRED;
+        if(!compatibleStep||!"MOVE".equals(step.getStepTypeSnapshot())
+                ||reconciledFailure&&(job.getSelectedJobStep()==null||!stepId.equals(job.getSelectedJobStep().getJobStepId()))
                 ||!Objects.equals(step.getOperationKey(),request.operationKey())
                 ||!Objects.equals(command.getOperationKey(),request.operationKey())
                 ||!"EXECUTE_STEP".equals(command.getCommandType())||command.getSendAttempts()<1
                 ||!Boolean.TRUE.equals(command.getPhysicalStopConfirmed()))
-            throw new BusinessRuleException("Settlement requires a matching cancelled MOVE with committed physical stop");
+            throw new BusinessRuleException("Settlement requires a matching terminal MOVE with committed physical stop");
         JsonNode stop=command.getResultEnvelopeJson();
         if(stop==null||!"STEP_ERROR".equals(stop.path("messageType").asText())
                 ||!device.robotId().toString().equals(stop.path("robotId").asText())
@@ -88,19 +98,25 @@ public class MqttOperationRecoveryService {
         if(accepted==null||!Boolean.TRUE.equals(accepted.getAccepted())
                 ||!device.robotId().equals(accepted.getRobotId())||!"STEP_ERROR".equals(accepted.getMessageType()))
             throw new BusinessRuleException("Pi stop receipt has not been accepted");
-        UUID receiptId=UUID.nameUUIDFromBytes((command.getCommandId()+":BE_CANCELLED_OPERATION_CONFIRMED")
+        String eventType=reconciledFailure?"BE_FAILED_OPERATION_CONFIRMED":"BE_CANCELLED_OPERATION_CONFIRMED";
+        UUID receiptId=UUID.nameUUIDFromBytes((command.getCommandId()+":"+eventType)
                 .getBytes(StandardCharsets.UTF_8));
         var prior=events.findById(receiptId).orElse(null);
         if(prior!=null)return prior.getEventDataJson().deepCopy();
         var response=wire.object().put("receiptId",receiptId.toString()).put("robotId",device.robotId().toString())
                 .put("jobId",jobId.toString()).put("jobStepId",stepId.toString()).put("commandId",command.getCommandId().toString())
-                .put("operationKey",step.getOperationKey()).put("status","CANCELLED")
+                .put("operationKey",step.getOperationKey()).put("status",settledStatus.name())
                 .put("physicalStopConfirmed",true).put("stopEvidenceMessageId",stopId.toString()).put("settledAt",now.toString());
+        if(reconciledFailure)response.put("reconciliationOutcome","CONFIRM_FAILED").put("reconciledAt",job.getReconciledAt().toString());
         command.setState("COMPLETED");
+        if (previousStatus!=settledStatus) {
+            step.setStatus(settledStatus);
+            if (step.getEndedAt()==null) step.setEndedAt(now);
+        }
         events.save(JobEvent.builder().jobEventId(receiptId).job(job).robot(robot).jobTask(step.getJobTask()).jobStep(step)
                 .producerType(JobEventProducerType.ROBOT).producerSessionId(UUID.randomUUID()).sequenceNo(1)
-                .eventType("BE_CANCELLED_OPERATION_CONFIRMED").correlationKey(command.getCommandId().toString())
-                .statusScope("JOB_STEP").previousStatus(JobStepStatus.CANCELLED.name()).newStatus(JobStepStatus.CANCELLED.name())
+                .eventType(eventType).correlationKey(command.getCommandId().toString())
+                .statusScope("JOB_STEP").previousStatus(previousStatus.name()).newStatus(settledStatus.name())
                 .eventDataJson(response.deepCopy()).occurredAt(now).receivedAt(now).persistedAt(now).build());
         updates.publishEvent(new RuntimeChanged(jobId));
         return response;
