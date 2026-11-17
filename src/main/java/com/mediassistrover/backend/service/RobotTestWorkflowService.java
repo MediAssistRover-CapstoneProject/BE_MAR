@@ -58,7 +58,7 @@ public class RobotTestWorkflowService {
     private final RobotTestSubmissionRepository submissions;
     private final Clock clock;
 
-    private double speed(Create r){return r.maxSpeedMps()==null?.4:r.maxSpeedMps();}
+    private double speed(Create r){return r.maxSpeedMps()==null?.35:r.maxSpeedMps();}
     private String compartment(Create r){return r.compartmentId()==null?"CART_MAIN":r.compartmentId();}
     private boolean moves(Create r){return r.steps().stream().anyMatch(s->s.kind()==Kind.MOVE);}
     private boolean hardware(Create r){return r.steps().stream().anyMatch(s->s.kind()==Kind.OPEN_SERVO||s.kind()==Kind.CLOSE_SERVO);}

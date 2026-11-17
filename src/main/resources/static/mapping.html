@@ -77,7 +77,7 @@
 <section id="robotTestWorkflow" class="panel" aria-label="Chạy workflow robot"></section>
 
 <details class="panel"><summary>Trạng thái nhiệm vụ</summary><pre id="state"></pre></details>
-<script src="/mapping-autonomy.js?v=20261115-lease"></script>
+<script src="/mapping-autonomy.js?v=20261117-cadence"></script>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);let job='',session='',mapping=false,timer=null,busy=false,polling=false,cameraStreaming=false,recovery=false,manualSource=null;const images={};
@@ -325,7 +325,7 @@ $('stopCameraStream').onclick=stopCameraStream;
 $('cameraStreamImage').onload=()=>{if(cameraStreaming)$('cameraTime').textContent='Video trực tiếp từ topic camera của Pi.'};
 $('cameraStreamImage').onerror=()=>{if(cameraStreaming){stopCameraStream();$('cameraTime').textContent='Không kết nối được video. Kiểm tra URL/Pi; đang dùng lại ảnh MQTT.'}};
 window.addEventListener('pagehide',stopCameraStream);
-function renderMotion(state){const manual=state.autonomy?.manual_control;manualSource=manual?.source??null;$('manualControlStatus').textContent=manual?('Nguồn: '+manual.source+' • '+manual.layout+' • '+manual.forward_mps+' m/s • '+manual.angular_rps+' rad/s'+(manual.continuous?' • giữ cần chạy liên tục':'')+(manual.session_required?' • cần phiên quét':' • joystick chạy cả khi chưa tạo job')):'Chưa nhận cấu hình điều khiển từ Pi.';const age=state.motionObservedAt?(Date.now()-Date.parse(state.motionObservedAt))/1000:Infinity;const sample=state.motionTelemetry?.gate;let gate;try{gate=JSON.parse(sample?.value??'null')}catch{}if(!gate||age>10){$('motionStatus').textContent='Chưa có phản hồi chuyển động mới từ Pi.';return}const labels={CLEAR:'Đường điều khiển đang cho phép chuyển động',NO_LEASE:'Đang dừng/chờ lệnh',STALE_COMMAND:'Chưa nhận được lệnh mới',STALE_OR_INVALID_US100:'Dừng: dữ liệu siêu âm chưa hợp lệ hoặc đã cũ',SIDE_OBSTACLE:'Dừng: có vật cản bên cạnh',REAR_OBSTACLE:'Dừng: có vật cản phía sau',REAR_LIDAR_NOT_READY:'Dừng: LiDAR phía sau chưa đủ dữ liệu',REAR_LIDAR_TF_NOT_READY:'Dừng: chưa xác định được hướng LiDAR phía sau',STALE_REAR_LIDAR:'Dừng: dữ liệu LiDAR phía sau đã cũ',REVERSE_NOT_ENABLED:'Chưa bật cấu hình lùi M1',NOT_COMMISSIONED:'Cấu hình chuyển động chưa được bật'};$('motionStatus').textContent=(labels[gate.reason]??('Robot dừng/giới hạn: '+gate.reason))+' • cập nhật '+Math.max(0,Math.round(age))+' giây trước'}
+function renderMotion(state){const manual=state.autonomy?.manual_control;manualSource=manual?.source??null;$('manualControlStatus').textContent=manual?('Nguồn: '+manual.source+' • '+manual.layout+' • '+manual.forward_mps+' m/s • '+manual.angular_rps+' rad/s'+(manual.continuous?' • giữ cần chạy liên tục':'')+(manual.session_required?' • cần phiên quét':' • joystick chạy cả khi chưa tạo job')):'Chưa nhận cấu hình điều khiển từ Pi.';const age=state.motionObservedAt?(Date.now()-Date.parse(state.motionObservedAt))/1000:Infinity;const sample=state.motionTelemetry?.gate;let gate;try{gate=JSON.parse(sample?.value??'null')}catch{}if(!gate||age>10){$('motionStatus').textContent='Chưa có phản hồi chuyển động mới từ Pi.';return}const labels={LIDAR_PADDING_ESCAPE:'Đang bò chậm ra xa vật cản trong vùng đệm',CLEAR:'Đường điều khiển đang cho phép chuyển động',NO_LEASE:'Đang dừng/chờ lệnh',STALE_COMMAND:'Chưa nhận được lệnh mới',STALE_OR_INVALID_US100:'Dừng: dữ liệu siêu âm chưa hợp lệ hoặc đã cũ',SIDE_OBSTACLE:'Dừng: có vật cản bên cạnh',REAR_OBSTACLE:'Dừng: có vật cản phía sau',REAR_LIDAR_NOT_READY:'Dừng: LiDAR phía sau chưa đủ dữ liệu',REAR_LIDAR_TF_NOT_READY:'Dừng: chưa xác định được hướng LiDAR phía sau',STALE_REAR_LIDAR:'Dừng: dữ liệu LiDAR phía sau đã cũ',REVERSE_NOT_ENABLED:'Chưa bật cấu hình lùi M1',NOT_COMMISSIONED:'Cấu hình chuyển động chưa được bật'};$('motionStatus').textContent=(labels[gate.reason]??('Robot dừng/giới hạn: '+gate.reason))+' • cập nhật '+Math.max(0,Math.round(age))+' giây trước'}
 async function pollControlReceipts(epoch,observedJob){
   const route='/api/v1/jobs/'+encodeURIComponent(observedJob)+'/mapping-control?commandId=';
   const receiptId=autoMapping?.receiptCommandId();
@@ -425,7 +425,7 @@ autoMapping=MappingAutonomy.mount({
   manualStop:()=>jog.stop(),save:requestSaveMap
 });buttons();
 </script>
-<script src="/robot-test-workflow.js?v=20261105-stt-tts"></script>
+<script src="/robot-test-workflow.js?v=20261117-speed"></script>
 <script>
 let workflowRunner;
 const savedMapNavigation=SavedMapNavigation.mount({element:document.getElementById('mapNavigation'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,isMappingActive:()=>mapping||jog.active,getSavedMapId:()=>document.getElementById('savedMapId').value,isWorkflowActive:()=>workflowRunner?.isActive()||false,refreshWorkflowState:()=>workflowRunner?.refresh(),onContextChange:()=>workflowRunner?.refreshContext()});

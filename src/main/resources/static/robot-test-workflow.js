@@ -70,7 +70,7 @@
     host.innerHTML=`<h2>Chạy workflow</h2>
       <p>Thêm các step theo thứ tự rồi chạy trong một job. Ví dụ: MOVE A → phát thông báo → WAIT 5 giây → MOVE B → mở servo → chờ xác nhận → đóng servo.</p>
       <small>Dùng Robot ID và token ADMIN ở đầu trang. Kết thúc job quét trước khi thử; MOVE dùng phiên map READY đang mở, không khởi tạo lại AMCL.</small>
-      <label>Trần tốc độ MOVE (m/s)<input id="testSpeed" type="number" min="0.05" max="0.6" step="0.05" value="0.4"></label>
+      <label>Trần tốc độ MOVE (m/s)<input id="testSpeed" type="number" min="0.05" max="0.6" step="0.05" value="0.35"></label>
       <details><summary>Cấu hình servo</summary><label>Compartment ID<input id="testCompartment" value="CART_MAIN" maxlength="64"></label>
       <button id="testConfig">Kiểm tra cấu hình Pi/BE</button><small id="testConfigStatus">Servo MG996R · S6 / ROS ID 4 · mở 2400 / đóng 1500. Chưa kiểm tra cấu hình.</small>
       <small>Pi xác nhận đã phát lệnh servo; hiện không có cảm biến xác nhận cửa mở/đóng thực tế.</small></details>

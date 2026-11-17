@@ -34,8 +34,9 @@
         if(['PI_REJECTED','NO_PI_ACK','PUBLISH_FAILED'].includes(receipt?.status))throw Error(receipt.errorCode||receipt.status);
         if(receipt?.status==='PI_ACCEPTED')this.confirmed=true;
         this.lastDispatchAt=started;
-        // Space requests from the response so BE processing time cannot narrow the gap.
-        this.timer=setTimeout(()=>this.renew(generation),RENEW_DELAY_MS);
+        // Keep one request in flight, but do not add another 300 ms after a
+        // slow HTTP response: that can leave gaps in Pi's 900 ms lease.
+        this.timer=setTimeout(()=>this.renew(generation),Math.max(0,RENEW_DELAY_MS-(performance.now()-started)));
       }catch(e){
         if(!this.active||generation!==this.generation)return;
         if(!retryError&&this.confirmed&&this.lastDispatchAt!==null
