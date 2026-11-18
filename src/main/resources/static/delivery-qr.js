@@ -94,12 +94,14 @@ $('createDelivery').addEventListener('submit', async event => {
     return;
   }
   const body = {
+    authenticationMethod: $('authenticationMethod').value,
     mapId: $('deliveryMap').value, pickupEndpointId: $('pickupEndpoint').value,
     receiverShiftId: selected.shiftId, targetMode: 'ENDPOINT',
     expectedSenderAccountId: staff.accountId, expectedReceiverAccountId: receiver,
     recipientName: name, requiresConfirmation: true, priority: 50,
     items: [{itemCode: 'ITEM-01', itemName: item, itemCategory: 'GENERAL', quantity, unit: 'kiện', sensitive: false}]
   };
+  if (body.authenticationMethod === 'FACE_VERIFICATION' && !await refreshFaceReadiness()) return;
   const signature = JSON.stringify(body);
   if (draft?.signature !== signature) draft = {signature, key: crypto.randomUUID()};
   const attempt = draft;
@@ -195,11 +197,14 @@ function render(detail) {
   const myTurn = !assigned || assigned === staff?.accountId;
   action = myTurn ? staffAction(step) : null;
   const qrStep = myTurn && step?.stepTypeSnapshot === 'AUTHENTICATE' && step.resolvedInputsJson?.method === 'QR_CODE';
+  const faceStep = myTurn && step?.stepTypeSnapshot === 'AUTHENTICATE' && step.resolvedInputsJson?.method === 'FACE_VERIFICATION';
   $('stage').textContent = job.status === 'SUCCEEDED' ? 'Giao nhận đã hoàn tất.'
     : job.status === 'RECOVERY_REQUIRED' ? 'Cần nhân viên kiểm tra robot và ngăn hàng.'
     : !myTurn ? 'Đang chờ staff tại điểm ' + (phase === 'sender' ? 'lấy hàng.' : 'giao hàng.')
+    : faceStep ? 'Robot đang chờ xác thực khuôn mặt của bạn. Vui lòng nhìn vào camera.'
     : qrStep ? 'Robot đang chờ quét QR của staff được giao.'
     : action?.label || 'Trạng thái nhiệm vụ · ' + job.status;
+  $('stage').textContent += ' · ' + (job.inputJson?.authentication_method === 'FACE_VERIFICATION' ? 'Khuôn mặt' : 'QR');
   if (qrUntil && qrUntil <= Date.now()) clearQr();
   $('showQr').hidden = !qrStep || !!qrUntil;
   $('showQr').disabled = pending;
@@ -460,3 +465,24 @@ async function startNotices(){
   }catch(e){if(e.name==='AbortError')return;$('emailStatus').textContent='Đang kết nối lại thông báo…';}
   if(token===currentToken&&token)noticeRetry=setTimeout(startNotices,3000);
 }
+
+const faceLabels = {READY:'Đã duyệt',PENDING:'Chờ admin duyệt',MISSING:'Chưa có avatar',INVALID:'Ảnh không đạt',REJECTED:'Ảnh bị từ chối'};
+let faceReadinessRevision = 0;
+async function refreshFaceReadiness() {
+  const revision = ++faceReadinessRevision, currentToken = token;
+  if ($('authenticationMethod').value !== 'FACE_VERIFICATION') { $('faceReadiness').textContent=''; return true; }
+  const receiver = dutyStaff.find(s => s.shiftId === $('receiverShift').value);
+  if (!staff || !receiver) { $('faceReadiness').textContent='Chọn người nhận để kiểm tra avatar.'; return false; }
+  $('faceReadiness').textContent='Đang kiểm tra avatar…';
+  try {
+    const [senderFace, receiverFace] = await Promise.all([staff.accountId, receiver.accountId].map(id=>api('/api/v1/staff/'+id+'/face-status')));
+    if (revision !== faceReadinessRevision || token !== currentToken) return false;
+    const ready = senderFace.enabled && receiverFace.enabled && senderFace.status === 'READY' && receiverFace.status === 'READY';
+    $('faceReadiness').textContent = !senderFace.enabled ? 'Xác thực khuôn mặt chưa được bật.' :
+      'Người gửi: '+(faceLabels[senderFace.status]||'Chưa sẵn sàng')+' · Người nhận: '+(faceLabels[receiverFace.status]||'Chưa sẵn sàng')+
+      (ready ? '. Demo chưa chống ảnh/video giả.' : '. Cần avatar được admin duyệt trước khi tạo đơn.');
+    return ready;
+  } catch(error) { if(revision===faceReadinessRevision) $('faceReadiness').textContent=error.message; return false; }
+}
+$('authenticationMethod').addEventListener('change', refreshFaceReadiness);
+$('receiverShift').addEventListener('change', refreshFaceReadiness);

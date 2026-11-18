@@ -15,7 +15,10 @@ public class WorkflowExecutionReadiness {
     private final com.mediassistrover.backend.mqtt.MqttProperties mqttProperties;
     private final com.mediassistrover.backend.mapping.MappingProperties mappingProperties;
     private final StepExecutionPolicy executionPolicy;
+    private final org.springframework.beans.factory.ObjectProvider<com.mediassistrover.backend.service.FaceAuthService> face;
     public boolean acceptsRobot(Workflow workflow, Robot robot) {
+        boolean faceWorkflow=steps.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId()).stream().filter(Step::isEnabled).anyMatch(s->s.getStepType()==StepType.AUTHENTICATE && "FACE_VERIFICATION".equals(s.getParamsJson().path("method").asText()));
+        if(faceWorkflow && !face.getObject().supportsRobot(robot.getRobotId()))return false;
         if (workflow.getSchemaVersion()==2) return !mqttProperties.manages(robot.getRobotId());
         boolean pi=steps.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId()).stream()
                 .filter(Step::isEnabled).anyMatch(step -> switch (step.getStepType()) {

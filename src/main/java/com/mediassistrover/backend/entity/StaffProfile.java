@@ -60,6 +60,27 @@ public class StaffProfile {
     @Builder.Default
     private boolean active = true;
 
+    @Column(name="face_avatar_version",columnDefinition="BINARY(16)") private UUID faceAvatarVersion;
+    @Column(name="face_status",length=24) private String faceStatus;
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(name="face_template",columnDefinition="TEXT") private String faceTemplate;
+    @Column(name="face_model_version",length=64) private String faceModelVersion;
+    @Column(name="face_reviewed_by",columnDefinition="BINARY(16)") private UUID faceReviewedBy;
+    @Column(name="face_reviewed_at") private Instant faceReviewedAt;
+    @jakarta.persistence.Version @Column(name="face_row_version",nullable=false) private long faceRowVersion;
+
+    public void setUrl(String value) {
+        if (!java.util.Objects.equals(url,value)) {
+            faceAvatarVersion=UUID.randomUUID();faceTemplate=null;faceModelVersion=null;
+            faceStatus=value==null||value.isBlank()?"MISSING":"PENDING";
+            faceReviewedBy=null;faceReviewedAt=null;
+        }
+        url=value;
+    }
+
+    @jakarta.persistence.PrePersist
+    public void initializeFace() { if(faceAvatarVersion==null) faceAvatarVersion=UUID.randomUUID(); if(faceStatus==null) faceStatus=url==null||url.isBlank()?"MISSING":"PENDING"; }
+
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;

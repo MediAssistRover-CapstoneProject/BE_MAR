@@ -36,5 +36,6 @@ public class DeliveryRequest {
     @Column(name="pickup_payload_confirmed_at") private Instant pickupPayloadConfirmedAt;
     @Column(name="delivery_payload_confirmed_at") private Instant deliveryPayloadConfirmedAt;
     @Column(name="delivery_note",columnDefinition="TEXT") private String deliveryNote;
+    @Builder.Default @Enumerated(EnumType.STRING) @Column(name="authentication_method",nullable=false,length=32) private com.mediassistrover.backend.enums.DeliveryAuthenticationMethod authenticationMethod = com.mediassistrover.backend.enums.DeliveryAuthenticationMethod.QR_CODE;
     @Version @Column(name="row_version",nullable=false) private long rowVersion;
 }

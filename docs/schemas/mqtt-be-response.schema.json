@@ -112,6 +112,34 @@
             "expiresAt"
           ],
           "additionalProperties": false
+        },
+        "staffFaceScan": {
+          "type": "object",
+          "properties": {
+            "jobId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "authJobStepId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "expiresAt": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "sessionId": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "jobId",
+            "authJobStepId",
+            "expiresAt",
+            "sessionId"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [

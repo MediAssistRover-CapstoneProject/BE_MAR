@@ -21,7 +21,7 @@ public class StaffDutyService {
     private final Clock clock;
     public record Duty(UUID staffProfileId, UUID accountId, String fullName, String avatarUrl,
         UUID shiftId, Instant startsAt, Instant endsAt, Instant checkedInAt, UUID roomId,
-        String roomCode, String roomName, UUID endpointId, boolean deliverable, String reason) {}
+        String roomCode, String roomName, UUID endpointId, boolean deliverable, String reason, String faceStatus) {}
     @Transactional public Map<String,Object> attendance(UUID id, AccountPrincipal actor, boolean checkIn) {
         me.requireActiveProfile(actor);
         Shift s=shifts.lockAttendance(id).orElseThrow(()->new ResourceNotFoundException("Shift not found"));
@@ -83,5 +83,5 @@ public class StaffDutyService {
         .filter(s->room==null||room.equals(s.getRoom().getRoomId()))
         .filter(s->selected==null||selected.getFloor().getFloorId().equals(s.getRoom().getFloor().getFloorId()))
         .map(s->{Endpoint e=null;String reason=null;try{if(map!=null)e=target(s,map);else reason="Select a map";}catch(BusinessRuleException ex){reason=ex.getMessage();}
-            var p=s.getStaffProfile();var a=p.getAccount();return new Duty(p.getStaffProfileId(),a.getAccountId(),a.getFullName(),p.getUrl(),s.getShiftId(),s.getStartsAt(),s.getEndsAt(),s.getCheckedInAt(),s.getRoom().getRoomId(),s.getRoom().getRoomCode(),s.getRoom().getRoomName(),e==null?null:e.getEndpointId(),e!=null,reason);}).toList();}
+            var p=s.getStaffProfile();var a=p.getAccount();return new Duty(p.getStaffProfileId(),a.getAccountId(),a.getFullName(),p.getUrl(),s.getShiftId(),s.getStartsAt(),s.getEndsAt(),s.getCheckedInAt(),s.getRoom().getRoomId(),s.getRoom().getRoomCode(),s.getRoom().getRoomName(),e==null?null:e.getEndpointId(),e!=null,reason,p.getFaceStatus());}).toList();}
 }

@@ -54,6 +54,7 @@ public class StepInputContractValidator {
         // The current authorization handler reads purpose from the definition,
         // never from client data.
         if (step.getStepType() == StepType.AUTHENTICATE) {
+            if (!step.getParamsJson().path("method").equals(merged.path("method"))) fail(step,"method","cannot override authentication method");
             text(
                     step,
                     step.getParamsJson(),
@@ -669,7 +670,7 @@ public class StepInputContractValidator {
                         n,
                         "method",
                         Set.of(
-                                "QR_CODE",
+                                "QR_CODE", "FACE_VERIFICATION",
                                 "STAFF_CONFIRMATION"
                         ),
                         false,

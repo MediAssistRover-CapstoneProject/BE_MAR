@@ -1,2 +1,2 @@
 package com.mediassistrover.backend.enums;
-public enum AuthVerificationMethod { QR_CODE, STAFF_CONFIRMATION }
+public enum AuthVerificationMethod { QR_CODE, FACE_VERIFICATION, STAFF_CONFIRMATION }

@@ -30,6 +30,7 @@ class StaffDeliveryRoutingTest {
  @Mock AuditService audit;
  @Mock StaffOperationalScopePolicy scope;
  @Mock StaffDutyService duty;
+ @Mock FaceAuthService faceAuth;
  @Spy ObjectMapper json=new ObjectMapper();
  @Spy Clock clock=Clock.fixed(Instant.parse("2026-11-10T01:00:00Z"),ZoneOffset.UTC);
  @InjectMocks DeliveryServiceImpl service;

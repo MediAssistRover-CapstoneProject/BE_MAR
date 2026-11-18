@@ -21,5 +21,6 @@ public class AuthVerification {
     @Column(name="issued_at",nullable=false) private Instant issuedAt;
     @Column(name="valid_until",nullable=false) private Instant validUntil;
     @Column(name="revoked_at") private Instant revokedAt;
+    @Column(name="face_avatar_version",columnDefinition="BINARY(16)") private UUID faceAvatarVersion;
     @Column(name="actor_token_version") private Long actorTokenVersion;
 }
