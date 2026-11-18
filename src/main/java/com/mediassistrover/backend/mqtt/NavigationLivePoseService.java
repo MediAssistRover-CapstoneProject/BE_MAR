@@ -10,15 +10,19 @@ import java.time.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Display only. This cache never authorizes dispatch, completes a step or renews a heartbeat. */
+/** Live display and time-aligned observation evidence; never authorizes motion or renews a heartbeat. */
 @Service @RequiredArgsConstructor
 public class NavigationLivePoseService {
+    private static final int HISTORY_LIMIT=64;
+    private static final Duration HISTORY_WINDOW=Duration.ofSeconds(15);
     public record Authorization(UUID robotId,UUID transport,UUID producer,UUID connection,UUID session,UUID map,
                                 String hash,long revision,Instant until) { }
     public record Closed(UUID robotId) { }
     public record Pose(UUID robotId,ObjectNode value) { }
+    private record Sample(Instant capturedAt,ObjectNode value) { }
     private static final class Slot {
         final Authorization authorization;long sequence=-1;ObjectNode latest;
+        final Deque<Sample> history=new ArrayDeque<>();
         Slot(Authorization authorization){this.authorization=authorization;}
     }
     private final Clock clock;
@@ -30,7 +34,9 @@ public class NavigationLivePoseService {
         if(slots.size()>=256&&!slots.containsKey(value.robotId()))return;
         slots.compute(value.robotId(),(id,old)->{
             if(old!=null&&sameIdentity(old.authorization,value)){
-                var next=new Slot(value);synchronized(old){next.sequence=old.sequence;next.latest=old.latest;}return next;
+                var next=new Slot(value);
+                synchronized(old){next.sequence=old.sequence;next.latest=old.latest;next.history.addAll(old.history);}
+                prune(next,Instant.now(clock));return next;
             }
             return new Slot(value);
         });
@@ -48,11 +54,35 @@ public class NavigationLivePoseService {
             return slot.latest.deepCopy();
         }
     }
+    public ObjectNode nearest(UUID robot,Instant capturedAt,Duration maxSkew){
+        if(capturedAt==null||maxSkew==null||maxSkew.isNegative())
+            throw new IllegalArgumentException("Observation time and non-negative maximum skew are required");
+        var slot=slots.get(robot);if(slot==null)return null;
+        synchronized(slot){
+            Instant now=Instant.now(clock);
+            if(slots.get(robot)!=slot||!slot.authorization.until().isAfter(now)
+                    ||!slot.authorization.connection().equals(connection.connectionId()))return null;
+            prune(slot,now);
+            Sample nearest=null;Duration nearestSkew=null;
+            for(var sample:slot.history){
+                Duration skew=Duration.between(capturedAt,sample.capturedAt()).abs();
+                if(skew.compareTo(maxSkew)<=0&&(nearestSkew==null||skew.compareTo(nearestSkew)<0)){
+                    nearest=sample;nearestSkew=skew;
+                }
+            }
+            return nearest==null?null:nearest.value().deepCopy();
+        }
+    }
+    private void prune(Slot slot,Instant now){
+        Instant oldest=now.minus(HISTORY_WINDOW);
+        slot.history.removeIf(sample->sample.capturedAt().isBefore(oldest));
+        while(slot.history.size()>HISTORY_LIMIT)slot.history.removeFirst();
+    }
     public void accept(ObjectNode value){
         UUID robot=UUID.fromString(value.path("robotId").asText());var slot=slots.get(robot);if(slot==null)return;
         synchronized(slot){
             var a=slot.authorization;Instant now=Instant.now(clock),captured=Instant.parse(value.path("capturedAt").asText());
-            if(!a.until().isAfter(now)||!a.connection().equals(connection.connectionId())
+            if(slots.get(robot)!=slot||!a.until().isAfter(now)||!a.connection().equals(connection.connectionId())
                 ||!a.transport().toString().equals(value.path("transportSessionId").asText())
                 ||!a.producer().toString().equals(value.path("producerSessionId").asText())
                 ||!a.session().toString().equals(value.path("navigationSessionId").asText())
@@ -64,6 +94,7 @@ public class NavigationLivePoseService {
             slot.sequence=value.path("sequenceNo").asLong();
             ObjectNode sample=value.deepCopy();sample.put("receivedAt",now.toString());
             slot.latest=sample;
+            slot.history.addLast(new Sample(captured,sample));prune(slot,now);
             events.publishEvent(new Pose(robot,sample));
         }
     }

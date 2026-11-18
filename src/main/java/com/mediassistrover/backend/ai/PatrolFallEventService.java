@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
@@ -229,7 +230,7 @@ public class PatrolFallEventService {
     }
 
     Viewpoint viewpoint(RobotNavigationSession session, Instant detectedAt) {
-        JsonNode sample = livePoses.latest(session.getRobotId());
+        JsonNode sample = livePoses.nearest(session.getRobotId(), detectedAt, Duration.ofSeconds(2));
         if (sample == null || !session.getSessionId().toString().equals(sample.path("navigationSessionId").asText())
                 || !session.getMap().getMapId().toString().equals(sample.path("mapId").asText())
                 || !Objects.equals(session.getMapAssetHash(), sample.path("mapAssetHash").asText())

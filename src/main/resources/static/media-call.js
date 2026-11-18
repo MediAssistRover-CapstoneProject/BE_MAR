@@ -4,7 +4,7 @@ const $=id=>document.getElementById(id),sdk=window.LivekitClient;
 let room=null,current=null,refreshTimer=null,lastFrame=0,frameHandle=null;
 let accessToken='',signingIn=false,connecting=false,listPending=false;
 let patrolAlertsPending=false,fallAlertsPending=false;
-let fallIncident=null,reviewPending=false;
+let fallIncident=null,reviewPending=false,fallRouteBasis=null;
 let aiOverlay=null,overlaySequence=0,overlayAt=0;
 // Sender and viewer clocks need not agree. Expire optional drawing only by
 // elapsed time since this browser received the latest authenticated packet.
@@ -62,7 +62,7 @@ function drawOverlay(){
     ctx.strokeStyle=d.state==='PERSON'?'#35d98b':d.state==='OBSERVING'?'#ffda65':'#ff6060';
     ctx.strokeRect(left,top,bw*vw,bh*vh);
     const text=labels[d.state]+(d.track_id===null?'':` #${d.track_id}`)
-      +(['PERSON','OBSERVING'].includes(d.state)?` · người ${Math.round(d.confidence*100)}%`:'')
+      +(['PERSON','OBSERVING'].includes(d.state)?` · nhận diện người ${Math.round(d.confidence*100)}%`:'')
       +(d.distance_m===undefined?'':` · ${d.distance_m.toFixed(1)} m`);
     const tw=ctx.measureText(text).width+10,tx=Math.max(0,Math.min(left,w-tw)),ty=Math.max(0,top-23);
     ctx.fillStyle='rgba(0,0,0,.8)';ctx.fillRect(tx,ty,Math.min(tw,w),23);
@@ -112,13 +112,15 @@ function reviewButtons(){
   $('confirmFall').hidden=!pending;
   $('showResponseRoute').hidden=!handling;
   $('showResponseRoute').disabled=reviewPending;
+  $('showResponseRoute').textContent=fallRouteBasis==='ROBOT_VIEWPOINT'
+    ?'Xem tuyến tham chiếu tới robot lúc quan sát':'Tải đường tới vị trí người';
   $('fallResolution').hidden=!pending&&!handling;
   $('resolveFall').hidden=!handling;
   $('dismissFall').hidden=!pending;
   $('resolveFall').disabled=$('dismissFall').disabled=reviewPending||!$('fallResolutionNote').value.trim();
 }
 function clearReview(){
-  fallIncident=null;
+  fallIncident=null;fallRouteBasis=null;
   $('fallReview').hidden=true;
   $('responseMap').hidden=true;
   $('fallResolutionNote').value='';
@@ -140,10 +142,13 @@ async function loadReview(session){
   selectFall(incident);
   await drawResponseRoute(incident);
 }
-async function drawResponseRoute(incident){
+async function drawResponseRoute(incident,allowObservationRoute=false){
   const kind=incident.status==='IN_PROGRESS'?'response-route':'location';
   const route=await api('/api/v1/emergency-incidents/'+incident.incidentId+'/'+kind);
   if(fallIncident!==incident)return;
+  fallRouteBasis=route.destinationBasis;reviewButtons();
+  const observationOnly=route.destinationBasis==='ROBOT_VIEWPOINT'&&!route.patientLocation;
+  const referenceRoute=observationOnly&&allowObservationRoute&&route.status==='FOUND';
   const routeIssue=route.reason==='ORIGIN_ENDPOINT_MISSING_ON_MAP'?'Phòng SOS cần một điểm xuất phát trên bản đồ này.'
     :route.reason==='FALL_VIEWPOINT_UNAVAILABLE'?'Chưa có tọa độ RGB-D hoặc pose hợp lệ tại lúc phát hiện.'
     :route.reason||'';
@@ -166,13 +171,18 @@ async function drawResponseRoute(incident){
     if(bitmap.width!==meta.width_px||bitmap.height!==meta.height_px)throw Error('Kích thước ảnh không khớp bản đồ.');
     const canvas=$('responseMap');canvas.width=bitmap.width;canvas.height=bitmap.height;
     const ctx=canvas.getContext('2d');ctx.drawImage(bitmap,0,0);
-    const points=route.points.map(p=>window.SavedMapNavigation.mapToPixel(mapGeometry,p.xCm/100,p.yCm/100));
+    // A saved robot viewpoint is not the person's position. Show its reference
+    // route only after the staff explicitly requests it using the labelled button.
+    const points=(!observationOnly||referenceRoute?route.points:[])
+      .map(p=>window.SavedMapNavigation.mapToPixel(mapGeometry,p.xCm/100,p.yCm/100));
     if(points.length>1){
-      ctx.lineWidth=2;ctx.strokeStyle='#065fd4';ctx.lineJoin='round';ctx.beginPath();
+      ctx.lineWidth=2;ctx.strokeStyle=referenceRoute?'#d87800':'#065fd4';ctx.lineJoin='round';
+      ctx.setLineDash(referenceRoute?[6,4]:[]);ctx.beginPath();
       points.forEach(({u,v},i)=>i?ctx.lineTo(u,v):ctx.moveTo(u,v));ctx.stroke();
+      ctx.setLineDash([]);
     }
     const nearby=route.destinationBasis==='PATIENT_RGBD_NEARBY_WALKABLE';
-    const markers=[[route.origin,'#065fd4'],[nearby?route.destination:null,'#065fd4'],
+    const markers=[[observationOnly&&!referenceRoute?null:route.origin,'#065fd4'],[nearby?route.destination:null,'#065fd4'],
       [route.robotObservationLocation,'#d87800'],[route.patientLocation,'#af1717']];
     for(const [position,color] of markers){
       if(!position)continue;
@@ -180,14 +190,23 @@ async function drawResponseRoute(incident){
       ctx.fillStyle=color;ctx.beginPath();ctx.arc(point.u,point.v,3,0,Math.PI*2);ctx.fill();
     }
     canvas.hidden=false;
+    canvas.setAttribute('aria-label',observationOnly
+      ?referenceRoute?'Tuyến tham chiếu tới robot lúc quan sát; chưa xác định vị trí người':'Vị trí robot lúc quan sát; chưa xác định vị trí người'
+      :'Vị trí người từ RGB-D và đường đi từ phòng SOS');
     const target=nearby||route.destinationBasis==='PATIENT_RGBD_STANDOFF'?'ô đi bộ gần người (xanh dương)'
       :route.patientLocation?'người nghi té ngã (đỏ)':'vị trí robot lúc quan sát (cam)';
     let summary=route.status==='FOUND'?'Phòng SOS (xanh dương) → '+target+' · '+(route.distanceCm/100).toFixed(1)+' m'
       :route.status==='PREVIEW'?'Vị trí đã ghi nhận · Xác nhận qua camera để vẽ đường đi bộ.'
       :'Đã đánh dấu vị trí. Chưa có đường đi · '+routeIssue;
+    if(observationOnly){
+      summary='Chưa xác định vị trí người. Điểm cam là robot lúc quan sát.';
+      if(referenceRoute)summary+=' Tuyến nét đứt cam chỉ tham chiếu từ phòng SOS tới robot lúc quan sát · '+(route.distanceCm/100).toFixed(1)+' m.';
+      else if(route.status==='FOUND')summary+=' Bấm “Xem tuyến tham chiếu tới robot lúc quan sát” nếu cần.';
+      else if(routeIssue)summary+=' '+routeIssue;
+    }
     if(route.patientLocation){
       summary+=' · Vị trí người (đỏ)';
-      if(Number.isFinite(route.cameraRangeM))summary+=' · Depth tại hông '+route.cameraRangeM.toFixed(2)+' m';
+      if(Number.isFinite(route.cameraRangeM))summary+=' · Khoảng cách depth '+route.cameraRangeM.toFixed(2)+' m';
     }
     if(route.robotObservationLocation)summary+=' · Robot lúc quan sát (cam)';
     if(route.destinationCapturedAt)summary+=' · Ghi nhận '+new Date(route.destinationCapturedAt).toLocaleTimeString('vi-VN');
@@ -203,7 +222,7 @@ async function reviewOperation(confirm){
       if(fallIncident?.incidentId!==incident.incidentId)return;
       selectFall(verified);
     }
-    await drawResponseRoute(fallIncident);
+    await drawResponseRoute(fallIncident,!confirm&&fallRouteBasis==='ROBOT_VIEWPOINT');
   }catch(error){if(fallIncident?.incidentId===incident.incidentId)$('routeStatus').textContent=error.message;}
   finally{reviewPending=false;reviewButtons();}
 }

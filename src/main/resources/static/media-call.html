@@ -45,6 +45,7 @@ body{font:16px system-ui,sans-serif;max-width:1000px;margin:24px auto;padding:0 
 <label style="display:flex;gap:8px;align-items:center"><input id="overlayEnabled" type="checkbox" checked style="width:auto">Hiện khung nhận diện AI</label>
 <label style="display:flex;gap:8px;align-items:center"><input id="mirrorVideo" type="checkbox" style="width:auto">Lật ngang hình camera</label>
 <small id="overlayStatus" role="status">Chưa có dữ liệu nhận diện. Khung AI hỗ trợ quan sát; staff xác minh nghi té ngã.</small>
+<small>Điểm % thể hiện độ tin cậy nhận diện người, không phải xác suất té ngã.</small>
 <p id="status" role="status">Chưa kết nối.</p>
 <button id="enableAudio" disabled>Bật âm thanh</button><button id="mic" disabled>Bật/tắt micro staff</button>
 <button id="end" disabled>Kết thúc phiên</button>
@@ -55,7 +56,7 @@ body{font:16px system-ui,sans-serif;max-width:1000px;margin:24px auto;padding:0 
 <h2>Xác minh té ngã</h2>
 <p id="fallReviewStatus" role="status"></p>
 <button id="confirmFall" disabled>Xác nhận té ngã qua camera</button>
-<button id="showResponseRoute" hidden>Tải đường đi từ phòng SOS</button>
+<button id="showResponseRoute" hidden>Tải đường tới vị trí người</button>
 <p id="routeStatus" role="status"></p>
 <canvas id="responseMap" hidden aria-label="Vị trí người nghi té ngã và đường đi từ phòng SOS" style="width:min(100%,680px);image-rendering:pixelated"></canvas>
 <div id="fallResolution" hidden><label>Ghi chú xử lý<textarea id="fallResolutionNote" maxlength="4000"></textarea></label></div>
