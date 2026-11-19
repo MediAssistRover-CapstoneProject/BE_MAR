@@ -29,7 +29,10 @@ public class JobCancellationService {
 
     @Transactional
     public void cancel(Job job,Account actor,String reason,RequestMetadata metadata) {
-        if(job.getStatus()==JobStatus.CANCELLED && job.getStopStatus()!=null)return;
+        if(job.getStatus()==JobStatus.CANCELLED && job.getStopStatus()!=null) {
+            settleObsoleteNonphysicalCancellations(job,actor,reason,metadata);
+            return;
+        }
         if(Set.of(JobStatus.SUCCEEDED,JobStatus.FAILED).contains(job.getStatus()))
             throw new BusinessRuleException("Job is already terminal");
         String before=job.getStatus().name();Instant now=clock.instant();
@@ -127,5 +130,43 @@ public class JobCancellationService {
     private static boolean settled(RobotCommandOutbox command,Job job) {
         return Boolean.TRUE.equals(command.getPhysicalStopConfirmed()) || "RESOLVED_BY_STAFF".equals(command.getState())
                 || com.mediassistrover.backend.mqtt.MqttJobSafety.completedWithoutPhysicalStop(command,job.getCancelRequestedAt());
+    }
+
+    /** Retire old cancellation bookkeeping without manufacturing Pi physical-stop evidence. */
+    private void settleObsoleteNonphysicalCancellations(Job job,Account actor,String reason,RequestMetadata metadata) {
+        if(!job.isBeOrchestrated() || job.getRobot()==null || job.getCancelRequestedAt()==null
+                || !Set.of(JobStopStatus.CONFIRMED,JobStopStatus.NOT_REQUIRED).contains(job.getStopStatus()))return;
+        robots.findByIdForUpdate(job.getRobot().getRobotId()).orElseThrow();
+        boolean changed=false;
+        for(var candidate:commands.findByJobIdOrderByCreatedAt(job.getJobId())) {
+            if(!"CANCEL_STEP".equals(candidate.getCommandType())
+                    || !Set.of("RECOVERY_REQUIRED","REJECTED").contains(candidate.getState()))continue;
+            var cancel=commands.lock(candidate.getCommandId()).orElseThrow();
+            var selected=commands.findByJobStepId(cancel.getJobStepId()).orElse(null);
+            if(selected==null)continue;
+            var execute=commands.lock(selected.getCommandId()).orElseThrow();
+            var step=steps.lockById(cancel.getJobStepId()).orElse(null);
+            if(step==null || step.getStatus()!=JobStepStatus.SUCCEEDED
+                    || !step.getJobTask().getJob().getJobId().equals(job.getJobId())
+                    || !Set.of("WAIT","INTERACT").contains(step.getStepTypeSnapshot())
+                    || !job.getJobId().equals(cancel.getJobId()) || !job.getJobId().equals(execute.getJobId())
+                    || !job.getRobot().getRobotId().equals(cancel.getRobotId()) || !cancel.getRobotId().equals(execute.getRobotId())
+                    || !step.getJobStepId().equals(execute.getJobStepId())
+                    || !step.getOperationKey().equals(cancel.getOperationKey()) || !step.getOperationKey().equals(execute.getOperationKey())
+                    || !"JOB_CANCEL".equals(cancel.getInterruptionReason()) || !"JOB_CANCEL".equals(execute.getInterruptionReason())
+                    || cancel.getExpiresAt()==null || cancel.getExpiresAt().isAfter(clock.instant())
+                    || !com.mediassistrover.backend.mqtt.MqttJobSafety.completedWithoutPhysicalStop(execute,job.getCancelRequestedAt())
+                    || !step.getStepTypeSnapshot().equals(execute.getPayloadJson().path("step").path("stepType").asText()))continue;
+            String previous=cancel.getState();
+            // Keep both original envelopes and nullable physicalStopConfirmed values for audit.
+            cancel.setState("RESOLVED_BY_STAFF");
+            audit.record(actor,"MQTT_OBSOLETE_CANCEL_RECONCILED","RobotCommandOutbox",cancel.getCommandId(),
+                    Map.of("state",previous),Map.of("state","RESOLVED_BY_STAFF","reason",reason,
+                            "executeCommandId",execute.getCommandId(),"jobId",job.getJobId(),
+                            "jobStepId",step.getJobStepId(),"operationKey",step.getOperationKey(),
+                            "successMessageId",execute.getResultEnvelopeJson().path("messageId").asText()),metadata);
+            changed=true;
+        }
+        if(changed)events.publishEvent(new RuntimeChanged(job.getJobId()));
     }
 }
