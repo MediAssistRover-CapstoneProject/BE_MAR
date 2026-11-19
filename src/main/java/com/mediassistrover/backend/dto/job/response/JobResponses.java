@@ -10,7 +10,7 @@ public final class JobResponses {
         JsonNode resultJson,String workflowHash,int protocolVersion,int schemaVersion,int graphVersion,UUID dispatchCommandId,
         Instant dispatchExpiresAt,Instant queuedAt,Instant acceptedAt,Instant startedAt,UUID cancelCommandId,
         Instant cancelRequestedAt,Instant endedAt,String errorCode,String failureReason,Instant reconciledAt,
-        String reconciliationNote,long rowVersion,boolean beOrchestrated,UUID selectedJobStepId) {}
+        String reconciliationNote,long rowVersion,boolean beOrchestrated,UUID selectedJobStepId,JobStopStatus stopStatus,Instant stopRequestedAt,Instant stopConfirmedAt) {}
     public record JobTaskResponse(UUID jobTaskId,UUID jobId,UUID taskId,int sequenceNo,String taskNameSnapshot,
         JsonNode configSnapshotJson,JobTaskStatus status,Instant startedAt,Instant endedAt,String errorCode,String errorDetails) {}
     public record JobStepResponse(UUID jobStepId,UUID jobTaskId,UUID stepId,int visitNo,long executionSequenceNo,

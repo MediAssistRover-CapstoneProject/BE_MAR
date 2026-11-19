@@ -62,7 +62,10 @@ public interface JobRepository extends JpaRepository<Job,UUID> {
                      @Param("from") Instant from,@Param("to") Instant to,Pageable pageable);
     @Query("select j from Job j where j.archivedAt is null and (:status is null or j.status=:status) and (:workflowId is null or j.workflow.workflowId=:workflowId) and (:requestId is null or j.serviceRequest.serviceRequestId=:requestId) and (:robotId is null or j.robot.robotId=:robotId) and (:from is null or j.queuedAt>=:from) and (:to is null or j.queuedAt<:to)")
     Page<Job> searchActive(@Param("status") JobStatus status,@Param("workflowId") UUID workflowId,@Param("requestId") UUID requestId,@Param("robotId") UUID robotId,@Param("from") Instant from,@Param("to") Instant to,Pageable pageable);
-    List<Job> findByRobotRobotIdAndStatusIn(UUID robotId,Collection<JobStatus> statuses);
+    @Query("select j from Job j where j.robot.robotId=:robotId and (j.status in :statuses or j.stopStatus in ('PENDING','RECOVERY_REQUIRED'))")
+    List<Job> findByRobotRobotIdAndStatusIn(@Param("robotId") UUID robotId,@Param("statuses") Collection<JobStatus> statuses);
+    @Query("select j.jobId from Job j where j.status='CANCELLED' and j.stopStatus in ('PENDING','RECOVERY_REQUIRED') order by j.jobId")
+    List<UUID> findOutstandingCancellationIds(Pageable page);
     @Query("select j.jobId from Job j where j.status='QUEUED' and j.robot is null order by j.priority desc,j.queuedAt,j.jobId")
     List<UUID> findUnassignedQueuedJobIds(Pageable pageable);
     @Query("select count(j)>0 from Job j left join j.map m where j.status='QUEUED' and j.robot is null " +
@@ -70,7 +73,7 @@ public interface JobRepository extends JpaRepository<Job,UUID> {
     boolean existsHigherPriorityQueuedForMap(@Param("mapId") UUID mapId, @Param("priority") int priority);
     Optional<Job> findFirstByRobotRobotIdAndStatusOrderByQueuedAtAsc(UUID robotId,JobStatus status);
     boolean existsByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(UUID scheduleId,Instant fireAt,String itemKey);
-    @Query("select j.jobId from Job j where j.robot.robotId=:robotId and j.status in :statuses order by j.jobId")
+    @Query("select j.jobId from Job j where j.robot.robotId=:robotId and (j.status in :statuses or j.stopStatus in ('PENDING','RECOVERY_REQUIRED')) order by j.jobId")
     List<UUID> findRobotJobIds(@Param("robotId") UUID robotId,@Param("statuses") Collection<JobStatus> statuses);
     /** Lock by PRIMARY, like the orchestrator. Locking through ix_job_robot_status
      * first deadlocks with an owner changing status while holding the primary row.
@@ -79,7 +82,7 @@ public interface JobRepository extends JpaRepository<Job,UUID> {
         List<Job> held=new ArrayList<>();
         for(UUID id:findRobotJobIds(robotId,statuses)) {
             Job job=lockById(id).orElse(null);
-            if(job!=null && job.getRobot()!=null && robotId.equals(job.getRobot().getRobotId()) && statuses.contains(job.getStatus()))held.add(job);
+            if(job!=null && job.getRobot()!=null && robotId.equals(job.getRobot().getRobotId()) && (statuses.contains(job.getStatus()) || job.stopOutstanding()))held.add(job);
         }
         return held;
     }

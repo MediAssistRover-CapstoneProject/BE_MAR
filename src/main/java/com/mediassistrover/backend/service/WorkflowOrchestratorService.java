@@ -50,6 +50,7 @@ public class WorkflowOrchestratorService {
         long generation=row.getRequestedGeneration();
         row.setProcessedGeneration(generation);
         Instant now=Instant.now(clock);
+        if(job.getStatus()==JobStatus.CANCELLED) return; // Cancellation outbox has its own durable reconciler.
         if(job.getStatus()==JobStatus.SUSPENDED && job.getCancelRequestedAt()!=null) {
             job.setResumeRequested(false);finish(job,TerminalStatus.CANCELLED);return;
         }

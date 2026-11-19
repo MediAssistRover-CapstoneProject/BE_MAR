@@ -9,6 +9,8 @@ import java.util.UUID;
 import java.time.Instant;
 import com.mediassistrover.backend.enums.EmergencyIncidentSeverity;
 public interface EmergencyService {
+    java.util.Map<String,Object> cancelFall(java.util.UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
+
     SosResponse createSos(PiEnvelope<SosPayload> envelope,DevicePrincipal actor,RequestMetadata metadata);
     DeviceIncidentStatusResponse getDeviceIncident(UUID id,DevicePrincipal actor);
     IncidentResponse get(UUID id,boolean includeDeleted,AccountPrincipal actor);

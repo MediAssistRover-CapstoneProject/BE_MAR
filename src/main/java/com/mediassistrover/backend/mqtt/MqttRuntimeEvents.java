@@ -35,7 +35,7 @@ public class MqttRuntimeEvents {
     public void apply(Job job,MqttWire.Envelope e) {
         if (job==null || !job.isBeOrchestrated() || job.getSchemaVersion()!=3 || job.getRobot()==null || !job.getRobot().getRobotId().equals(e.robotId()))
             throw new BusinessRuleException("MQTT event is outside orchestrated Job/Robot scope");
-        if(job.getStatus()==JobStatus.CANCELLED && !acceptedExecuteAck(e))
+        if(job.getStatus()==JobStatus.CANCELLED && job.getStopStatus()==null && !acceptedExecuteAck(e))
             throw new BusinessRuleException("Job is already cancelled");
         UUID acknowledged="COMMAND_ACK".equals(e.messageType())?UUID.fromString(e.payload().path("commandId").asText()):e.correlationId();
         RobotCommandOutbox correlated=commands.lock(acknowledged).orElseThrow(()->new BusinessRuleException("No command for MQTT event"));
@@ -63,8 +63,31 @@ public class MqttRuntimeEvents {
                 && Set.of("COMPLETED","RESOLVED_BY_STAFF").contains(command.getState())
                 && Set.of(JobStepStatus.SUCCEEDED,JobStepStatus.FAILED,JobStepStatus.TIMED_OUT,JobStepStatus.CANCELLED).contains(step.getStatus()))
             return;
-        if(job.getStatus()==JobStatus.CANCELLED)throw new BusinessRuleException("Job is already cancelled");
-        boolean lateTerminal=Set.of(JobStatus.SUCCEEDED,JobStatus.FAILED,JobStatus.CANCELLED).contains(job.getStatus());
+        if(job.getStatus()==JobStatus.CANCELLED && job.getStopStatus()!=null && !step.isMappingCleanup()) {
+            if(cancelAck) cancelAck(job,step,command,correlated,e.payload(),e,true);
+            else if(Set.of("STEP_ERROR","STEP_RESULT").contains(e.messageType())) {
+                var p=e.payload();
+                if(p.has("stepType") && !step.getStepTypeSnapshot().equals(p.path("stepType").asText()))
+                    throw new BusinessRuleException("Stop evidence StepType mismatch");
+                if(!Set.of("SUCCEEDED","FAILED","TIMED_OUT","CANCELLED").contains(p.path("status").asText()))
+                    throw new BusinessRuleException("Stop evidence requires a terminal operation");
+                // Later duplicates cannot replace committed stop evidence or put a released robot back in recovery.
+                if(Boolean.TRUE.equals(command.getPhysicalStopConfirmed()) || "RESOLVED_BY_STAFF".equals(command.getState()))return;
+                if(p.path("physicalStopConfirmed").asBoolean()) {
+                    command.setPhysicalStopConfirmed(true);command.setState("COMPLETED");remember(command,e);
+                    step.setStatus(JobStepStatus.CANCELLED);step.setEndedAt(clock.instant());
+                    control.completeStopped(job,step,command,"JOB_CANCEL");
+                } else safety.recovery(job,"Cancelled operation has no physical stop evidence");
+            } else if(acceptedExecuteAck(e) || "STEP_STARTED".equals(e.messageType())) {
+                // Reject permission to start, but retain the outstanding cancellation for the Pi.
+                throw new BusinessRuleException("Execution forbidden after job cancellation");
+            } else if("OPERATOR_RECONCILED".equals(e.messageType())) {
+                remember(command,e);safety.recovery(job,"Operator stop awaits recovery review");
+            }
+            updates.publishEvent(new com.mediassistrover.backend.service.RuntimeChanged(job.getJobId()));return;
+        }
+        if(job.getStatus()==JobStatus.CANCELLED && !step.isMappingCleanup())throw new BusinessRuleException("Job is already cancelled");
+        boolean lateTerminal=Set.of(JobStatus.SUCCEEDED,JobStatus.FAILED,JobStatus.CANCELLED).contains(job.getStatus()) && !step.isMappingCleanup();
         if(lateTerminal && !cancelAck && !(step.getInterruptionReason()!=null && Set.of("STEP_ERROR","STEP_RESULT").contains(e.messageType())))
             throw new BusinessRuleException("New MQTT event arrived after Job terminal");
         boolean selected=job.getSelectedJobStep()!=null && job.getSelectedJobStep().getJobStepId().equals(step.getJobStepId());
@@ -104,7 +127,7 @@ public class MqttRuntimeEvents {
             }
             case "STEP_STARTED" -> {
                 if(step.getInterruptionReason()!=null || job.getCancelRequestedAt()!=null && !step.isMappingCleanup())throw new BusinessRuleException("STEP_STARTED after cancellation intent");
-                if (job.getStatus()!=JobStatus.RUNNING || step.getStatus()!=JobStepStatus.PENDING || !"ACKNOWLEDGED".equals(command.getState())) throw new BusinessRuleException("STEP_STARTED requires accepted command and PENDING selected step");
+                if ((job.getStatus()!=JobStatus.RUNNING && !(job.getStatus()==JobStatus.CANCELLED && step.isMappingCleanup())) || step.getStatus()!=JobStepStatus.PENDING || !"ACKNOWLEDGED".equals(command.getState())) throw new BusinessRuleException("STEP_STARTED requires accepted command and PENDING selected step");
                 if (!step.getStepTypeSnapshot().equals(p.path("stepType").asText()) || !command.getPayloadJson().path("step").path("params").equals(p.path("resolvedInputs")))
                     throw new BusinessRuleException("STEP_STARTED differs from frozen command params");
                 JsonNode grant = p.path("resolvedInputs").path("authorization");
@@ -228,6 +251,10 @@ public class MqttRuntimeEvents {
         boolean stopped=p.path("physicalStopConfirmed").asBoolean() || p.path("result").path("physicalStopConfirmed").asBoolean();
         if(stopped && Set.of("CANCELLED","FAILED","TIMED_OUT","SUCCEEDED").contains(status)) {
             cancel.setPhysicalStopConfirmed(true);cancel.setState("STOP_CONFIRMED");execute.setPhysicalStopConfirmed(true);
+            if(job.getStatus()==JobStatus.CANCELLED && job.getStopStatus()!=null) {
+                step.setStatus(JobStepStatus.CANCELLED);step.setEndedAt(clock.instant());
+                control.completeStopped(job,step,execute,"JOB_CANCEL");return;
+            }
             if(!Set.of(JobStepStatus.SUCCEEDED,JobStepStatus.FAILED,JobStepStatus.TIMED_OUT,JobStepStatus.CANCELLED,JobStepStatus.RECOVERY_REQUIRED).contains(step.getStatus())) {
                 if("SUCCEEDED".equals(status)) {
                     if(step.getStatus()!=JobStepStatus.RUNNING || !"STARTED".equals(execute.getState())) {safety.recovery(job,"Succeeded cancel journal lacks committed STEP_STARTED");return;}

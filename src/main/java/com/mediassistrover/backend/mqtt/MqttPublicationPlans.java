@@ -49,7 +49,7 @@ public class MqttPublicationPlans {
         if (!cancel && !cleanup && (executionPolicy.isServer(action, action.getResolvedInputsJson())
                 || !registry.advertises(session, action.getStepTypeSnapshot()))) return null;
         if (!Set.of("PENDING","PUBLISHING","PUBLISHED").contains(command.getState())
-                || job.getStatus()!=JobStatus.RUNNING && !(cancel && Set.of(JobStatus.RECOVERY_REQUIRED,JobStatus.SUSPENDING).contains(job.getStatus()))) return null;
+                || job.getStatus()!=JobStatus.RUNNING && !(cleanup && job.getStatus()==JobStatus.CANCELLED && job.stopOutstanding()) && !(cancel && (Set.of(JobStatus.RECOVERY_REQUIRED,JobStatus.SUSPENDING).contains(job.getStatus()) || job.getStatus()==JobStatus.CANCELLED && job.stopOutstanding()))) return null;
         if(!cancel && (job.getCancelRequestedAt()!=null && !cleanup || commands.findByJobStepIdAndCommandType(command.getJobStepId(),"CANCEL_STEP").isPresent()))return null;
         Instant now=Instant.now(clock);
         if (!command.getExpiresAt().isAfter(now)) {

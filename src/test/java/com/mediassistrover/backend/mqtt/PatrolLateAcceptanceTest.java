@@ -81,4 +81,36 @@ class PatrolLateAcceptanceTest {
         assertThrows(BusinessRuleException.class,()->runtime.apply(job,ack(true,old.getJobStepId(),old.getOperationKey())));
         verifyNoInteractions(safety,control,wakeups,updates);
     }
+
+    @Test void logicallyCancelledJobStillAcceptsScopedStopResultWithoutRestarting() {
+        job.setStatus(JobStatus.CANCELLED);job.setStopStatus(JobStopStatus.PENDING);job.setSelectedJobStep(old);
+        old.setInterruptionReason("JOB_CANCEL");old.setStatus(JobStepStatus.RUNNING);
+        command.setPhysicalStopConfirmed(false);command.setState("STARTED");
+        ReflectionTestUtils.setField(runtime,"wire",new MqttWire());
+        var payload=json.createObjectNode().put("status","CANCELLED").put("physicalStopConfirmed",true);
+        var e=new MqttWire.Envelope("1.0",UUID.randomUUID(),old.getOperationKey(),command.getCommandId(),robot.getRobotId(),job.getJobId(),old.getJobStepId(),
+            "STEP_ERROR",now.toString(),UUID.randomUUID(),5,UUID.randomUUID(),payload);
+        runtime.apply(job,e);
+        assertEquals(JobStatus.CANCELLED,job.getStatus());assertTrue(command.getPhysicalStopConfirmed());
+        verify(control).completeStopped(job,old,command,"JOB_CANCEL");
+    }
+
+    @Test void cancelledOperationCannotClaimStoppedWhileStillRunning() {
+        job.setStatus(JobStatus.CANCELLED);job.setStopStatus(JobStopStatus.PENDING);
+        command.setPhysicalStopConfirmed(false);command.setState("STARTED");
+        var payload=json.createObjectNode().put("status","RUNNING").put("physicalStopConfirmed",true);
+        var e=new MqttWire.Envelope("1.0",UUID.randomUUID(),old.getOperationKey(),command.getCommandId(),robot.getRobotId(),job.getJobId(),old.getJobStepId(),
+            "STEP_ERROR",now.toString(),UUID.randomUUID(),5,UUID.randomUUID(),payload);
+        assertThrows(BusinessRuleException.class,()->runtime.apply(job,e));
+        assertFalse(command.getPhysicalStopConfirmed());verifyNoInteractions(control);
+    }
+
+    @Test void duplicateUnconfirmedResultCannotUndoCommittedStop() {
+        job.setStatus(JobStatus.CANCELLED);job.setStopStatus(JobStopStatus.CONFIRMED);
+        var payload=json.createObjectNode().put("status","CANCELLED").put("physicalStopConfirmed",false);
+        var e=new MqttWire.Envelope("1.0",UUID.randomUUID(),old.getOperationKey(),command.getCommandId(),robot.getRobotId(),job.getJobId(),old.getJobStepId(),
+            "STEP_ERROR",now.toString(),UUID.randomUUID(),5,UUID.randomUUID(),payload);
+        runtime.apply(job,e);unchanged();
+        assertEquals(JobStopStatus.CONFIRMED,job.getStopStatus());
+    }
 }
