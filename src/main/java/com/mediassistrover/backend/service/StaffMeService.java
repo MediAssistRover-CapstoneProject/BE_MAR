@@ -88,6 +88,7 @@ public class StaffMeService {
                         profile.getFaceAvatarVersion(),
                         profile.getUpdatedAt()),
                 shiftRepository.findEffectiveActiveByAccountId(account.getAccountId(), now).stream()
+                        .filter(shift -> shift.getRoom().isOperational())
                         .map(shiftMapper::toResponse)
                         .toList());
     }

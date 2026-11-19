@@ -46,7 +46,7 @@ public class SosResponderRouting {
         } catch (IllegalArgumentException error) {
             return new Assignment(ROOM_UNAVAILABLE, null);
         }
-        var room = rooms.findById(roomId).filter(Room::isActive).orElse(null);
+        var room = rooms.findById(roomId).filter(Room::isOperational).orElse(null);
         if (room == null || !room.getFloor().isActive() || !sameHospital(map, room)) {
             return new Assignment(ROOM_UNAVAILABLE, null);
         }

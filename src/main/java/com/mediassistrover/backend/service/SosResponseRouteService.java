@@ -85,7 +85,7 @@ public class SosResponseRouteService {
             return unavailable(map, destination, "MONITORING_ROOM_INVALID");
         }
         Room room = rooms.findById(roomId).orElse(null);
-        if (room == null || !room.isActive() || !room.getFloor().isActive())
+        if (room == null || !room.isOperationalOn(map))
             return unavailable(map, destination, "MONITORING_ROOM_UNAVAILABLE");
         if (!room.getFloor().getFloorId().equals(map.getFloor().getFloorId()))
             return unavailable(map, destination, "DIFFERENT_FLOOR");

@@ -18,15 +18,27 @@ public interface RoomRepository extends JpaRepository<Room, UUID> {
     Optional<Room> lockById(@Param("id") UUID id);
     boolean existsByRoomCodeIgnoreCase(String roomCode);
     Optional<Room> findByRoomCodeIgnoreCase(String roomCode);
+    @Query("""
+            select r from Room r where r.active = true and r.floor.active = true and r.publicVisible = true
+              and exists (select e.endpointId from Endpoint e where e.room = r and e.active = true
+                and e.publicVisible = true and e.map.status = com.mediassistrover.backend.enums.MapStatus.ACTIVE
+                and e.map.floor = r.floor)
+            """)
     Page<Room> findByActiveTrueAndPublicVisibleTrue(Pageable pageable);
+    @Query("""
+            select r from Room r where r.active = true and r.floor.active = true
+              and exists (select e.endpointId from Endpoint e where e.room = r and e.active = true
+                and e.map.status = com.mediassistrover.backend.enums.MapStatus.ACTIVE and e.map.floor = r.floor)
+            """)
     Page<Room> findByActiveTrue(Pageable pageable);
     @Query("""
-            select r from Room r where r.active = true and r.publicVisible = true
-              and (:mapId is null or exists (
+            select r from Room r where r.active = true and r.floor.active = true and r.publicVisible = true
+              and exists (
                     select e.endpointId from Endpoint e
-                    where e.room = r and e.map.mapId = :mapId
+                    where e.room = r and (:mapId is null or e.map.mapId = :mapId)
                       and e.active = true and e.publicVisible = true
-                  ))
+                      and e.map.status = com.mediassistrover.backend.enums.MapStatus.ACTIVE and e.map.floor = r.floor
+                  )
               and (:floorId is null or r.floor.floorId = :floorId)
               and (:roomType is null or lower(r.roomType) = lower(:roomType))
               and (:departmentCode is null or lower(r.departmentCode) = lower(:departmentCode))
@@ -35,5 +47,11 @@ public interface RoomRepository extends JpaRepository<Room, UUID> {
             """)
     Page<Room> searchPublic(@Param("mapId") UUID mapId, @Param("floorId") UUID floorId, @Param("roomType") String roomType,
             @Param("departmentCode") String departmentCode, @Param("q") String q, Pageable pageable);
-    java.util.Optional<Room> findByRoomIdAndActiveTrueAndPublicVisibleTrue(UUID id);
+    @Query("""
+            select r from Room r where r.roomId = :id and r.active = true and r.floor.active = true and r.publicVisible = true
+              and exists (select e.endpointId from Endpoint e where e.room = r and e.active = true
+                and e.publicVisible = true and e.map.status = com.mediassistrover.backend.enums.MapStatus.ACTIVE
+                and e.map.floor = r.floor)
+            """)
+    java.util.Optional<Room> findByRoomIdAndActiveTrueAndPublicVisibleTrue(@Param("id") UUID id);
 }

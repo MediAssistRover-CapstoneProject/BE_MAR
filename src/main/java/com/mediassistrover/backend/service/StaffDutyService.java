@@ -29,6 +29,7 @@ public class StaffDutyService {
             throw new org.springframework.security.access.AccessDeniedException("This shift belongs to another staff member");
         Instant now=clock.instant();
         if(checkIn) {
+            if(!s.getRoom().isOperational())throw new BusinessRuleException("Phòng trực không còn thuộc bản đồ đang hoạt động.");
             if(s.getCheckedOutAt()!=null)throw new BusinessRuleException("Shift already checked out");
             if(s.getStatus()==ShiftStatus.CANCELLED||s.getStatus()==ShiftStatus.COMPLETED||now.isBefore(s.getStartsAt())||!now.isBefore(s.getEndsAt()))
                 throw new BusinessRuleException("Check-in is only allowed during the assigned shift");
@@ -62,10 +63,12 @@ public class StaffDutyService {
         return account.getAccountId().equals(accountId) && profile.isActive()
                 && account.getStatus()==AccountStatus.ACTIVE && account.getRole()==Role.STAFF && !account.isMustChangePassword()
                 && shift.getStatus()==ShiftStatus.ACTIVE && shift.getCheckedInAt()!=null && shift.getCheckedOutAt()==null
-                && !now.isBefore(shift.getStartsAt()) && now.isBefore(shift.getEndsAt()) && shift.getRoom().isActive();
+                && !now.isBefore(shift.getStartsAt()) && now.isBefore(shift.getEndsAt()) && shift.getRoom().isOperational();
     }
     public Endpoint target(Shift s, UUID map) {
-        Room room=s.getRoom();var group=room.getDefaultEndpointGroup();
+        Room room=s.getRoom();var selected=maps.findById(map).orElseThrow(()->new ResourceNotFoundException("Map not found"));
+        if(!room.isOperationalOn(selected))throw new BusinessRuleException("Room is unavailable on the active delivery map");
+        var group=room.getDefaultEndpointGroup();
         if(group!=null) {
             if(!group.isActive()||!group.getMap().getMapId().equals(map))throw new BusinessRuleException("Configure an active room endpoint group on this map");
             return members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(group.getEndpointGroupId()).stream()
@@ -79,9 +82,11 @@ public class StaffDutyService {
     private boolean usable(Endpoint e, Room r, UUID map){return e.isActive()&&e.isAccessible()&&e.getRoom()!=null&&e.getRoom().getRoomId().equals(r.getRoomId())&&e.getMap().getMapId().equals(map);}
     public List<Duty> list(UUID map,UUID room){
         FacilityMap selected=map==null?null:maps.findById(map).orElseThrow(()->new ResourceNotFoundException("Map not found"));
+        if(selected!=null && selected.getStatus()!=MapStatus.ACTIVE)return List.of();
         return shifts.findOnDuty(clock.instant()).stream()
+        .filter(s->s.getRoom().isOperational())
         .filter(s->room==null||room.equals(s.getRoom().getRoomId()))
-        .filter(s->selected==null||selected.getFloor().getFloorId().equals(s.getRoom().getFloor().getFloorId()))
+        .filter(s->selected==null||s.getRoom().isOperationalOn(selected))
         .map(s->{Endpoint e=null;String reason=null;try{if(map!=null)e=target(s,map);else reason="Select a map";}catch(BusinessRuleException ex){reason=ex.getMessage();}
             var p=s.getStaffProfile();var a=p.getAccount();return new Duty(p.getStaffProfileId(),a.getAccountId(),a.getFullName(),p.getUrl(),s.getShiftId(),s.getStartsAt(),s.getEndsAt(),s.getCheckedInAt(),s.getRoom().getRoomId(),s.getRoom().getRoomCode(),s.getRoom().getRoomName(),e==null?null:e.getEndpointId(),e!=null,reason,p.getFaceStatus());}).toList();}
 }

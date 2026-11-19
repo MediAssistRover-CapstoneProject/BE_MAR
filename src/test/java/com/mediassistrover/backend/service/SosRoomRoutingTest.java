@@ -29,6 +29,7 @@ class SosRoomRoutingTest {
             .floor(Floor.builder().active(true).build()).build();
 
     @BeforeEach void configureRoom() {
+        makeOperational(room);
         when(settings.getString(SosResponderRouting.MONITORING_ROOM_SETTING, "")).thenReturn(roomId.toString());
         when(rooms.findById(roomId)).thenReturn(Optional.of(room));
         when(shifts.findOnDutySosResponders(eq(roomId), eq(now), any(Pageable.class))).thenReturn(List.of(responder));
@@ -87,6 +88,7 @@ class SosRoomRoutingTest {
         routing.assign(original, now);
         var nextRoomId = UUID.randomUUID();
         var nextRoom = Room.builder().roomId(nextRoomId).active(true).floor(room.getFloor()).build();
+        makeOperational(nextRoom);
         var nextResponder = Account.builder().accountId(UUID.randomUUID()).build();
         when(settings.getString(SosResponderRouting.MONITORING_ROOM_SETTING, "")).thenReturn(nextRoomId.toString());
         when(rooms.findById(nextRoomId)).thenReturn(Optional.of(nextRoom));
@@ -96,5 +98,11 @@ class SosRoomRoutingTest {
         assertSame(nextResponder, next.getSosResponder());
         assertSame(responder, original.getSosResponder());
         assertEquals(ASSIGNED, original.getSosRoutingStatus());
+    }
+    private void makeOperational(Room target) {
+        if(target.getFloor().getFloorId()==null)target.getFloor().setFloorId(UUID.randomUUID());
+        var map=FacilityMap.builder().mapId(UUID.randomUUID()).floor(target.getFloor())
+                .status(com.mediassistrover.backend.enums.MapStatus.ACTIVE).build();
+        target.getEndpoints().add(Endpoint.builder().map(map).room(target).active(true).build());
     }
 }

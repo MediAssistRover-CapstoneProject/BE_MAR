@@ -94,6 +94,7 @@ public class ShiftServiceImpl implements ShiftService {
             case COMPLETED, CANCELLED -> false;
         };
         if (!allowed) throw new BusinessRuleException("Invalid Shift transition: " + current + " -> " + request.status());
+        if (request.status() == ShiftStatus.ACTIVE) activeRoom(shift.getRoom().getRoomId());
         Map<String, Object> before = auditData(shift);
         shift.setStatus(request.status());
         if (request.note() != null) shift.setNote(request.note());
@@ -262,7 +263,7 @@ public class ShiftServiceImpl implements ShiftService {
     }
     private Room activeRoom(UUID id) {
         Room room = roomRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException("Room not found: " + id));
-        if (!room.isActive()) throw new BusinessRuleException("Shift can only use an active Room");
+        if (!room.isOperational()) throw new BusinessRuleException("Phòng phân ca phải thuộc bản đồ đang hoạt động và có điểm được kích hoạt.");
         return room;
     }
     private Account account(UUID id) {

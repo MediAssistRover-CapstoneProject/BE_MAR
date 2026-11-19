@@ -33,7 +33,7 @@ public final class FacilityResponses {
             String description, Instant createdAt, Instant updatedAt) { }
     public record RoomResponse(UUID roomId, UUID floorId, UUID defaultEndpointGroupId, String roomCode,
             String roomName, String roomType, String departmentCode, String description, boolean active,
-            boolean publicVisible, Instant createdAt, Instant updatedAt) { }
+            boolean publicVisible, Instant createdAt, Instant updatedAt, boolean operational) { }
     public record EndpointResponse(UUID endpointId, UUID mapId, UUID zoneId, UUID roomId, String endpointCode,
             String endpointName, EndpointType endpointType, BigDecimal xM, BigDecimal yM, BigDecimal yawRad,
             boolean active, boolean accessible, boolean publicVisible, String description,

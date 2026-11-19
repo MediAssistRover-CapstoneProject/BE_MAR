@@ -41,8 +41,9 @@ class StaffDeliveryRoutingTest {
  @BeforeEach void setup(){mocks=MockitoAnnotations.openMocks(this);
  sender=Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).status(AccountStatus.ACTIVE).build();
  receiver=Account.builder().accountId(UUID.randomUUID()).fullName("Receiver").role(Role.STAFF).status(AccountStatus.ACTIVE).build();actor=AccountPrincipal.fromAccount(sender);
- var floor=Floor.builder().floorId(UUID.randomUUID()).build();map=FacilityMap.builder().mapId(UUID.randomUUID()).floor(floor).build();room=Room.builder().roomId(UUID.randomUUID()).roomCode("102").floor(floor).active(true).build();
+ var floor=Floor.builder().floorId(UUID.randomUUID()).active(true).build();map=FacilityMap.builder().mapId(UUID.randomUUID()).floor(floor).status(MapStatus.ACTIVE).build();room=Room.builder().roomId(UUID.randomUUID()).roomCode("102").floor(floor).active(true).build();
  pickup=Endpoint.builder().endpointId(UUID.randomUUID()).map(map).active(true).accessible(true).build();target=Endpoint.builder().endpointId(UUID.randomUUID()).map(map).room(room).active(true).accessible(true).build();
+ room.getEndpoints().add(target);
  shift=Shift.builder().shiftId(UUID.randomUUID()).room(room).staffProfile(StaffProfile.builder().account(receiver).build()).build();
  when(duty.require(shift.getShiftId(),receiver.getAccountId())).thenReturn(shift);when(duty.target(shift,map.getMapId())).thenReturn(target);
  when(maps.findById(map.getMapId())).thenReturn(Optional.of(map));when(rooms.findById(room.getRoomId())).thenReturn(Optional.of(room));

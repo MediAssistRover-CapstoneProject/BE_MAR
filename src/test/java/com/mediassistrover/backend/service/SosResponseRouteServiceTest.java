@@ -24,8 +24,9 @@ class SosResponseRouteServiceTest {
         var maps = mock(MapBundleService.class);
         var service = new SosResponseRouteService(incidents,scope,settings,rooms,endpoints,maps);
         var floor = Floor.builder().floorId(UUID.randomUUID()).active(true).build();
-        var map = FacilityMap.builder().mapId(UUID.randomUUID()).floor(floor).assetHash("test-hash").build();
+        var map = FacilityMap.builder().mapId(UUID.randomUUID()).floor(floor).status(MapStatus.ACTIVE).assetHash("test-hash").build();
         var room = Room.builder().roomId(UUID.randomUUID()).floor(floor).active(true).build();
+        room.getEndpoints().add(Endpoint.builder().map(map).room(room).active(true).build());
         var incident = EmergencyIncident.builder().incidentId(UUID.randomUUID()).incidentType("SOS")
                 .status(EmergencyIncidentStatus.IN_PROGRESS).map(map)
                 .xM(new BigDecimal(".25")).yM(new BigDecimal(".05")).build();
@@ -92,8 +93,9 @@ class SosResponseRouteServiceTest {
         var service = new SosResponseRouteService(incidents, mock(StaffOperationalScopePolicy.class),
                 settings, rooms, endpoints, maps);
         var floor = Floor.builder().floorId(UUID.randomUUID()).active(true).build();
-        var map = FacilityMap.builder().mapId(UUID.randomUUID()).floor(floor).assetHash("depth-hash").build();
+        var map = FacilityMap.builder().mapId(UUID.randomUUID()).floor(floor).status(MapStatus.ACTIVE).assetHash("depth-hash").build();
         var room = Room.builder().roomId(UUID.randomUUID()).floor(floor).active(true).build();
+        room.getEndpoints().add(Endpoint.builder().map(map).room(room).active(true).build());
         var robot = Robot.builder().robotId(UUID.randomUUID()).build();
         var observedAt = Instant.parse("2026-11-15T15:00:00Z");
         var evidence = new ObjectMapper().createObjectNode().put("source", "PATROL_VISION_AI");

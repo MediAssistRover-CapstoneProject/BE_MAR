@@ -17,7 +17,11 @@ class StaffDutyServiceTest {
  Account a;Shift shift;AccountPrincipal actor;UUID map=UUID.randomUUID();
  @BeforeEach void setup(){a=Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).status(AccountStatus.ACTIVE).build();actor=AccountPrincipal.fromAccount(a);
  shift=Shift.builder().shiftId(UUID.randomUUID()).staffProfile(StaffProfile.builder().account(a).active(true).build()).room(Room.builder().roomId(UUID.randomUUID()).active(true).build())
- .startsAt(now.minusSeconds(60)).endsAt(now.plusSeconds(60)).status(ShiftStatus.PLANNED).build();when(shifts.lockAttendance(shift.getShiftId())).thenReturn(Optional.of(shift));}
+ .startsAt(now.minusSeconds(60)).endsAt(now.plusSeconds(60)).status(ShiftStatus.PLANNED).build();when(shifts.lockAttendance(shift.getShiftId())).thenReturn(Optional.of(shift));
+ var floor=Floor.builder().floorId(UUID.randomUUID()).active(true).build();shift.getRoom().setFloor(floor);
+ var activeMap=FacilityMap.builder().mapId(map).floor(floor).status(MapStatus.ACTIVE).build();
+ shift.getRoom().getEndpoints().add(Endpoint.builder().map(activeMap).room(shift.getRoom()).active(true).build());
+ when(maps.findById(map)).thenReturn(Optional.of(activeMap));}
  @Test void checkInIsIdempotentAndCheckoutRemovesEligibility(){service.attendance(shift.getShiftId(),actor,true);service.attendance(shift.getShiftId(),actor,true);
  assertEquals(now,shift.getCheckedInAt());assertEquals(ShiftStatus.ACTIVE,shift.getStatus());assertSame(shift,service.require(shift.getShiftId(),a.getAccountId()));
  shift.setEndsAt(now);
@@ -35,6 +39,12 @@ class StaffDutyServiceTest {
  }
  @Test void rejectsOtherStaffAndCancelledShift(){var other=AccountPrincipal.fromAccount(Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).status(AccountStatus.ACTIVE).build());
  assertThrows(org.springframework.security.access.AccessDeniedException.class,()->service.attendance(shift.getShiftId(),other,true));shift.setStatus(ShiftStatus.CANCELLED);assertThrows(BusinessRuleException.class,()->service.attendance(shift.getShiftId(),actor,true));}
+ @Test void switchingAwayFromRoomMapRemovesDutyAndBlocksCheckIn(){
+ service.attendance(shift.getShiftId(),actor,true);
+ shift.getRoom().getEndpoints().getFirst().getMap().setStatus(MapStatus.INACTIVE);
+ assertFalse(service.receiverStillOnDuty(shift.getShiftId(),a.getAccountId(),shift.getRoom().getRoomId()));
+ assertThrows(BusinessRuleException.class,()->service.require(shift.getShiftId(),a.getAccountId()));
+ assertThrows(BusinessRuleException.class,()->service.attendance(shift.getShiftId(),actor,true));}
  Endpoint endpoint(){return Endpoint.builder().endpointId(UUID.randomUUID()).map(FacilityMap.builder().mapId(map).build()).room(shift.getRoom()).active(true).accessible(true).build();}
  @Test void refusesAmbiguousOrMissingRoomEndpoints(){when(endpoints.findByMapMapIdOrderByEndpointCodeAsc(map)).thenReturn(List.of());assertThrows(BusinessRuleException.class,()->service.target(shift,map));
  var first=endpoint();when(endpoints.findByMapMapIdOrderByEndpointCodeAsc(map)).thenReturn(List.of(first));assertSame(first,service.target(shift,map));

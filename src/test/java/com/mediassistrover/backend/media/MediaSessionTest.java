@@ -142,7 +142,10 @@ class MediaSessionTest {
         var settings = mock(RuntimeSettingService.class);
         var shifts = mock(ShiftRepository.class);
         var rooms = mock(RoomRepository.class);
-        var room = Room.builder().roomId(UUID.randomUUID()).active(true).floor(Floor.builder().active(true).build()).build();
+        var room = Room.builder().roomId(UUID.randomUUID()).active(true).floor(Floor.builder().floorId(UUID.randomUUID()).active(true).build()).build();
+        var activeMap=FacilityMap.builder().mapId(UUID.randomUUID()).floor(room.getFloor())
+                .status(com.mediassistrover.backend.enums.MapStatus.ACTIVE).build();
+        room.getEndpoints().add(Endpoint.builder().map(activeMap).room(room).active(true).build());
         var incident = EmergencyIncident.builder().robot(Robot.builder().robotId(UUID.randomUUID()).build()).build();
         var routing = new SosResponderRouting(settings, rooms, shifts);
         when(settings.getString(SosResponderRouting.MONITORING_ROOM_SETTING, "")).thenReturn(room.getRoomId().toString());
