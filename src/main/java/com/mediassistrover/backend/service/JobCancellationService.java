@@ -50,7 +50,7 @@ public class JobCancellationService {
         for(var step:steps.findByJobId(job.getJobId())) {
             if(step.isMappingCleanup())continue;
             var execute=commands.findByJobStepId(step.getJobStepId()).orElse(null);
-            if(execute!=null && execute.getSendAttempts()>0 && !settled(execute)) {
+            if(execute!=null && execute.getSendAttempts()>0 && !settled(execute,job)) {
                 step.setInterruptionReason("JOB_CANCEL");step.setInterruptionRequestedAt(now);
                 execute.setInterruptionReason("JOB_CANCEL");
             } else if(Set.of(JobStepStatus.PENDING,JobStepStatus.RUNNING,JobStepStatus.RETRYING).contains(step.getStatus())) {
@@ -85,19 +85,19 @@ public class JobCancellationService {
             var visit=steps.findById(command.getJobStepId()).orElse(null);
             if(visit!=null && visit.isMappingCleanup()) {
                 sent|=command.getSendAttempts()>0;
-                if(!settled(command)){control.handle(job,visit);pending=!settled(command)||pending;}
+                if(!settled(command,job)){control.handle(job,visit);pending=!settled(command,job)||pending;}
                 continue;
             }
             if(command.getSendAttempts()==0) {
                 command.setState("ABANDONED");command.setPhysicalStopConfirmed(true);continue;
             }
             sent=true;
-            if(settled(command))continue;
+            if(settled(command,job))continue;
             JobStep step=steps.findById(command.getJobStepId()).orElseThrow();
             step.setInterruptionReason("JOB_CANCEL");
             if(step.getInterruptionRequestedAt()==null)step.setInterruptionRequestedAt(clock.instant());
             control.handle(job,step);
-            if(!settled(command))pending=true;
+            if(!settled(command,job))pending=true;
         }
         if(mapping.open(job.getJobId())) {
             var cleanup=job.getSelectedJobStep();
@@ -124,7 +124,8 @@ public class JobCancellationService {
         events.publishEvent(new RuntimeChanged(job.getJobId()));
     }
 
-    private static boolean settled(RobotCommandOutbox command) {
-        return Boolean.TRUE.equals(command.getPhysicalStopConfirmed()) || "RESOLVED_BY_STAFF".equals(command.getState());
+    private static boolean settled(RobotCommandOutbox command,Job job) {
+        return Boolean.TRUE.equals(command.getPhysicalStopConfirmed()) || "RESOLVED_BY_STAFF".equals(command.getState())
+                || com.mediassistrover.backend.mqtt.MqttJobSafety.completedWithoutPhysicalStop(command,job.getCancelRequestedAt());
     }
 }

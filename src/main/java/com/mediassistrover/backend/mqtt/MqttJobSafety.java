@@ -26,7 +26,7 @@ public class MqttJobSafety {
     public void failSettledRecovery(Job job) {
         if (!job.isBeOrchestrated() || job.getStatus()!=JobStatus.RECOVERY_REQUIRED) return;
         var history=commands.findByJobIdOrderByCreatedAt(job.getJobId());
-        if (!history.stream().allMatch(MqttJobSafety::settledForDisconnect)) return;
+        if (!history.stream().allMatch(command -> settledForDisconnect(command,job.getCancelRequestedAt()))) return;
         JobStep selected=job.getSelectedJobStep();
         if (selected!=null && Set.of(JobStepStatus.RUNNING,JobStepStatus.RECOVERY_REQUIRED).contains(selected.getStatus())
                 && Set.of("MOVE","CONTROL_HARDWARE","EXECUTE_SENSING").contains(selected.getStepTypeSnapshot())
@@ -66,18 +66,44 @@ public class MqttJobSafety {
         updates.publishEvent(new com.mediassistrover.backend.service.RuntimeChanged(job.getJobId()));
     }
 
-    private static boolean settledForDisconnect(RobotCommandOutbox command) {
+    /** Completed speech/wait has no wheel/servo stop to prove. Unknown or interrupted work stays blocked. */
+    public static boolean completedWithoutPhysicalStop(RobotCommandOutbox command,Instant cancelRequestedAt) {
+        if(!"EXECUTE_STEP".equals(command.getCommandType()) || command.getSendAttempts()==0
+                || !"COMPLETED".equals(command.getState())
+                || command.getPayloadJson()==null)return false;
+        String type=command.getPayloadJson().path("step").path("stepType").asText();
+        if(!Set.of("WAIT","INTERACT").contains(type))return false;
+        if(command.getInterruptionReason()==null)return true;
+        // Older cancellation code marked even speech that had already completed.
+        // Keep the original, scoped success receipt; never manufacture physical stop evidence.
+        var receipt=command.getResultEnvelopeJson();
+        if(!"JOB_CANCEL".equals(command.getInterruptionReason()) || cancelRequestedAt==null || receipt==null
+                || !"STEP_RESULT".equals(receipt.path("messageType").asText())
+                || !"SUCCEEDED".equals(receipt.path("payload").path("status").asText())
+                || command.getCommandId()==null || command.getJobId()==null || command.getJobStepId()==null || command.getRobotId()==null
+                || !command.getCommandId().toString().equals(receipt.path("correlationId").asText())
+                || !command.getJobId().toString().equals(receipt.path("jobId").asText())
+                || !command.getJobStepId().toString().equals(receipt.path("jobStepId").asText())
+                || !command.getRobotId().toString().equals(receipt.path("robotId").asText())
+                || command.getOperationKey()==null || !command.getOperationKey().equals(receipt.path("operationKey").asText())
+                || receipt.path("payload").has("stepType") && !type.equals(receipt.path("payload").path("stepType").asText()))return false;
+        try{return Instant.parse(receipt.path("occurredAt").asText()).isBefore(cancelRequestedAt);}
+        catch(java.time.format.DateTimeParseException invalid){return false;}
+    }
+
+    private static boolean settledForDisconnect(RobotCommandOutbox command,Instant cancelRequestedAt) {
         String state=command.getState();
         if (command.getSendAttempts()==0) return Set.of("ABANDONED","EXPIRED").contains(state);
         boolean stopped=Boolean.TRUE.equals(command.getPhysicalStopConfirmed());
         if ("CANCEL_STEP".equals(command.getCommandType())) return "STOP_CONFIRMED".equals(state) && stopped;
         if (!"EXECUTE_STEP".equals(command.getCommandType()) || !"COMPLETED".equals(state)) return false;
+        if(completedWithoutPhysicalStop(command,cancelRequestedAt))return true;
         if (command.getInterruptionReason()!=null && !stopped) return false;
         var step=command.getPayloadJson().path("step");
         return switch (step.path("stepType").asText()) {
             case "MOVE" -> stopped;
             case "EXECUTE_SENSING" -> !"MAPPING".equals(step.path("params").path("sensing_type").asText()) || stopped;
-            case "WAIT", "INTERACT" -> true;
+            case "WAIT", "INTERACT" -> stopped;
             // A sent servo command requires review of the compartment state.
             default -> false;
         };

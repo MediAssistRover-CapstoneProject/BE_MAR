@@ -145,6 +145,46 @@ class ImmediateJobCancelTest {
         assertEquals(JobStopStatus.CONFIRMED,job.getStopStatus());assertEquals(RobotStatus.IDLE,job.getRobot().getStatus());
     }
 
+    @Test void completedSpeechDoesNotKeepCancelledMoveInRecovery() {
+        var job=job(JobStatus.RUNNING);var json=new ObjectMapper();
+        var speech=JobStep.builder().jobStepId(UUID.randomUUID()).stepTypeSnapshot("INTERACT").status(JobStepStatus.SUCCEEDED).build();
+        var move=JobStep.builder().jobStepId(UUID.randomUUID()).stepTypeSnapshot("MOVE").status(JobStepStatus.RUNNING).build();
+        job.setSelectedJobStep(move);
+        var finished=RobotCommandOutbox.builder().commandId(UUID.randomUUID()).jobId(job.getJobId()).jobStepId(speech.getJobStepId())
+                .robotId(job.getRobot().getRobotId()).operationKey("job:speech:1").commandType("EXECUTE_STEP").state("COMPLETED").sendAttempts(1)
+                .payloadJson(json.createObjectNode().set("step",json.createObjectNode().put("stepType","INTERACT"))).build();
+        var moving=RobotCommandOutbox.builder().commandId(UUID.randomUUID()).jobId(job.getJobId()).jobStepId(move.getJobStepId())
+                .commandType("EXECUTE_STEP").state("STARTED").sendAttempts(1).build();
+        when(commands.findByJobIdOrderByCreatedAt(job.getJobId())).thenReturn(List.of(finished,moving));
+        when(steps.findById(speech.getJobStepId())).thenReturn(Optional.of(speech));
+        when(steps.findById(move.getJobStepId())).thenReturn(Optional.of(move));
+        when(steps.findByJobId(job.getJobId())).thenReturn(List.of(speech,move));
+        service.cancel(job.getJobId(),new CancelJobRequest("stop current move"),actor,null);
+        assertEquals(JobStopStatus.PENDING,job.getStopStatus());
+        verify(control,never()).handle(job,speech);verify(control).handle(job,move);
+        assertNull(finished.getPhysicalStopConfirmed());assertEquals(JobStepStatus.SUCCEEDED,speech.getStatus());
+        moving.setPhysicalStopConfirmed(true);cancellation.advance(job.getJobId());
+        assertEquals(JobStopStatus.CONFIRMED,job.getStopStatus());assertEquals(RobotStatus.IDLE,job.getRobot().getStatus());
+        // The shared exception is restricted to completed, uninterrupted speech/wait.
+        for(String type:List.of("MOVE","CONTROL_HARDWARE","EXECUTE_SENSING")) {
+            finished.setPayloadJson(json.createObjectNode().set("step",json.createObjectNode().put("stepType",type)));
+            assertFalse(com.mediassistrover.backend.mqtt.MqttJobSafety.completedWithoutPhysicalStop(finished,job.getCancelRequestedAt()));
+        }
+        finished.setPayloadJson(json.createObjectNode().set("step",json.createObjectNode().put("stepType","INTERACT")));
+        finished.setInterruptionReason("JOB_CANCEL");assertFalse(com.mediassistrover.backend.mqtt.MqttJobSafety.completedWithoutPhysicalStop(finished,job.getCancelRequestedAt()));
+        var success=json.createObjectNode().put("messageType","STEP_RESULT").put("jobId",job.getJobId().toString())
+                .put("jobStepId",speech.getJobStepId().toString()).put("robotId",job.getRobot().getRobotId().toString())
+                .put("correlationId",finished.getCommandId().toString()).put("operationKey",finished.getOperationKey())
+                .put("occurredAt",job.getCancelRequestedAt().minusSeconds(10).toString());
+        success.putObject("payload").put("status","SUCCEEDED").put("stepType","INTERACT");finished.setResultEnvelopeJson(success);
+        job.setStopStatus(JobStopStatus.RECOVERY_REQUIRED);cancellation.advance(job.getJobId());
+        assertEquals(JobStopStatus.CONFIRMED,job.getStopStatus());assertNull(finished.getPhysicalStopConfirmed());
+        success.put("occurredAt",job.getCancelRequestedAt().plusSeconds(1).toString());
+        assertFalse(com.mediassistrover.backend.mqtt.MqttJobSafety.completedWithoutPhysicalStop(finished,job.getCancelRequestedAt()));
+        success.put("occurredAt",job.getCancelRequestedAt().minusSeconds(10).toString()).put("correlationId",UUID.randomUUID().toString());
+        assertFalse(com.mediassistrover.backend.mqtt.MqttJobSafety.completedWithoutPhysicalStop(finished,job.getCancelRequestedAt()));
+    }
+
     @Test void cancellingSuspendedPatrolDoesNotReleaseItsForegroundRobot() {
         var job=job(JobStatus.SUSPENDED);job.setBeOrchestrated(true);job.setSchemaVersion(3);job.setResumeRequested(true);
         var foreground=job(JobStatus.RUNNING);

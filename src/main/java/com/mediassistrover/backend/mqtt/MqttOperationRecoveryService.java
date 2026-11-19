@@ -141,7 +141,9 @@ public class MqttOperationRecoveryService {
             row.put("operatorReconciled",operatorReconciled);
             if(command.getLastPublishAt()!=null)row.put("lastPublishedAt",command.getLastPublishAt().toString());
             if(command.getAcknowledgedAt()!=null)row.put("acknowledgedAt",command.getAcknowledgedAt().toString());
-            if(!Boolean.TRUE.equals(command.getPhysicalStopConfirmed()))uncertain=true;
+            if("EXECUTE_STEP".equals(command.getCommandType()) && command.getSendAttempts()>0
+                    && !Boolean.TRUE.equals(command.getPhysicalStopConfirmed()) && !"RESOLVED_BY_STAFF".equals(command.getState())
+                    && !MqttJobSafety.completedWithoutPhysicalStop(command,job.getCancelRequestedAt()))uncertain=true;
         }
         var eventList=result.putArray("events");events.findByJobJobId(jobId,PageRequest.of(0,50,Sort.by(Sort.Direction.DESC,"occurredAt"))).forEach(event->eventList.addObject()
                 .put("jobEventId",event.getJobEventId().toString()).put("eventType",event.getEventType())
@@ -167,7 +169,10 @@ public class MqttOperationRecoveryService {
         if(previous!=null){em.refresh(previous,jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
             if(!actor.getAccountId().equals(previous.getActorAccountId()) || !body.equals(previous.getRequestJson()))throw new ConflictException("Recovery key reused with different actor/body");
             return previous.getResponseJson().deepCopy();}
-        boolean cancelledRecovery=job.getStatus()==JobStatus.CANCELLED && job.stopOutstanding();
+        // Physical stop may settle before the selected Pi journal recovery is reviewed.
+        boolean cancelledRecovery=job.getStatus()==JobStatus.CANCELLED && (job.stopOutstanding()
+                || step.getStatus()==JobStepStatus.RECOVERY_REQUIRED && job.getSelectedJobStep()!=null
+                && stepId.equals(job.getSelectedJobStep().getJobStepId()));
         if(!job.isBeOrchestrated() || (!cancelledRecovery && (job.getStatus()!=JobStatus.RECOVERY_REQUIRED || job.getSelectedJobStep()==null || !stepId.equals(job.getSelectedJobStep().getJobStepId()))))
             throw new BusinessRuleException("Recovery requires the selected operation of a BE recovery Job");
         boolean rejectedOnly=request.evidence()==MqttOperationRecoveryRequest.Evidence.COMMAND_NOT_ACCEPTED;
@@ -219,7 +224,8 @@ public class MqttOperationRecoveryService {
         if(job.getStopStatus()!=null) {
             boolean outstanding=commands.findByJobIdOrderByCreatedAt(jobId).stream().anyMatch(command ->
                 "EXECUTE_STEP".equals(command.getCommandType()) && command.getSendAttempts()>0
-                && !Boolean.TRUE.equals(command.getPhysicalStopConfirmed()) && !"RESOLVED_BY_STAFF".equals(command.getState()));
+                && !Boolean.TRUE.equals(command.getPhysicalStopConfirmed()) && !"RESOLVED_BY_STAFF".equals(command.getState())
+                && !MqttJobSafety.completedWithoutPhysicalStop(command,job.getCancelRequestedAt()));
             job.setStopStatus(outstanding?JobStopStatus.RECOVERY_REQUIRED:JobStopStatus.CONFIRMED);
             if(!outstanding)job.setStopConfirmedAt(now);
         }

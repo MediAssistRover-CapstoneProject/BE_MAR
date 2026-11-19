@@ -1,5 +1,13 @@
 # Giao hàng QR hoặc khuôn mặt
 
+## Trạng thái triển khai ngày 19/11/2026
+
+BE production `9e0d273` đã bật `FACE_ENABLED=true` trong `/etc/mediassistrover/face.env`, restart thành công và health UP. BE gọi AI_FACE qua private `172.31.35.139:8095`, model READY. Workflow `4ce15b1f-8557-43e4-932c-e90d635e3926` (`WF_STAFF_FACE_DELIVERY_8CB60746D2B7`) đã VALIDATED/PUBLISHED, không có cảnh báo; AUTH_SENDER là QR và AUTH_RECEIVER là FACE. Không tạo job hoặc mở servo khi cấu hình.
+
+Pi `192.168.101.162` đã bật scanner face, giữ STAFF_VERIFIED, đồng bộ `step_store.py` và `step_worker.py` theo `774f306` sau 39 kiểm tra RAM không lỗi. Journal đã backup; không đưa file test lên Pi. Stack MAR đang dừng; cấu hình gốc vẫn mapping, chưa có navigation_session. Mở navigation mới rồi chạy lệnh BE sinh và localize trước khi tạo job.
+
+`staff02` có ảnh PENDING, chưa được admin duyệt; `staff2` chưa có ảnh. Chỉ staff nhận hàng quan trọng cần mẫu READY. Việc duyệt ảnh phải do admin đối chiếu đúng người; không tự duyệt hoặc enroll trong lượt kiểm tra này. Khung khuôn mặt chưa được nối vào WebRTC và liveness vẫn false.
+
 ## Hành vi
 
 Staff gửi đánh dấu **Hàng quan trọng** khi tạo đơn (`items[].sensitive=true`). Chỉ cần một món quan trọng thì BE yêu cầu `FACE_VERIFICATION` ở chặng người nhận; người giao luôn dùng `QR_CODE`. Tất cả món thông thường dùng QR ở cả hai chặng. Ghi chú `deliveryNote` chỉ mô tả hàng, không được dò từ khóa để quyết định mở khóa. Nếu bỏ `authenticationMethod`, BE suy ra từ danh sách món; gửi phương thức trái chính sách bị từ chối. Phương thức của người nhận được lưu trên DeliveryRequest và `authentication_method` trong input job. Backend chọn workflow published có phương thức AUTHENTICATE phù hợp. Không tự đổi sang QR khi face lỗi hoặc chưa có mẫu staff được duyệt.
