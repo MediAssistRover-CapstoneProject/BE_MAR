@@ -26,6 +26,13 @@ import java.util.UUID;
 @PreAuthorize("hasAnyRole('ADMIN','STAFF')") @Tag(name="Emergency Incidents")
 public class EmergencyController {
     private final EmergencyService service;
+    @PostMapping("/{id}/cancel")
+    @io.swagger.v3.oas.annotations.Operation(summary="Close a fall incident and cancel its response jobs over MQTT")
+    public Object cancel(@PathVariable UUID id,@Valid @RequestBody com.mediassistrover.backend.dto.job.request.JobRequests.CancelJobRequest body,
+            @AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request) {
+        return service.cancelFall(id,body.reason(),actor,RequestMetadataFactory.from(request));
+    }
+
     private final com.mediassistrover.backend.service.SosResponseRouteService responseRoutes;
     private final com.mediassistrover.backend.service.DeletionPolicy deletionPolicy;
     @GetMapping public PageResponse<IncidentResponse> list(@RequestParam(required=false)EmergencyIncidentStatus status,

@@ -173,8 +173,8 @@ public class MqttSessionRegistry {
             }
         }
         RobotStatus previous=robot.getStatus();
-        boolean held=active.stream().anyMatch(j->com.mediassistrover.backend.service.JobOccupancyPolicy.EXECUTING.contains(j.getStatus()));
-        boolean recovery=active.stream().anyMatch(j->j.getStatus()==JobStatus.RECOVERY_REQUIRED);
+        boolean held=active.stream().anyMatch(j->com.mediassistrover.backend.service.JobOccupancyPolicy.EXECUTING.contains(j.getStatus()) || j.stopOutstanding());
+        boolean recovery=active.stream().anyMatch(j->j.getStatus()==JobStatus.RECOVERY_REQUIRED || j.getStopStatus()==JobStopStatus.RECOVERY_REQUIRED);
         RobotStatus next=recovery || "ERROR".equals(p.path("status").asText())?RobotStatus.ERROR:
                 held || "BUSY".equals(p.path("status").asText()) || mappingOpen?RobotStatus.BUSY:RobotStatus.IDLE;
         robot.setStatus(next);robot.setLastHeartbeatAt(now);robot.setRuntimeVersion(p.path("runtimeVersion").asText());robot.setCurrentMap(map);

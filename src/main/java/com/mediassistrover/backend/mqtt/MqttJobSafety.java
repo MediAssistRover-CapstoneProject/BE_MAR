@@ -84,6 +84,11 @@ public class MqttJobSafety {
     }
 
     public void recovery(Job job,String reason) {
+        if(job.getStatus()==JobStatus.CANCELLED && job.stopOutstanding()) {
+            job.setStopStatus(JobStopStatus.RECOVERY_REQUIRED);job.setFailureReason(reason);
+            if(job.getRobot()!=null)job.getRobot().setStatus(RobotStatus.ERROR);
+            updates.publishEvent(new com.mediassistrover.backend.service.RuntimeChanged(job.getJobId()));return;
+        }
         if (!job.isBeOrchestrated() || Set.of(JobStatus.SUCCEEDED,JobStatus.FAILED,JobStatus.CANCELLED).contains(job.getStatus())) return;
         boolean changed=job.getStatus()!=JobStatus.RECOVERY_REQUIRED;
         job.setStatus(JobStatus.RECOVERY_REQUIRED);job.setErrorCode("MQTT_RECOVERY_REQUIRED");job.setFailureReason(reason);

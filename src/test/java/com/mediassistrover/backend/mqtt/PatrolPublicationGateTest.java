@@ -42,4 +42,18 @@ class PatrolPublicationGateTest {
         assertNull(plans.command(id));verifyNoInteractions(arbitration);
         verify(properties).manages(robotId);
     }
+
+    @Test void cancelledJobPublishesStopWhileExecutionRemainsBlocked() {
+        var now=java.time.Instant.now();var transport=UUID.randomUUID();
+        var session=new RobotMqttSession();session.setTransportSessionId(transport);session.setHandshakeAcked(true);session.setLastHeartbeatAt(now);
+        var registry=mock(MqttSessionRegistry.class);
+        when(sessions.lock(robotId)).thenReturn(Optional.of(session));when(registry.owned(session)).thenReturn(true);
+        ReflectionTestUtils.setField(plans,"registry",registry);ReflectionTestUtils.setField(plans,"clock",java.time.Clock.fixed(now,java.time.ZoneOffset.UTC));
+        job.setStatus(JobStatus.CANCELLED);job.setStopStatus(com.mediassistrover.backend.enums.JobStopStatus.PENDING);
+        command.setCommandType("CANCEL_STEP");command.setState("PENDING");command.setExpiresAt(now.plusSeconds(30));
+        command.setPayloadJson(new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode().put("transportSessionId",transport.toString()));
+        when(properties.manages(robotId)).thenReturn(true);
+        assertNotNull(plans.command(id));assertEquals(1,command.getSendAttempts());
+        assertEquals("PUBLISHING",command.getState());verifyNoInteractions(arbitration);
+    }
 }

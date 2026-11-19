@@ -61,7 +61,7 @@ public class MqttStepDispatchService {
         if(!step.isMappingCleanup() && !rollout.dispatchAllowed())return;
         if (!properties.isEnabled() || !properties.isDispatchEnabled() && !step.isMappingCleanup()) return;
         Job job=step.getJobTask().getJob();
-        if (!job.isBeOrchestrated() || job.getStatus()!=JobStatus.RUNNING || job.getSelectedJobStep()==null
+        if (!job.isBeOrchestrated() || (job.getStatus()!=JobStatus.RUNNING && !(job.getStatus()==JobStatus.CANCELLED && job.stopOutstanding() && step.isMappingCleanup())) || job.getSelectedJobStep()==null
                 || !job.getSelectedJobStep().getJobStepId().equals(step.getJobStepId()) || step.getStatus()!=JobStepStatus.PENDING
                 || executionPolicy.isServer(step,step.getResolvedInputsJson())) throw new BusinessRuleException("Dispatch requires selected PENDING Pi step");
         if(step.getInterruptionReason()!=null || job.getCancelRequestedAt()!=null && !step.isMappingCleanup())return;

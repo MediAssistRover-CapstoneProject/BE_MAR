@@ -69,4 +69,35 @@ class PatrolSuspensionControlTest {
         assertEquals(JobStatus.CANCELLED,job.getStatus());assertFalse(job.isResumeRequested());
         assertEquals(RobotStatus.BUSY,robot.getStatus());verify(suspension,never()).settled(any());
     }
+
+    @Test void cancelledJobCreatesDurableCancelAndRenewsOnlyForMatchingReconnectJournal(){
+        job.setStatus(JobStatus.CANCELLED);job.setStopStatus(JobStopStatus.PENDING);job.setCancelRequestedAt(now);
+        step.setStatus(JobStepStatus.RUNNING);step.setInterruptionReason("JOB_CANCEL");step.setOperationKey("move:1");
+        execute.setPhysicalStopConfirmed(false);execute.setState("STARTED");
+        var session=new RobotMqttSession();session.setTransportSessionId(UUID.randomUUID());
+        when(sessions.lock(robot.getRobotId())).thenReturn(Optional.of(session));
+        var registry=mock(MqttSessionRegistry.class);when(registry.fresh(session)).thenReturn(true);
+        when(registry.observationFresh(session)).thenReturn(true);
+        var properties=new MqttProperties();
+        ReflectionTestUtils.setField(control,"registry",registry);
+        ReflectionTestUtils.setField(control,"properties",properties);
+        ReflectionTestUtils.setField(control,"contracts",mock(com.mediassistrover.backend.validation.MqttContractValidator.class));
+        when(commands.save(any(RobotCommandOutbox.class))).thenAnswer(i->i.getArgument(0));
+        assertTrue(control.handle(job,step));
+        var capture=org.mockito.ArgumentCaptor.forClass(RobotCommandOutbox.class);
+        verify(commands).save(capture.capture());var cancel=capture.getValue();
+        assertEquals("CANCEL_STEP",cancel.getCommandType());assertEquals(job.getJobId(),cancel.getJobId());
+        assertEquals(step.getJobStepId(),cancel.getJobStepId());assertEquals("PENDING",cancel.getState());
+        when(commands.findByJobStepIdAndCommandType(step.getJobStepId(),"CANCEL_STEP")).thenReturn(Optional.of(cancel));
+        var previousTransport=session.getTransportSessionId();session.setTransportSessionId(UUID.randomUUID());
+        // Empty journal must not renew the deadline or retarget the operation.
+        session.setHelloJson(new ObjectMapper().createObjectNode());
+        control.handle(job,step);
+        assertEquals(previousTransport.toString(),cancel.getPayloadJson().path("transportSessionId").asText());
+        var hello=new ObjectMapper().createObjectNode();hello.putArray("states").addObject()
+            .put("jobId",job.getJobId().toString()).put("jobStepId",step.getJobStepId().toString()).put("operationKey",step.getOperationKey());
+        session.setHelloJson(hello);control.handle(job,step);
+        assertEquals(session.getTransportSessionId().toString(),cancel.getPayloadJson().path("transportSessionId").asText());
+        verify(commands,times(1)).save(any(RobotCommandOutbox.class));
+    }
 }

@@ -126,7 +126,7 @@ public class MqttOperationRecoveryService {
     public JsonNode evidence(UUID jobId,AccountPrincipal actor) {
         Job job=jobs.findById(jobId).orElseThrow(()->new ResourceNotFoundException("Job not found"));authorize(job,actor);
         var result=wire.object().put("jobId",jobId.toString()).put("status",job.getStatus().name())
-                .put("recoveryRequired",job.getStatus()==JobStatus.RECOVERY_REQUIRED);
+                .put("recoveryRequired",job.getStatus()==JobStatus.RECOVERY_REQUIRED || job.stopOutstanding());
         if(job.getSelectedJobStep()!=null)result.put("jobStepId",job.getSelectedJobStep().getJobStepId().toString()).put("operationKey",job.getSelectedJobStep().getOperationKey());
         boolean uncertain=false;
         var list=result.putArray("commands");for(var command:commands.findByJobIdOrderByCreatedAt(jobId)) {
@@ -167,7 +167,8 @@ public class MqttOperationRecoveryService {
         if(previous!=null){em.refresh(previous,jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
             if(!actor.getAccountId().equals(previous.getActorAccountId()) || !body.equals(previous.getRequestJson()))throw new ConflictException("Recovery key reused with different actor/body");
             return previous.getResponseJson().deepCopy();}
-        if(!job.isBeOrchestrated() || job.getStatus()!=JobStatus.RECOVERY_REQUIRED || job.getSelectedJobStep()==null || !stepId.equals(job.getSelectedJobStep().getJobStepId()))
+        boolean cancelledRecovery=job.getStatus()==JobStatus.CANCELLED && job.stopOutstanding();
+        if(!job.isBeOrchestrated() || (!cancelledRecovery && (job.getStatus()!=JobStatus.RECOVERY_REQUIRED || job.getSelectedJobStep()==null || !stepId.equals(job.getSelectedJobStep().getJobStepId()))))
             throw new BusinessRuleException("Recovery requires the selected operation of a BE recovery Job");
         boolean rejectedOnly=request.evidence()==MqttOperationRecoveryRequest.Evidence.COMMAND_NOT_ACCEPTED;
         if(request.commandId()==null || !step.getOperationKey().equals(request.operationKey()) || (!rejectedOnly && !Boolean.TRUE.equals(request.confirmedStopped()))
@@ -207,7 +208,7 @@ public class MqttOperationRecoveryService {
                 throw new BusinessRuleException("Staff inspection requires committed Pi OPERATOR_RECONCILED and CANCELLED journal");
         }
         }
-        JobStatus status=request.outcome()==JobRequests.ReconcileOutcome.CONFIRM_CANCELLED?JobStatus.CANCELLED:JobStatus.FAILED;
+        JobStatus status=job.getCancelRequestedAt()!=null || request.outcome()==JobRequests.ReconcileOutcome.CONFIRM_CANCELLED?JobStatus.CANCELLED:JobStatus.FAILED;
         if(Set.of(JobStepStatus.PENDING,JobStepStatus.RUNNING,JobStepStatus.RECOVERY_REQUIRED).contains(step.getStatus())) {
             step.setStatus(status==JobStatus.CANCELLED?JobStepStatus.CANCELLED:JobStepStatus.FAILED);step.setEndedAt(now);
         }
@@ -215,6 +216,13 @@ public class MqttOperationRecoveryService {
         if(job.getServiceRequest()!=null){job.getServiceRequest().setStatus(ServiceRequestStatus.valueOf(status.name()));if(status==JobStatus.CANCELLED)job.getServiceRequest().setCancelledAt(now);else job.getServiceRequest().setCompletedAt(now);}
         for(JobTask task:tasks.findByJobJobIdOrderBySequenceNoAsc(jobId))if(task.getStartedAt()!=null && task.getEndedAt()==null){task.setStatus(status==JobStatus.CANCELLED?JobTaskStatus.CANCELLED:JobTaskStatus.FAILED);task.setEndedAt(now);}
         for(var command:commands.findByJobIdOrderByCreatedAt(jobId))if(command.getJobStepId().equals(stepId))command.setState("RESOLVED_BY_STAFF");
+        if(job.getStopStatus()!=null) {
+            boolean outstanding=commands.findByJobIdOrderByCreatedAt(jobId).stream().anyMatch(command ->
+                "EXECUTE_STEP".equals(command.getCommandType()) && command.getSendAttempts()>0
+                && !Boolean.TRUE.equals(command.getPhysicalStopConfirmed()) && !"RESOLVED_BY_STAFF".equals(command.getState()));
+            job.setStopStatus(outstanding?JobStopStatus.RECOVERY_REQUIRED:JobStopStatus.CONFIRMED);
+            if(!outstanding)job.setStopConfirmedAt(now);
+        }
         // An inspection is separate evidence. Never set Pi hardware verified/physicalStopConfirmed from client data.
         if(!rejectedOnly) {job.getRobot().setStatus(RobotStatus.STARTING);session.setDispatchReady(false);session.setClosed(true);session.setFailureReason("Recovery closed; new HELLO/heartbeat required before dispatch");}
         UUID id=UUID.randomUUID();var response=wire.object().put("receiptId",id.toString()).put("jobId",jobId.toString()).put("jobStepId",stepId.toString())

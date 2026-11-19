@@ -35,6 +35,7 @@ public class JobServiceImpl implements JobService {
     private final RobotMqttSessionRepository robotSessions;
     private final JobHardDeleteService hardDelete;
     private final PatrolJobStateService patrolStates;
+    private final JobCancellationService cancellation;
 
     private void reconcileStoppedMappingWait(Job job,JobStatus terminal) {
         if(!mapping.open(job.getJobId()))return;
@@ -77,55 +78,7 @@ public class JobServiceImpl implements JobService {
         Job job = jobRepository.lockById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Job not found"));
         scope(job, actor);
-        if (job.getStatus() == JobStatus.CANCELLED) return mapper.toResponse(job);
-        if (terminal(job.getStatus())) throw new BusinessRuleException("Job is already terminal");
-        if(job.isBeOrchestrated()) {
-            if(job.getStatus()==JobStatus.RECOVERY_REQUIRED)throw new BusinessRuleException("Reconcile the uncertain physical operation before cancelling this job");
-            if(job.getCancelRequestedAt()!=null)return mapper.toResponse(job);
-            job.setCancelCommandId(UUID.randomUUID());job.setCancelRequestedAt(clock.instant());
-            job.setCancelRequestedByAccount(account(actor.accountId()));job.setResumeRequested(false);
-            event(job,actor,"JOB_CANCEL_REQUESTED",job.getStatus().name(),job.getStatus().name(),objectMapper.createObjectNode().put("reason",request.reason()));
-            wakeups.request(job);audit(actor,"JOB_CANCEL_REQUESTED",job,metadata);
-            return mapper.toResponse(job);
-        }
-        Robot robot = job.getRobot() == null ? null
-                : robotRepository.findByIdForUpdate(job.getRobot().getRobotId()).orElseThrow();
-        Instant now = Instant.now(clock);
-        String previous = job.getStatus().name();
-        if (job.getCancelCommandId() == null) job.setCancelCommandId(UUID.randomUUID());
-        job.setCancelRequestedAt(now);
-        job.setCancelRequestedByAccount(account(actor.accountId()));
-        job.setStatus(JobStatus.CANCELLED);
-        job.setEndedAt(now);
-        for (JobStep step : stepRepository.findByJobId(id)) {
-            if (Set.of(JobStepStatus.PENDING, JobStepStatus.RUNNING, JobStepStatus.RETRYING,
-                    JobStepStatus.RECOVERY_REQUIRED).contains(step.getStatus())) {
-                step.setStatus(JobStepStatus.CANCELLED);
-                step.setEndedAt(now);
-            }
-        }
-        for (JobTask task : taskRepository.findByJobJobIdOrderBySequenceNoAsc(id)) {
-            if (Set.of(JobTaskStatus.PENDING, JobTaskStatus.RUNNING).contains(task.getStatus())) {
-                task.setStatus(JobTaskStatus.CANCELLED);
-                task.setEndedAt(now);
-            }
-        }
-        ServiceRequest serviceRequest = job.getServiceRequest();
-        if (serviceRequest != null && !Set.of(ServiceRequestStatus.COMPLETED,
-                ServiceRequestStatus.FAILED, ServiceRequestStatus.CANCELLED).contains(serviceRequest.getStatus())) {
-            serviceRequest.setStatus(ServiceRequestStatus.CANCELLED);
-            serviceRequest.setCancelledAt(now);
-            serviceRequest.setCompletedAt(now);
-        }
-        if (robot != null && jobRepository.findByRobotRobotIdAndStatusIn(robot.getRobotId(),
-                List.of(JobStatus.QUEUED, JobStatus.ACCEPTED, JobStatus.RUNNING, JobStatus.RECOVERY_REQUIRED))
-                .stream().noneMatch(other -> !other.getJobId().equals(id))) {
-            robot.setStatus(RobotStatus.IDLE);
-        }
-        event(job, actor, "JOB_CANCELLED", previous, JobStatus.CANCELLED.name(),
-                objectMapper.createObjectNode().put("reason", request.reason()));
-        wakeups.request(job);
-        audit(actor, "JOB_CANCELLED", job, metadata);
+        cancellation.cancel(job,account(actor.accountId()),request.reason(),metadata);
         return mapper.toResponse(job);
     }
     @Override @Transactional public JobResponse reconcile(UUID id,ReconcileJobRequest r,AccountPrincipal a,RequestMetadata md){Job j=jobRepository.lockById(id).orElseThrow(()->new ResourceNotFoundException("Job not found"));scope(j,a);if(j.getStatus()!=JobStatus.RECOVERY_REQUIRED)throw new BusinessRuleException("Only RECOVERY_REQUIRED job can be reconciled");if(j.isBeOrchestrated() && mqttCommands.existsUnreconciledByJobId(id))throw new BusinessRuleException("MQTT recovery requires operation/stop reconciliation via the operation recovery API; generic Job reconciliation cannot release this robot");JobStatus next=r.outcome()==ReconcileOutcome.CONFIRM_CANCELLED?JobStatus.CANCELLED:JobStatus.FAILED;reconcileStoppedMappingWait(j,next);j.setStatus(next);j.setReconciledByAccount(account(a.accountId()));j.setReconciledAt(Instant.now(clock));j.setReconciliationNote(r.note());j.setEndedAt(Instant.now(clock));if(j.getServiceRequest()!=null){j.getServiceRequest().setStatus(next==JobStatus.CANCELLED?ServiceRequestStatus.CANCELLED:ServiceRequestStatus.FAILED);j.getServiceRequest().setCompletedAt(Instant.now(clock));}if(j.getRobot()!=null&&Set.of(RobotStatus.BUSY,RobotStatus.ERROR).contains(j.getRobot().getStatus()))j.getRobot().setStatus(RobotStatus.STARTING);requireNewMqttHello(j);event(j,a,"JOB_RECONCILED",JobStatus.RECOVERY_REQUIRED.name(),next.name(),objectMapper.createObjectNode().put("note",r.note()));audit(a,"JOB_RECONCILED",j,md);return mapper.toResponse(j);}
@@ -149,7 +102,7 @@ public class JobServiceImpl implements JobService {
     private void scope(Job j,AccountPrincipal a){staffScope.requireJobAccess(j,a);}
     private void validateWindow(Instant from,Instant to){if(from!=null&&to!=null&&!from.isBefore(to))throw new BusinessRuleException("from must be before to");}
     private <T> Page<T> page(List<T> values,Pageable p){int start=(int)Math.min(p.getOffset(),values.size());int end=Math.min(start+p.getPageSize(),values.size());return new PageImpl<>(values.subList(start,end),p,values.size());}
-    private JobResponse safeJob(Job value){JobResponse r=mapper.toResponse(value);return new JobResponse(r.jobId(),r.workflowId(),r.serviceRequestId(),r.scheduleId(),r.robotId(),r.mapId(),r.assignedStaffAccountId(),r.jobCode(),r.status(),r.priority(),safeJson(r.inputJson()),safeJson(r.contextJson()),safeJson(r.resultJson()),r.workflowHash(),r.protocolVersion(),r.schemaVersion(),r.graphVersion(),r.dispatchCommandId(),r.dispatchExpiresAt(),r.queuedAt(),r.acceptedAt(),r.startedAt(),r.cancelCommandId(),r.cancelRequestedAt(),r.endedAt(),r.errorCode(),r.failureReason(),r.reconciledAt(),r.reconciliationNote(),r.rowVersion(),r.beOrchestrated(),r.selectedJobStepId());}
+    private JobResponse safeJob(Job value){JobResponse r=mapper.toResponse(value);return new JobResponse(r.jobId(),r.workflowId(),r.serviceRequestId(),r.scheduleId(),r.robotId(),r.mapId(),r.assignedStaffAccountId(),r.jobCode(),r.status(),r.priority(),safeJson(r.inputJson()),safeJson(r.contextJson()),safeJson(r.resultJson()),r.workflowHash(),r.protocolVersion(),r.schemaVersion(),r.graphVersion(),r.dispatchCommandId(),r.dispatchExpiresAt(),r.queuedAt(),r.acceptedAt(),r.startedAt(),r.cancelCommandId(),r.cancelRequestedAt(),r.endedAt(),r.errorCode(),r.failureReason(),r.reconciledAt(),r.reconciliationNote(),r.rowVersion(),r.beOrchestrated(),r.selectedJobStepId(),r.stopStatus(),r.stopRequestedAt(),r.stopConfirmedAt());}
     private JobStepResponse safeStep(JobStep value){JobStepResponse r=mapper.toResponse(value);return new JobStepResponse(r.jobStepId(),r.jobTaskId(),r.stepId(),r.visitNo(),r.executionSequenceNo(),r.stepCodeSnapshot(),r.stepTypeSnapshot(),safeJson(r.resolvedInputsJson()),safeJson(r.resultJson()),r.status(),r.attemptNo(),null,r.timeoutSecSnapshot(),r.startedAt(),r.endedAt(),r.errorCode(),safeJson(r.errorDetailsJson()),r.rowVersion(),r.selectedAt(),r.interruptionReason(),r.interruptionRequestedAt());}
     private JobEventResponse safeEvent(JobEvent value,AccountPrincipal actor){JobEventResponse r=mapper.toResponse(value);UUID actorId=actor.role()==Role.ADMIN||Objects.equals(r.actorAccountId(),actor.accountId())?r.actorAccountId():null;return new JobEventResponse(r.jobEventId(),r.jobId(),r.robotId(),r.jobTaskId(),r.jobStepId(),actorId,r.producerType(),null,r.sequenceNo(),r.eventType(),r.correlationKey(),r.attemptNo(),r.previousStatus(),r.newStatus(),r.statusScope(),safeJson(r.eventDataJson()),r.occurredAt(),r.receivedAt(),r.persistedAt());}
     private com.fasterxml.jackson.databind.JsonNode safeJson(com.fasterxml.jackson.databind.JsonNode source){if(source==null)return null;com.fasterxml.jackson.databind.JsonNode copy=source.deepCopy();redact(copy);return copy;}

@@ -1,4 +1,5 @@
 package com.mediassistrover.backend.entity;
+import com.mediassistrover.backend.enums.JobStopStatus;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.mediassistrover.backend.enums.JobStatus;
@@ -44,6 +45,10 @@ public class Job {
     @Column(name="started_at") private Instant startedAt;
     @Column(name="cancel_command_id",columnDefinition="BINARY(16)") private UUID cancelCommandId;
     @Column(name="cancel_requested_at") private Instant cancelRequestedAt;
+    @Enumerated(EnumType.STRING) @Column(name="stop_status",length=32) private JobStopStatus stopStatus;
+    @Column(name="stop_requested_at") private Instant stopRequestedAt;
+    @Column(name="stop_confirmed_at") private Instant stopConfirmedAt;
+    public boolean stopOutstanding() { return stopStatus==JobStopStatus.PENDING || stopStatus==JobStopStatus.RECOVERY_REQUIRED; }
     @Column(name="suspend_requested_at") private Instant suspendRequestedAt;
     @Column(name="suspended_at") private Instant suspendedAt;
     @Column(name="suspended_duration_ms",nullable=false) private long suspendedDurationMs;

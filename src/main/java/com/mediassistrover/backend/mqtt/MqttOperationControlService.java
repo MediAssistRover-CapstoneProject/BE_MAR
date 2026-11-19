@@ -87,6 +87,26 @@ public class MqttOperationControlService {
                     .createdAt(now).expiresAt(now.plusSeconds(properties.getCommandTtlSec())).state("PENDING").build());
             updates.publishEvent(new MqttDurablePublisher.CommandQueued(id));
         }
+        // Renew only on a new, handshaken transport, after HELLO supplied this exact operation identity.
+        // Same command identity is retained: Pi deduplicates cancellation independent of its delivery deadline.
+        if(job.getStatus()==JobStatus.CANCELLED && job.stopOutstanding() && session!=null
+                && registry.observationFresh(session) && session.getHelloJson()!=null
+                && !session.getTransportSessionId().toString().equals(cancel.getPayloadJson().path("transportSessionId").asText())
+                && !Boolean.TRUE.equals(cancel.getPhysicalStopConfirmed()) && cancel.getAcknowledgedAt()==null) {
+            boolean known=false;
+            for(var state:session.getHelloJson().path("states"))
+                if(step.getJobStepId().toString().equals(state.path("jobStepId").asText())
+                        && job.getJobId().toString().equals(state.path("jobId").asText())
+                        && step.getOperationKey().equals(state.path("operationKey").asText()))known=true;
+            if(known) {
+                var payload=((ObjectNode)cancel.getPayloadJson()).deepCopy();
+                payload.put("transportSessionId",session.getTransportSessionId().toString());
+                payload.put("expiresAt",now.plusSeconds(properties.getCommandTtlSec()).toString());
+                cancel.setPayloadJson(payload);cancel.setExpiresAt(now.plusSeconds(properties.getCommandTtlSec()));
+                cancel.setState("PENDING");cancel.setLastPublishAt(null);
+                updates.publishEvent(new MqttDurablePublisher.CommandQueued(cancel.getCommandId()));
+            }
+        }
         if(!cancel.getExpiresAt().isAfter(now) && !Boolean.TRUE.equals(cancel.getPhysicalStopConfirmed())) {
             cancel.setState("RECOVERY_REQUIRED");safety.recovery(job,"Cancellation deadline passed without confirmed stop");
         } else if(!registry.fresh(session)) {
@@ -100,6 +120,10 @@ public class MqttOperationControlService {
         var cancel=commands.findByJobStepIdAndCommandType(step.getJobStepId(),"CANCEL_STEP").orElse(null);
         if(cancel!=null) {cancel.setState("STOP_CONFIRMED");cancel.setPhysicalStopConfirmed(true);}
         if(execute!=null && !Set.of("ABANDONED","RESOLVED_BY_STAFF").contains(execute.getState()))execute.setState("COMPLETED");
+        if(job.getStatus()==JobStatus.CANCELLED && job.getStopStatus()!=null) {
+            if(execute!=null)execute.setPhysicalStopConfirmed(true);
+            wakeups.request(job);updates.publishEvent(new RuntimeChanged(job.getJobId()));return;
+        }
         // An existing recovery decision is never silently undone by late ACK/result.
         if(job.getStatus()==JobStatus.RECOVERY_REQUIRED)return;
         boolean selected=job.getSelectedJobStep()!=null && job.getSelectedJobStep().getJobStepId().equals(step.getJobStepId());

@@ -26,6 +26,12 @@ class ImmediateJobCancelTest {
     final JobEventRepository events = mock(JobEventRepository.class);
     final StaffOperationalScopePolicy scope = mock(StaffOperationalScopePolicy.class);
     final OrchestrationWorkService wakeups = mock(OrchestrationWorkService.class);
+    final RobotCommandOutboxRepository commands=mock(RobotCommandOutboxRepository.class);
+    final AuditService audit=mock(AuditService.class);
+    final com.mediassistrover.backend.mqtt.MqttOperationControlService control=mock(com.mediassistrover.backend.mqtt.MqttOperationControlService.class);
+    final JobCancellationService cancellation=new JobCancellationService(jobs,steps,tasks,robots,commands,
+        mock(RobotOperationAuthorizationRepository.class),control,mock(com.mediassistrover.backend.mapping.MappingLifecycleService.class),
+        audit,mock(org.springframework.context.ApplicationEventPublisher.class),Clock.systemUTC());
     final JobServiceImpl service = mock(JobServiceImpl.class, CALLS_REAL_METHODS);
     final Account account = Account.builder().accountId(UUID.randomUUID()).role(Role.ADMIN).build();
     final AccountPrincipal actor = AccountPrincipal.fromAccount(account);
@@ -39,6 +45,7 @@ class ImmediateJobCancelTest {
             Map.entry("mapper",mock(RequestJobMapper.class)), Map.entry("auditService",mock(AuditService.class)),
             Map.entry("objectMapper",new ObjectMapper()), Map.entry("clock",Clock.systemUTC()));
         fields.forEach((name,value) -> ReflectionTestUtils.setField(service,name,value));
+        ReflectionTestUtils.setField(service,"cancellation",cancellation);
         when(accounts.findById(account.getAccountId())).thenReturn(Optional.of(account));
     }
 
@@ -46,9 +53,18 @@ class ImmediateJobCancelTest {
         var robot = Robot.builder().robotId(UUID.randomUUID()).status(RobotStatus.BUSY).build();
         var job = new Job();
         job.setJobId(UUID.randomUUID()); job.setStatus(status); job.setRobot(robot);
+        job.setBeOrchestrated(true);job.setSchemaVersion(3);
         when(jobs.lockById(job.getJobId())).thenReturn(Optional.of(job));
         when(robots.findByIdForUpdate(robot.getRobotId())).thenReturn(Optional.of(robot));
         return job;
+    }
+
+    @Test void legacyAcceptedWithoutStartTimestampStillRequiresStopEvidence() {
+        var job=job(JobStatus.ACCEPTED);job.setBeOrchestrated(false);
+        service.cancel(job.getJobId(),new CancelJobRequest("stop"),actor,null);
+        assertEquals(JobStatus.CANCELLED,job.getStatus());
+        assertEquals(JobStopStatus.RECOVERY_REQUIRED,job.getStopStatus());
+        assertEquals(RobotStatus.ERROR,job.getRobot().getStatus());
     }
 
     @Test void cancelsRunningAndRecoveryImmediatelyWithoutPi() {
@@ -75,8 +91,7 @@ class ImmediateJobCancelTest {
         service.cancel(job.getJobId(),new CancelJobRequest("stop"),actor,null);
         service.cancel(job.getJobId(),new CancelJobRequest("again"),actor,null);
         assertEquals(RobotStatus.BUSY,job.getRobot().getStatus());
-        verify(events,times(1)).save(any());
-        verify(wakeups,times(1)).request(job);
+        verify(audit,times(1)).record(any(),eq("JOB_CANCELLED"),eq("Job"),eq(job.getJobId()),any(),any(),isNull());
     }
 
     @Test void cancelledJobRejectsLateMqttAndDrainsOrchestrationWork() {
@@ -110,32 +125,40 @@ class ImmediateJobCancelTest {
         verifyNoInteractions(events,robots);
     }
 
-    @Test void schemaThreeCancelWaitsForPhysicalStopAndIsIdempotent() {
+    @Test void schemaThreeCancelReturnsImmediatelyButHoldsRobotUntilStop() {
         var job=job(JobStatus.RUNNING);job.setBeOrchestrated(true);job.setSchemaVersion(3);
-        var step=new JobStep();step.setStatus(JobStepStatus.RUNNING);
+        var step=new JobStep();step.setJobStepId(UUID.randomUUID());step.setStatus(JobStepStatus.RUNNING);
         job.setSelectedJobStep(step);
+        var command=RobotCommandOutbox.builder().commandId(UUID.randomUUID()).jobId(job.getJobId()).jobStepId(step.getJobStepId())
+            .commandType("EXECUTE_STEP").state("STARTED").sendAttempts(1).build();
+        when(commands.findByJobIdOrderByCreatedAt(job.getJobId())).thenReturn(List.of(command));
+        when(commands.findByJobStepId(step.getJobStepId())).thenReturn(Optional.of(command));
+        when(steps.findById(step.getJobStepId())).thenReturn(Optional.of(step));
+        when(steps.findByJobId(job.getJobId())).thenReturn(List.of(step));
         service.cancel(job.getJobId(),new CancelJobRequest("stop"),actor,null);
-        service.cancel(job.getJobId(),new CancelJobRequest("stop again"),actor,null);
-        assertEquals(JobStatus.RUNNING,job.getStatus());
-        assertEquals(JobStepStatus.RUNNING,step.getStatus());
-        assertEquals(RobotStatus.BUSY,job.getRobot().getStatus());
-        assertNotNull(job.getCancelRequestedAt());assertNull(job.getEndedAt());
-        assertFalse(job.isResumeRequested());
-        verify(wakeups,times(1)).request(job);
+        service.cancel(job.getJobId(),new CancelJobRequest("again"),actor,null);
+        assertEquals(JobStatus.CANCELLED,job.getStatus());assertEquals(JobStopStatus.PENDING,job.getStopStatus());
+        assertEquals(RobotStatus.BUSY,job.getRobot().getStatus());assertNotNull(job.getEndedAt());
+        verify(control,times(1)).handle(job,step);
+        command.setPhysicalStopConfirmed(true);
+        cancellation.advance(job.getJobId());
+        assertEquals(JobStopStatus.CONFIRMED,job.getStopStatus());assertEquals(RobotStatus.IDLE,job.getRobot().getStatus());
     }
 
     @Test void cancellingSuspendedPatrolDoesNotReleaseItsForegroundRobot() {
         var job=job(JobStatus.SUSPENDED);job.setBeOrchestrated(true);job.setSchemaVersion(3);job.setResumeRequested(true);
+        var foreground=job(JobStatus.RUNNING);
+        when(jobs.findByRobotRobotIdAndStatusIn(eq(job.getRobot().getRobotId()),any())).thenReturn(List.of(foreground));
         service.cancel(job.getJobId(),new CancelJobRequest("end patrol permanently"),actor,null);
-        assertEquals(JobStatus.SUSPENDED,job.getStatus());assertFalse(job.isResumeRequested());
-        assertNotNull(job.getCancelRequestedAt());assertEquals(RobotStatus.BUSY,job.getRobot().getStatus());
+        assertEquals(JobStatus.CANCELLED,job.getStatus());assertFalse(job.isResumeRequested());
+        assertEquals(RobotStatus.BUSY,job.getRobot().getStatus());
     }
 
-    @Test void uncertainSchemaThreeOperationRequiresRecoveryInsteadOfFakeCancellation() {
-        var job=job(JobStatus.RECOVERY_REQUIRED);job.setBeOrchestrated(true);job.setSchemaVersion(3);
-        assertThrows(com.mediassistrover.backend.exception.BusinessRuleException.class,
-                ()->service.cancel(job.getJobId(),new CancelJobRequest("stop"),actor,null));
-        assertEquals(JobStatus.RECOVERY_REQUIRED,job.getStatus());assertNull(job.getCancelRequestedAt());
+    @Test void cancelledUnpublishedJobNeedsNoPhysicalStop() {
+        var job=job(JobStatus.QUEUED);job.setBeOrchestrated(true);
+        service.cancel(job.getJobId(),new CancelJobRequest("stop"),actor,null);
+        assertEquals(JobStatus.CANCELLED,job.getStatus());assertEquals(JobStopStatus.NOT_REQUIRED,job.getStopStatus());
+        verifyNoInteractions(control);
     }
 
     private record Settlement(com.mediassistrover.backend.mqtt.MqttOperationRecoveryService service,
