@@ -154,6 +154,30 @@ class ImmediateJobCancelTest {
         assertEquals(RobotStatus.BUSY,job.getRobot().getStatus());
     }
 
+    @Test void recoveryCancelWithEarlierRequestKeepsRobotUntilStopIsConfirmed() {
+        var job=job(JobStatus.RECOVERY_REQUIRED);
+        job.setCancelRequestedAt(Instant.now().minusSeconds(30));job.setCancelCommandId(UUID.randomUUID());
+        var step=new JobStep();step.setJobStepId(UUID.randomUUID());step.setStatus(JobStepStatus.RECOVERY_REQUIRED);
+        job.setSelectedJobStep(step);
+        var command=RobotCommandOutbox.builder().commandId(UUID.randomUUID()).jobId(job.getJobId()).jobStepId(step.getJobStepId())
+            .commandType("EXECUTE_STEP").state("RECOVERY_REQUIRED").sendAttempts(1).build();
+        when(commands.findByJobIdOrderByCreatedAt(job.getJobId())).thenReturn(List.of(command));
+        when(commands.findByJobStepId(step.getJobStepId())).thenReturn(Optional.of(command));
+        when(steps.findById(step.getJobStepId())).thenReturn(Optional.of(step));
+        when(steps.findByJobId(job.getJobId())).thenReturn(List.of(step));
+        service.cancel(job.getJobId(),new CancelJobRequest("Cancel recovery job"),actor,null);
+        service.cancel(job.getJobId(),new CancelJobRequest("Retry"),actor,null);
+        assertEquals(JobStatus.CANCELLED,job.getStatus());assertEquals(JobStopStatus.PENDING,job.getStopStatus());
+        assertEquals(RobotStatus.BUSY,job.getRobot().getStatus());assertNull(job.getStopConfirmedAt());
+        assertEquals("JOB_CANCEL",step.getInterruptionReason());
+        verify(control,times(1)).handle(job,step);
+        verify(audit,times(1)).record(any(),eq("JOB_CANCELLED"),eq("Job"),eq(job.getJobId()),any(),any(),isNull());
+        command.setPhysicalStopConfirmed(true);
+        cancellation.advance(job.getJobId());
+        assertEquals(JobStopStatus.CONFIRMED,job.getStopStatus());assertNotNull(job.getStopConfirmedAt());
+        assertEquals(RobotStatus.IDLE,job.getRobot().getStatus());
+    }
+
     @Test void cancelledUnpublishedJobNeedsNoPhysicalStop() {
         var job=job(JobStatus.QUEUED);job.setBeOrchestrated(true);
         service.cancel(job.getJobId(),new CancelJobRequest("stop"),actor,null);
