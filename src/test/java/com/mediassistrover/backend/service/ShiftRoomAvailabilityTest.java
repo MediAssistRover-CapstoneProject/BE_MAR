@@ -6,7 +6,8 @@ import com.mediassistrover.backend.enums.*;
 import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.service.impl.ShiftServiceImpl;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.test.util.ReflectionTestUtils;
 import java.time.Instant;
 import java.util.*;
@@ -14,14 +15,16 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class ShiftRoomAvailabilityTest {
-    @Test void createAndStartRejectRoomsWhoseMapWasDeactivated() {
+    @ParameterizedTest
+    @ValueSource(strings = {"GENERAL", "SOS"})
+    void createAndStartRejectRoomsWhoseMapWasDeactivated(String roomType) {
         var rooms=mock(RoomRepository.class);var staff=mock(StaffProfileRepository.class);var shifts=mock(ShiftRepository.class);
         var service=mock(ShiftServiceImpl.class,CALLS_REAL_METHODS);
         ReflectionTestUtils.setField(service,"roomRepository",rooms);ReflectionTestUtils.setField(service,"staffRepository",staff);
         ReflectionTestUtils.setField(service,"shiftRepository",shifts);
         var floor=Floor.builder().floorId(UUID.randomUUID()).active(true).build();
         var map=FacilityMap.builder().mapId(UUID.randomUUID()).floor(floor).status(MapStatus.INACTIVE).build();
-        var room=Room.builder().roomId(UUID.randomUUID()).floor(floor).active(true).build();
+        var room=Room.builder().roomId(UUID.randomUUID()).floor(floor).roomType(roomType).active(true).build();
         room.getEndpoints().add(Endpoint.builder().map(map).room(room).active(true).build());
         var person=StaffProfile.builder().staffProfileId(UUID.randomUUID()).active(true)
             .account(Account.builder().status(AccountStatus.ACTIVE).build()).build();

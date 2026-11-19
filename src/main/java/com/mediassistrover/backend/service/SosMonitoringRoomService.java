@@ -5,6 +5,8 @@ import com.mediassistrover.backend.entity.Endpoint;
 import com.mediassistrover.backend.entity.Room;
 import com.mediassistrover.backend.entity.SystemSetting;
 import com.mediassistrover.backend.enums.SystemSettingDataType;
+import com.mediassistrover.backend.enums.MapStatus;
+import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.repository.EndpointRepository;
 import com.mediassistrover.backend.repository.RoomRepository;
 import com.mediassistrover.backend.repository.SystemSettingRepository;
@@ -43,6 +45,14 @@ public class SosMonitoringRoomService {
         boolean sosRequested = isSosType(room.getRoomType());
         boolean hasSnapshot = room.getSosOriginalRoomName() != null || room.getSosOriginalRoomType() != null;
         if (!sosRequested && !hasSnapshot) return;
+
+        // Saving an SOS marker on another map must not replace the live monitoring room.
+        // Query the owning endpoints: a newly linked endpoint may not yet be in Room.endpoints.
+        if (sosRequested && room.isActive() && (room.getFloor() == null || !room.getFloor().isActive()
+                || endpoints.findByRoomRoomIdOrderByEndpointCodeAsc(room.getRoomId()).stream().noneMatch(endpoint ->
+                    endpoint.isActive() && endpoint.getMap() != null && endpoint.getMap().getStatus() == MapStatus.ACTIVE
+                        && endpoint.getMap().getFloor().getFloorId().equals(room.getFloor().getFloorId()))))
+            throw new BusinessRuleException("Phòng tiếp nhận SOS phải có điểm đang bật trên bản đồ đang hoạt động. Kiểm tra đúng ID bản đồ và phòng trước khi lưu.");
 
         SystemSetting setting = lockSetting();
         UUID configured = configuredRoomId(setting);

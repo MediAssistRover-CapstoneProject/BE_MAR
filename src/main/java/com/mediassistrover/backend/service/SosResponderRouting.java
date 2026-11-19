@@ -25,7 +25,7 @@ public class SosResponderRouting {
     private final RoomRepository rooms;
     private final ShiftRepository shifts;
 
-    public record Assignment(SosRoutingStatus status, Account responder) { }
+    public record Assignment(SosRoutingStatus status, Account responder, UUID roomId, String roomName, String reason) { }
 
     public void assign(EmergencyIncident incident, Instant now) {
         var assignment = resolve(incident.getMap(), now, null);
@@ -37,26 +37,36 @@ public class SosResponderRouting {
         String configuredRoom = roomOverride == null
                 ? settings.getString(MONITORING_ROOM_SETTING, "") : roomOverride.toString();
         if (configuredRoom.isBlank()) {
-            return new Assignment(NO_MONITORING_ROOM, null);
+            return new Assignment(NO_MONITORING_ROOM, null, null, null, "MONITORING_ROOM_MISSING");
         }
 
         UUID roomId;
         try {
             roomId = UUID.fromString(configuredRoom.trim());
         } catch (IllegalArgumentException error) {
-            return new Assignment(ROOM_UNAVAILABLE, null);
+            return new Assignment(ROOM_UNAVAILABLE, null, null, null, "MONITORING_ROOM_INVALID");
         }
-        var room = rooms.findById(roomId).filter(Room::isOperational).orElse(null);
-        if (room == null || !room.getFloor().isActive() || !sameHospital(map, room)) {
-            return new Assignment(ROOM_UNAVAILABLE, null);
-        }
+        var room = rooms.findById(roomId).orElse(null);
+        if (room == null) return unavailable(roomId, null, "ROOM_MISSING");
+        if (!room.isActive()) return unavailable(roomId, room, "ROOM_INACTIVE");
+        if (room.getFloor() == null || !room.getFloor().isActive())
+            return unavailable(roomId, room, "FLOOR_INACTIVE");
+        if (!sameHospital(map, room)) return unavailable(roomId, room, "DIFFERENT_HOSPITAL");
+        if (!room.isOperational()) return unavailable(roomId, room, "NO_ENDPOINT_ON_ACTIVE_MAP");
+        if (map != null && !room.isOperationalOn(map))
+            return unavailable(roomId, room, "NO_ENDPOINT_ON_INCIDENT_MAP");
 
         // Two rows suffice to detect a conflicting roster.
         var candidates = shifts.findOnDutySosResponders(roomId, now, PageRequest.of(0, 2));
         if (candidates.size() == 1) {
-            return new Assignment(ASSIGNED, candidates.getFirst());
+            return new Assignment(ASSIGNED, candidates.getFirst(), roomId, room.getRoomName(), "READY");
         }
-        return new Assignment(candidates.isEmpty() ? NO_ACTIVE_SHIFT : AMBIGUOUS_SHIFT, null);
+        return new Assignment(candidates.isEmpty() ? NO_ACTIVE_SHIFT : AMBIGUOUS_SHIFT, null,
+                roomId, room.getRoomName(), candidates.isEmpty() ? "NO_CHECKED_IN_STAFF" : "MULTIPLE_CHECKED_IN_STAFF");
+    }
+
+    private Assignment unavailable(UUID roomId, Room room, String reason) {
+        return new Assignment(ROOM_UNAVAILABLE, null, roomId, room == null ? null : room.getRoomName(), reason);
     }
 
     private boolean sameHospital(FacilityMap map, Room room) {

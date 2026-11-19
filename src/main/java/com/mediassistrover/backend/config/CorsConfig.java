@@ -20,7 +20,7 @@ public class CorsConfig {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(properties.allowedOrigins());
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key"));
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Correlation-ID", "Idempotency-Key", "X-Confirm-Hard-Delete"));
         configuration.setExposedHeaders(List.of("X-Correlation-ID", "Location", "X-Frame-Revision", "X-Captured-At", "X-Map-Metadata"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);

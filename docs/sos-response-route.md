@@ -1,6 +1,28 @@
 # SOS confirmation and responder route
 
-All endpoints require a valid ADMIN or STAFF bearer token and incident access.
+Admin can inspect current routing eligibility with `GET /api/v1/emergency-incidents/{id}/routing`.
+The response includes the saved `incident`, current `eligibility` (room ID/name, reason,
+candidate account and check time), and `canRetry`. Inspection does not assign anyone.
+
+For an OPEN, unarchived SOS or suspected fall with no responder or acknowledgement,
+Admin can call `POST /api/v1/emergency-incidents/{id}/retry-routing` with
+`{"rowVersion":3}` using the incident version from the inspection. The server locks the
+incident, rechecks eligibility, audits the attempt, and returns the same response shape.
+Stale versions or already-claimed/terminal incidents return 409. Repeating a successful
+assignment returns the existing responder without duplicating notifications or media.
+A failed eligibility check returns its current reason and leaves the incident unassigned.
+
+The monitoring room must have an enabled endpoint on an ACTIVE map; when the incident
+has a map, its room must also have an enabled endpoint on that exact ACTIVE map ID.
+Saving a monitoring room whose endpoints are only on inactive maps is rejected before
+changing the global SOS setting. Exactly one eligible Staff account must be checked in
+to an ACTIVE shift in that room, within its actual time interval and not checked out.
+Successful retry adds the responder to the existing SOS notification, opens the normal
+SOS media flow where available, and makes the original automatic SOS request eligible
+for the existing dispatch scheduler. Suspected falls retain their camera review and
+confirmation requirements and never gain automatic robot dispatch from routing retry.
+
+The confirmation and route endpoints below require a valid ADMIN or STAFF bearer token and incident access.
 Confirmation requires ADMIN or the assigned SOS responder.
 
 1. Call `POST /api/v1/emergency-incidents/{id}/confirm` with an empty body.

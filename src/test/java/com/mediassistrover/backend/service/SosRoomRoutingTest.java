@@ -99,6 +99,38 @@ class SosRoomRoutingTest {
         assertSame(responder, original.getSosResponder());
         assertEquals(ASSIGNED, original.getSosRoutingStatus());
     }
+
+    @Test void switchingAwayFromRoomMapReportsMissingPublishedEndpointBeforeCheckingRoster() {
+        room.getEndpoints().getFirst().getMap().setStatus(com.mediassistrover.backend.enums.MapStatus.ARCHIVED);
+        var assignment = routing.resolve(null, now, null);
+        assertEquals(ROOM_UNAVAILABLE, assignment.status());
+        assertEquals("NO_ENDPOINT_ON_ACTIVE_MAP", assignment.reason());
+        assertEquals(roomId, assignment.roomId());
+        verifyNoInteractions(shifts);
+    }
+
+    @Test void diagnosticDistinguishesMissingCheckedInStaffAndConflictingRoster() {
+        when(shifts.findOnDutySosResponders(eq(roomId), eq(now), any(Pageable.class))).thenReturn(List.of());
+        assertEquals("NO_CHECKED_IN_STAFF", routing.resolve(null, now, null).reason());
+        when(shifts.findOnDutySosResponders(eq(roomId), eq(now), any(Pageable.class)))
+                .thenReturn(List.of(responder, Account.builder().accountId(UUID.randomUUID()).build()));
+        var assignment = routing.resolve(null, now, null);
+        assertEquals(AMBIGUOUS_SHIFT, assignment.status());
+        assertEquals("MULTIPLE_CHECKED_IN_STAFF", assignment.reason());
+        assertNull(assignment.responder());
+    }
+
+    @Test void aRoomOnAnotherActiveMapCannotReceiveThisMapsSos() {
+        var hospital = HospitalInformation.builder().hospitalInformationId(UUID.randomUUID()).build();
+        room.getFloor().setHospitalInformation(hospital);
+        var other = FacilityMap.builder().mapId(UUID.randomUUID()).floor(room.getFloor())
+                .status(com.mediassistrover.backend.enums.MapStatus.ACTIVE).build();
+        var assignment = routing.resolve(other, now, null);
+        assertEquals(ROOM_UNAVAILABLE, assignment.status());
+        assertEquals("NO_ENDPOINT_ON_INCIDENT_MAP", assignment.reason());
+        verifyNoInteractions(shifts);
+        assertEquals(ASSIGNED, routing.resolve(room.getEndpoints().getFirst().getMap(), now, null).status());
+    }
     private void makeOperational(Room target) {
         if(target.getFloor().getFloorId()==null)target.getFloor().setFloorId(UUID.randomUUID());
         var map=FacilityMap.builder().mapId(UUID.randomUUID()).floor(target.getFloor())
