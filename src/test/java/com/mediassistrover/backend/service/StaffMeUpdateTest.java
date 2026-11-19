@@ -38,4 +38,25 @@ class StaffMeUpdateTest {
  byte[] bytes=new byte[(int)MediaFileValidator.IMAGE_MAX+1];byte[] header={(byte)137,80,78,71,13,10,26,10};System.arraycopy(header,0,bytes,0,header.length);
  var file=new MockMultipartFile("file","large.png","image/png",bytes);
  assertThrows(com.mediassistrover.backend.exception.FileTooLargeException.class,()->service.avatar(actor,file));verifyNoInteractions(media);}
+ @Test void avatarAboveFaceLimitIsRejectedBeforeUpload(){
+ var file=new MockMultipartFile("file","phone.jpg","image/jpeg",new byte[2*1024*1024+1]);
+ var error=assertThrows(FileTooLargeException.class,()->service.avatar(actor,file));assertTrue(error.getMessage().contains("2 MiB"));
+ assertEquals("https://bucket/images/old.png",p.getUrl());verifyNoInteractions(media);}
+ @Test void adminProfileEditPreservesOmittedAvatarButExplicitNullClearsIt() throws Exception {
+ var json=new com.fasterxml.jackson.databind.ObjectMapper();
+ String body="{\"fullName\":\"New Name\",\"email\":\"a@example.com\",\"staffCode\":\"STF1\"}";
+ var omitted=json.readValue(body,com.mediassistrover.backend.dto.account.request.StaffRequests.Update.class);
+ var cleared=json.readValue(body.substring(0,body.length()-1)+",\"url\":null}",com.mediassistrover.backend.dto.account.request.StaffRequests.Update.class);
+ assertFalse(omitted.hasUrl());assertTrue(cleared.hasUrl());assertNull(cleared.url());
+ var storage=mock(com.mediassistrover.backend.storage.S3ObjectStorageService.class);
+ var adminService=new com.mediassistrover.backend.service.impl.StaffServiceImpl(accounts,profiles,
+   mock(org.springframework.security.crypto.password.PasswordEncoder.class),mock(StaffMapper.class),mock(RefreshTokenService.class),mock(AuditService.class),Clock.systemUTC(),storage,
+   mock(com.mediassistrover.backend.service.impl.StaffHardDeleteService.class));
+ when(profiles.findById(p.getStaffProfileId())).thenReturn(Optional.of(p));
+ p.setFaceStatus("READY");p.setFaceTemplate("approved");p.setFaceAvatarVersion(UUID.randomUUID());var version=p.getFaceAvatarVersion();
+ adminService.update(p.getStaffProfileId(),omitted,a.getAccountId(),null);
+ assertEquals("https://bucket/images/old.png",p.getUrl());assertEquals("approved",p.getFaceTemplate());assertEquals(version,p.getFaceAvatarVersion());
+ adminService.update(p.getStaffProfileId(),cleared,a.getAccountId(),null);
+ assertNull(p.getUrl());assertNull(p.getFaceTemplate());assertEquals("MISSING",p.getFaceStatus());assertNotEquals(version,p.getFaceAvatarVersion());verifyNoInteractions(storage);
+ }
 }

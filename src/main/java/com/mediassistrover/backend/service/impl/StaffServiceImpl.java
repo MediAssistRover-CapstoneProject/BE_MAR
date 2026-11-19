@@ -55,7 +55,8 @@ public class StaffServiceImpl implements StaffService {
         unique(profile,email,phone,r.staffCode().trim());
         account.setFullName(r.fullName().trim());account.setEmail(email);account.setPhone(phone);
         profile.setStaffCode(r.staffCode().trim());profile.setDepartmentCode(r.departmentCode());
-        profile.setJobTitle(r.jobTitle());profile.setContactExtension(r.contactExtension());profile.setUrl(staffImageUrl(r.url()));
+        profile.setJobTitle(r.jobTitle());profile.setContactExtension(r.contactExtension());
+        if(r.hasUrl())profile.setUrl(staffImageUrl(r.url()));
         record(actorId,"STAFF_UPDATED",profile,md);return mapper.toResponse(profile);
     }
     @Override public StaffResponse get(UUID id,boolean includeDeleted){StaffProfile profile=require(id);if(!includeDeleted&&!profile.isActive())throw new ResourceNotFoundException("Staff not found");return mapper.toResponse(profile);}

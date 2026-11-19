@@ -25,6 +25,7 @@ public class FaceAuthService {
     private final JobRepository jobs;
     private final JobStepRepository steps;
     private final DeliveryRequestRepository deliveries;
+    private final DeliveryAuthenticationPolicy deliveryAuthentication;
     private final FaceAuthSessionRepository sessions;
     private final AuthVerificationRepository verifications;
     private final RobotMqttSessionRepository transports;
@@ -36,7 +37,7 @@ public class FaceAuthService {
     private final ObjectMapper json;
     private final Clock clock;
 
-    public record Status(UUID accountId,UUID avatarVersion,String status,String avatarUrl,boolean enabled) {}
+    public record Status(UUID accountId,UUID avatarVersion,String status,String avatarUrl,boolean enabled,String reason) {}
     public record Window(UUID jobId,UUID authJobStepId,UUID sessionId,Instant expiresAt) {}
     public record Scan(UUID sessionId,UUID authJobStepId,UUID transportSessionId,String image) {}
     private record Sample(Window window,UUID account,UUID version,String model,String template) {}
@@ -45,8 +46,9 @@ public class FaceAuthService {
     public Status status(UUID account) {
         return tx.execute(s -> status(profile(account,false)));
     }
-    private Status status(StaffProfile p){return new Status(p.getAccount().getAccountId(),p.getFaceAvatarVersion(),
-        p.getFaceStatus()==null?(p.getUrl()==null?"MISSING":"PENDING"):p.getFaceStatus(),p.getUrl(),ai.enabled());}
+    private Status status(StaffProfile p){return status(p,null);}
+    private Status status(StaffProfile p,String reason){return new Status(p.getAccount().getAccountId(),p.getFaceAvatarVersion(),
+        p.getFaceStatus()==null?(p.getUrl()==null?"MISSING":"PENDING"):p.getFaceStatus(),p.getUrl(),ai.enabled(),reason);}
     private StaffProfile profile(UUID account,boolean lock){return (lock?profiles.lockFace(account):profiles.findByAccountAccountId(account))
         .orElseThrow(()->new BusinessRuleException("FACE_PROFILE_MISSING"));}
     private StaffProfile ready(UUID account,boolean lock){
@@ -58,7 +60,7 @@ public class FaceAuthService {
     }
     public void requireDelivery(DeliveryAuthenticationMethod method,UUID sender,UUID receiver){
         if(method!=DeliveryAuthenticationMethod.FACE_VERIFICATION)return;
-        ai.requireEnabled();ready(sender,false);ready(receiver,false);
+        ai.requireEnabled();ready(receiver,false);
     }
     public Status review(UUID account,UUID version,boolean approve,AccountPrincipal actor){
         if(actor.role()!=Role.ADMIN)throw new AccessDeniedException("ADMIN required");
@@ -69,7 +71,9 @@ public class FaceAuthService {
         });
         JsonNode result=null;
         if(approve){
-            byte[] image=storage.get(storage.keyFromPublicUrl(snapshot.url(),Set.of("images")),2*1024*1024);
+            String key=storage.keyFromPublicUrl(snapshot.url(),Set.of("images"));
+            if(storage.head(key,true).sizeBytes()>2L*1024*1024)fail("FACE_AVATAR_TOO_LARGE: avatar must be at most 2 MiB; upload a smaller image");
+            byte[] image=storage.get(key,2*1024*1024);
             result=ai.call("enroll",json.createObjectNode().put("image",Base64.getEncoder().encodeToString(image)));
         }
         JsonNode enrolled=result;
@@ -85,8 +89,14 @@ public class FaceAuthService {
             p.setFaceReviewedAt(clock.instant());p.setFaceReviewedBy(actor.accountId());
             // A new approval/rejection also invalidates any in-flight authorization.
             p.setFaceAvatarVersion(UUID.randomUUID());
-            return status(p);
+            return status(p,approve&&!valid?enrollmentReason(enrolled):null);
         });
+    }
+    private String enrollmentReason(JsonNode answer){
+        String issue=answer.path("quality").path("issue").asText();
+        if(Set.of("FACE_TOO_SMALL","FACE_TOO_BLURRY","INVALID_FACE_FEATURE").contains(issue))return issue;
+        String reason=answer.path("reason").asText();
+        return Set.of("NO_FACE","MULTIPLE_FACES","LOW_QUALITY").contains(reason)?reason:"FACE_INVALID_ENROLLMENT_RESULT";
     }
     private boolean validTemplate(JsonNode value){
         if(!value.isArray()||value.size()!=128)return false;
@@ -102,10 +112,11 @@ public class FaceAuthService {
     public Window ensure(JobStep supplied){return tx.execute(s->{
         Job job=jobs.lockById(supplied.getJobTask().getJob().getJobId()).orElseThrow();
         JobStep step=selected(job);Account account=expected(job,step);StaffProfile p=ready(account.getAccountId(),true);
+        if(!step.getJobStepId().equals(supplied.getJobStepId()))fail("FACE_WRONG_STEP");
         var t=transports.findById(job.getRobot().getRobotId()).orElseThrow();
         if(!supports(t))fail("FACE_ROBOT_NOT_READY");
         var old=sessions.findByAuthJobStepId(step.getJobStepId()).orElse(null);
-        if(old!=null){checkSession(old,job,step,p,t.getTransportSessionId());return window(old);}
+        if(old!=null)return window(currentSession(old,job,step,p,t));
         var v=new FaceAuthSession();v.setSessionId(UUID.randomUUID());v.setJobId(job.getJobId());v.setAuthJobStepId(step.getJobStepId());
         v.setRobotId(job.getRobot().getRobotId());v.setTransportSessionId(t.getTransportSessionId());v.setAccountId(account.getAccountId());v.setAvatarVersion(p.getFaceAvatarVersion());
         v.setExpiresAt(Collections.min(List.of(clock.instant().plusSeconds(120),step.getStartedAt().plusSeconds(step.getTimeoutSecSnapshot()),job.getStartedAt().plusSeconds(job.getWorkflow().getMaxDurationSec()))));
@@ -116,9 +127,12 @@ public class FaceAuthService {
         return tx.execute(s->{
             var active=jobs.findByRobotRobotIdAndStatusIn(transport.getRobotId(),List.of(JobStatus.RUNNING));
             if(active.size()!=1)return Optional.empty();
-            try {Job job=active.getFirst();JobStep step=selected(job);var p=ready(expected(job,step).getAccountId(),false);
+            try {Job job=jobs.lockById(active.getFirst().getJobId()).orElseThrow();JobStep step=selected(job);var p=ready(expected(job,step).getAccountId(),true);
                 var v=sessions.findByAuthJobStepId(step.getJobStepId()).orElse(null);
-                if(v==null)return Optional.empty();checkSession(v,job,step,p,transport.getTransportSessionId());return Optional.of(window(v));
+                if(v==null)return Optional.empty();
+                var current=transports.findById(job.getRobot().getRobotId()).orElse(null);
+                if(!supports(current)||!Objects.equals(current.getTransportSessionId(),transport.getTransportSessionId()))return Optional.empty();
+                return Optional.of(window(currentSession(v,job,step,p,current)));
             }catch(BusinessRuleException ex){return Optional.empty();}
         });
     }
@@ -140,7 +154,10 @@ public class FaceAuthService {
         var input=json.createObjectNode().put("image",scan.image()).put("modelVersion",sample.model());input.set("template",template);
         long start=System.nanoTime();
         JsonNode answer;
-        try {answer=ai.call("verify",input);} catch(RuntimeException ex) {log.info("FACE_VERIFY job={} step={} reason=AI_UNAVAILABLE elapsedMs={}",jobId,scan.authJobStepId(),(System.nanoTime()-start)/1000000);throw ex;}
+        try {answer=ai.call("verify",input);} catch(RuntimeException ex) {
+            String reason=ex.getMessage()!=null&&Set.of("FACE_AI_UNAVAILABLE","FACE_AI_BUSY","FACE_MODEL_CHANGED","FACE_DISABLED").contains(ex.getMessage())?ex.getMessage():"FACE_AI_UNAVAILABLE";
+            log.info("FACE_VERIFY job={} step={} reason={} elapsedMs={}",jobId,scan.authJobStepId(),reason,(System.nanoTime()-start)/1000000);throw ex;
+        }
         log.info("FACE_COMPARE job={} step={} reason={} elapsedMs={}",jobId,scan.authJobStepId(),answer.path("matched").asBoolean()?"MATCH":safeReason(answer.path("reason").asText()),(System.nanoTime()-start)/1000000);
         if(!sample.model().equals(answer.path("modelVersion").asText()))fail("FACE_MODEL_CHANGED");
         if(!answer.path("matched").asBoolean())return json.createObjectNode().put("verified",false).put("reason",safeReason(answer.path("reason").asText()));
@@ -175,6 +192,23 @@ public class FaceAuthService {
             ||!v.getAccountId().equals(p.getAccount().getAccountId())||!v.getAvatarVersion().equals(p.getFaceAvatarVersion())
             ||v.getUsedAt()!=null||!v.getExpiresAt().isAfter(clock.instant()))fail("FACE_SESSION_EXPIRED_OR_CHANGED");
     }
+    /** A reconnect replaces only an unused nonce; it never restarts the authentication deadline. Caller holds the Job lock. */
+    private FaceAuthSession currentSession(FaceAuthSession old,Job job,JobStep step,StaffProfile profile,RobotMqttSession transport){
+        if(!old.getJobId().equals(job.getJobId())||!old.getAuthJobStepId().equals(step.getJobStepId())
+            ||!old.getRobotId().equals(job.getRobot().getRobotId())||!old.getAccountId().equals(profile.getAccount().getAccountId())
+            ||!old.getAvatarVersion().equals(profile.getFaceAvatarVersion())||old.getUsedAt()!=null
+            ||!old.getExpiresAt().isAfter(clock.instant())
+            ||verifications.findByAuthJobStepJobStepId(step.getJobStepId()).isPresent())fail("FACE_SESSION_EXPIRED_OR_CHANGED");
+        if(Objects.equals(old.getTransportSessionId(),transport.getTransportSessionId()))return old;
+        var replacement=new FaceAuthSession();replacement.setSessionId(UUID.randomUUID());replacement.setJobId(old.getJobId());
+        replacement.setAuthJobStepId(old.getAuthJobStepId());replacement.setRobotId(old.getRobotId());
+        replacement.setTransportSessionId(transport.getTransportSessionId());replacement.setAccountId(old.getAccountId());
+        replacement.setAvatarVersion(old.getAvatarVersion());replacement.setExpiresAt(old.getExpiresAt());
+        // Delete/flush before inserting because auth_job_step_id is unique. Old scans cannot resolve the old nonce afterwards.
+        sessions.delete(old);sessions.flush();sessions.saveAndFlush(replacement);
+        log.info("FACE_SESSION_ROTATED job={} step={}",job.getJobId(),step.getJobStepId());
+        return replacement;
+    }
     private Job owned(UUID jobId,DevicePrincipal device,boolean lock){
         Robot robot=deviceScope.requireCurrentDevice(device);Job job=(lock?jobs.lockById(jobId):jobs.findById(jobId)).orElseThrow();
         if(job.getRobot()==null||!job.getRobot().getRobotId().equals(robot.getRobotId()))throw new AccessDeniedException("Job outside Device scope");return job;
@@ -191,9 +225,8 @@ public class FaceAuthService {
     private Account expected(Job job,JobStep step){
         if(job.getServiceRequest()==null)throw new BusinessRuleException("FACE_DELIVERY_REQUIRED");
         var d=deliveries.findById(job.getServiceRequest().getServiceRequestId()).orElseThrow();
-        if(d.getAuthenticationMethod()!=DeliveryAuthenticationMethod.FACE_VERIFICATION)fail("FACE_METHOD_MISMATCH");
         var purpose=RuntimeAuthorizationPolicy.purpose(step);
-        if(purpose==AuthVerificationPurpose.DELIVERY_SENDER){if(d.getPickedUpAt()!=null)fail("FACE_WRONG_STAGE");return d.getExpectedSenderAccount();}
+        if(deliveryAuthentication.methodFor(d,purpose)!=DeliveryAuthenticationMethod.FACE_VERIFICATION)fail("FACE_METHOD_MISMATCH");
         if(purpose!=AuthVerificationPurpose.DELIVERY_RECEIVER||d.getPickedUpAt()==null||d.getDeliveredAt()!=null)fail("FACE_WRONG_STAGE");
         return d.getExpectedReceiverAccount();
     }

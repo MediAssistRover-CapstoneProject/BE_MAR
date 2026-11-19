@@ -48,7 +48,10 @@ public class StaffMeService {
     @Transactional public StaffMeResponse avatar(AccountPrincipal principal,org.springframework.web.multipart.MultipartFile file){
         get(principal);Account a=requireCurrentStaff(principal);var p=staffProfileRepository.findByAccountAccountId(a.getAccountId()).orElseThrow();
         if(file==null)p.setUrl(null);
-        else {var validated=fileValidator.imageOrVideo(file);if(!"IMAGE".equals(validated.kind()))throw new BusinessRuleException("Avatar must be an image");p.setUrl(media.upload(file).url());}
+        else {
+            if(file.getSize()>2L*1024*1024)throw new com.mediassistrover.backend.exception.FileTooLargeException("Avatar exceeds 2 MiB; choose a smaller JPG, PNG or WebP image for face verification");
+            var validated=fileValidator.imageOrVideo(file);if(!"IMAGE".equals(validated.kind()))throw new BusinessRuleException("Avatar must be an image");p.setUrl(media.upload(file).url());
+        }
         return get(principal);
     }
 

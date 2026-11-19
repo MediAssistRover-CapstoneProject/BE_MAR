@@ -20,11 +20,14 @@ public final class DeliveryRequests {
                          TargetMode targetMode,@Size(max=160) String recipientName,
                          @Size(max=100) String recipientContact,@AssertTrue boolean requiresConfirmation,
                          @Size(max=4000) String temperatureRequirement,@Future Instant deliveryDeadline,
-                         @Size(max=4000) String deliveryNote,@NotEmpty List<@Valid Item> items,
+                         @Size(max=4000) String deliveryNote,@NotEmpty List<@NotNull @Valid Item> items,
                          @Min(0) @Max(100) int priority,@Size(max=4000) String note,JsonNode data,UUID receiverShiftId,DeliveryAuthenticationMethod authenticationMethod) {
-        public Create { if(authenticationMethod==null) authenticationMethod=DeliveryAuthenticationMethod.QR_CODE; }
+        public Create {
+            if(authenticationMethod==null) authenticationMethod=items!=null && items.stream().anyMatch(i->i!=null && i.sensitive())
+                    ?DeliveryAuthenticationMethod.FACE_VERIFICATION:DeliveryAuthenticationMethod.QR_CODE;
+        }
         public Create(UUID mapId,UUID pickupRoomId,UUID deliveryRoomId,UUID pickupEndpointId,UUID deliveryEndpointId,UUID deliveryGroupId,UUID expectedSenderAccountId,UUID expectedReceiverAccountId,TargetMode targetMode,String recipientName,String recipientContact,boolean requiresConfirmation,String temperatureRequirement,Instant deliveryDeadline,String deliveryNote,List<Item> items,int priority,String note,JsonNode data,UUID receiverShiftId){
-            this(mapId,pickupRoomId,deliveryRoomId,pickupEndpointId,deliveryEndpointId,deliveryGroupId,expectedSenderAccountId,expectedReceiverAccountId,targetMode,recipientName,recipientContact,requiresConfirmation,temperatureRequirement,deliveryDeadline,deliveryNote,items,priority,note,data,receiverShiftId,DeliveryAuthenticationMethod.QR_CODE);
+            this(mapId,pickupRoomId,deliveryRoomId,pickupEndpointId,deliveryEndpointId,deliveryGroupId,expectedSenderAccountId,expectedReceiverAccountId,targetMode,recipientName,recipientContact,requiresConfirmation,temperatureRequirement,deliveryDeadline,deliveryNote,items,priority,note,data,receiverShiftId,null);
         }
         public Create(UUID mapId,UUID pickupRoomId,UUID deliveryRoomId,UUID pickupEndpointId,UUID deliveryEndpointId,UUID deliveryGroupId,
             UUID expectedSenderAccountId,UUID expectedReceiverAccountId,TargetMode targetMode,String recipientName,String recipientContact,boolean requiresConfirmation,

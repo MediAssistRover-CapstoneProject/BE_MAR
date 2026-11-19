@@ -19,6 +19,7 @@ public class OperationAuthorizationService {
     private final AuthVerificationRepository verifications;
     private final RobotOperationAuthorizationRepository bindings;
     private final DeliveryRequestRepository deliveries;
+    private final DeliveryAuthenticationPolicy deliveryAuthentication;
     private final ObjectMapper json;
     private final Clock clock;
     private final org.springframework.beans.factory.ObjectProvider<FaceAuthService> face;
@@ -74,7 +75,6 @@ public class OperationAuthorizationService {
             fail("Authorization cannot be issued after the workflow deadline");
     }
     private void requireVerification(Job job,JobStep current,AuthVerification verification) {
-        if(verification.getMethod()==AuthVerificationMethod.FACE_VERIFICATION)face.getObject().requireGrant(verification);
         Instant now=Instant.now(clock);
         JobStep auth=verification.getAuthJobStep();
         String permission=verification.getPurpose()==AuthVerificationPurpose.DELIVERY_SENDER?"DELIVERY_SEND":"DELIVERY_RECEIVE";
@@ -84,6 +84,16 @@ public class OperationAuthorizationService {
             fail("UNLOCK purpose must be fixed and match the workflow authorization configuration");
         DeliveryRequest delivery=deliveries.findById(job.getServiceRequest().getServiceRequestId())
                 .orElseThrow(()->new BusinessRuleException("Authorization requires this Job's DeliveryRequest"));
+        DeliveryAuthenticationMethod required=deliveryAuthentication.methodFor(delivery,verification.getPurpose());
+        if(required==null || verification.getMethod()==null
+                || !required.name().equals(verification.getMethod().name())
+                || !verification.getMethod().name().equals(auth.getStep().getParamsJson().path("method").asText()))
+            fail("UNLOCK verification method does not match the delivery authentication policy");
+        Account expected=verification.getPurpose()==AuthVerificationPurpose.DELIVERY_SENDER
+                ?delivery.getExpectedSenderAccount():delivery.getExpectedReceiverAccount();
+        if(expected==null || !expected.getAccountId().equals(verification.getActorAccount().getAccountId()))
+            fail("UNLOCK verification belongs to another delivery Staff account");
+        if(verification.getMethod()==AuthVerificationMethod.FACE_VERIFICATION)face.getObject().requireGrant(verification);
         if(verification.getPurpose()==AuthVerificationPurpose.DELIVERY_SENDER && delivery.getPickedUpAt()!=null
                 || verification.getPurpose()==AuthVerificationPurpose.DELIVERY_RECEIVER && (delivery.getPickedUpAt()==null || delivery.getDeliveredAt()!=null))
             fail("UNLOCK purpose does not match the current delivery milestone");

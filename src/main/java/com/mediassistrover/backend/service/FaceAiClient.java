@@ -27,9 +27,16 @@ public class FaceAiClient {
                 .header("Content-Type","application/json").header("X-Face-Service-Key",key)
                 .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(body))).build();
             var response=http.send(request,HttpResponse.BodyHandlers.ofString());
-            if(response.statusCode()!=200 || response.body().length()>16384)throw new BusinessRuleException("FACE_AI_UNAVAILABLE");
-            return json.readTree(response.body());
+            if(response.body().length()>16384)throw new BusinessRuleException("FACE_AI_UNAVAILABLE");
+            if(response.statusCode()==429)throw new BusinessRuleException("FACE_AI_BUSY");
+            if(response.statusCode()==409 && "MODEL_VERSION_CHANGED".equals(json.readTree(response.body()).path("detail").asText()))
+                throw new BusinessRuleException("FACE_MODEL_CHANGED");
+            if(response.statusCode()!=200)throw new BusinessRuleException("FACE_AI_UNAVAILABLE");
+            JsonNode result=json.readTree(response.body());
+            if(result==null||!result.isObject())throw new BusinessRuleException("FACE_AI_UNAVAILABLE");
+            return result;
         } catch(InterruptedException e){Thread.currentThread().interrupt();throw new BusinessRuleException("FACE_AI_UNAVAILABLE");}
+          catch(BusinessRuleException e){throw e;}
           catch(Exception e){throw new BusinessRuleException("FACE_AI_UNAVAILABLE");}
     }
 }

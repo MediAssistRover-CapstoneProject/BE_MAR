@@ -8,7 +8,7 @@
     *{box-sizing:border-box}body{margin:0;background:#f2f5f8;color:#142533;font:16px system-ui,sans-serif}
     main{max-width:36rem;margin:auto;padding:1rem}section{background:white;border:1px solid #dae2eb;border-radius:12px;padding:1rem;margin:1rem 0}
     h1,h2{margin-top:0}label{display:block;margin:.8rem 0}input,select,button{width:100%;padding:.75rem;font:inherit;border-radius:8px}
-    input,select{border:1px solid #8094a4;margin-top:.3rem}button{border:0;background:#005ea3;color:white;cursor:pointer;margin:.35rem 0}
+    input,select{border:1px solid #8094a4;margin-top:.3rem}input[type=checkbox]{width:auto;margin-right:.5rem}button{border:0;background:#005ea3;color:white;cursor:pointer;margin:.35rem 0}
     button:disabled{background:#657784;cursor:default}button.secondary{background:#e7eef4;color:#183b59}
     fieldset{border:0;padding:0;margin:0}summary{cursor:pointer;font-weight:650}
     details{border-bottom:1px solid #dae2eb;padding-bottom:.8rem}code{overflow-wrap:anywhere}
@@ -21,7 +21,7 @@
 </head>
 <body><main>
   <h1>Giao nhận hàng với MAR</h1>
-  <p>Staff gửi chọn QR hoặc khuôn mặt khi tạo đơn. Với khuôn mặt, nhìn vào camera robot khi đến lượt giao nhận.</p>
+  <p>Người giao luôn xác thực bằng QR. Với hàng quan trọng, người nhận xác thực bằng khuôn mặt trước khi mở ngăn; hàng thường nhận bằng QR.</p>
   <section id="loginSection">
     <form id="login">
       <label>Tài khoản<input id="username" autocomplete="username" maxlength="100" required></label>
@@ -57,7 +57,8 @@
         <fieldset id="deliveryFields">
           <label>Bản đồ đang hoạt động<select id="deliveryMap" required></select></label>
           <label>Điểm lấy hàng<select id="pickupEndpoint" required></select></label>
-          <label>Phương thức xác thực<select id="authenticationMethod"><option value="QR_CODE">QR</option><option value="FACE_VERIFICATION">Khuôn mặt (demo)</option></select></label>
+          <label><input id="importantDelivery" type="checkbox">Hàng quan trọng — người nhận xác thực khuôn mặt</label>
+          <p id="authenticationMethod">Người giao: QR · Người nhận: QR.</p>
           <p id="faceReadiness" role="status"></p>
           <label>Staff nhận đang trực<select id="receiverShift" required></select></label>
           <img id="receiverAvatar" alt="Ảnh staff nhận" width="64" hidden>
@@ -65,6 +66,7 @@
           <button type="button" id="reloadStaff">Tải lại staff đang trực</button>
           <label>Tên hàng<input id="deliveryItem" maxlength="160" required></label>
           <label>Số lượng<input id="deliveryQuantity" type="number" min="1" step="1" value="1" required></label>
+          <label>Ghi chú hàng<input id="deliveryNote" maxlength="4000"></label>
           <button id="createDeliveryButton" disabled>Tạo yêu cầu</button>
         </fieldset>
       </form>

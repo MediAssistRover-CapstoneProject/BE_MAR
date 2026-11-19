@@ -57,4 +57,18 @@ class PatrolJobControlTest {
         assertThrows(AccessDeniedException.class,()->control.suspend(job.getJobId(),"Pause",actor,null));
         verify(suspension,never()).request(any(),any(),any());
     }
+    @Test void observingPatrolRetainsItsReachedCheckpointInTheJobView(){
+        var job=job(JobStatus.RUNNING);job.setPatrolRound(2);
+        var json=new com.fasterxml.jackson.databind.ObjectMapper();var endpoint=UUID.randomUUID();
+        var sensing=JobStep.builder().jobStepId(UUID.randomUUID()).stepTypeSnapshot("EXECUTE_SENSING")
+                .executionSequenceNo(8).resolvedInputsJson(json.createObjectNode().put("sensing_type","PATROL_FALL")).build();
+        job.setSelectedJobStep(sensing);
+        var reached=JobStep.builder().stepTypeSnapshot("MOVE").status(JobStepStatus.SUCCEEDED)
+                .resolvedInputsJson(json.createObjectNode().put("endpoint_id",endpoint.toString())).build();
+        var history=mock(JobStepRepository.class);var holds=mock(JobSuspensionHoldRepository.class);
+        when(history.findReachedPatrolCheckpoints(eq(job.getJobId()),eq(2),eq(8L),any())).thenReturn(List.of(reached));
+        var state=new PatrolJobStateService(suspension,holds,history).snapshot(job);
+        assertEquals(endpoint,state.targetEndpointId());assertEquals("EXECUTE_SENSING",state.phase());
+        assertEquals(2,state.round());assertEquals(sensing.getJobStepId(),state.selectedStepId());
+    }
 }

@@ -35,6 +35,7 @@ public class WorkflowHardDeleteService {
         long active=countLong("SELECT COUNT(*) FROM Job WHERE workflow_id=? AND status IN ('QUEUED','ACCEPTED','RUNNING')",id);
         var dependencies=new LinkedHashMap<String,Long>();
         dependencies.put("jobs",countLong("SELECT COUNT(*) FROM Job WHERE workflow_id=?",id));
+        dependencies.put("faceAuthSessions",countLong("SELECT COUNT(*) FROM face_auth_session f JOIN Job j ON j.job_id=f.job_id WHERE j.workflow_id=?",id));
         dependencies.put("activeJobs",active);
         dependencies.put("schedules",countLong("SELECT COUNT(*) FROM Schedule WHERE workflow_id=?",id));
         dependencies.put("navigationRequestsToUnlink",countLong("SELECT COUNT(*) FROM NavigationRequest WHERE workflow_id=?",id));
@@ -81,6 +82,7 @@ public class WorkflowHardDeleteService {
         runtime+=delete("DELETE r FROM JobStepResponse r JOIN JobStep js ON js.job_step_id=r.job_step_id"+JOB_JOIN,id);
         runtime+=delete("DELETE c FROM RobotCommandOutbox c JOIN Job j ON j.job_id=c.job_id WHERE j.workflow_id=?",id);
         runtime+=delete("DELETE q FROM QrChallenge q JOIN Job j ON j.job_id=q.job_id WHERE j.workflow_id=?",id);
+        runtime+=delete("DELETE f FROM face_auth_session f JOIN Job j ON j.job_id=f.job_id WHERE j.workflow_id=?",id);
         runtime+=delete("DELETE a FROM AuthVerification a JOIN Job j ON j.job_id=a.job_id WHERE j.workflow_id=?",id);
         runtime+=delete("DELETE e FROM JobEvent e JOIN Job j ON j.job_id=e.job_id WHERE j.workflow_id=?",id);
         runtime+=delete("DELETE w FROM WorkflowOrchestrationWork w JOIN Job j ON j.job_id=w.job_id WHERE j.workflow_id=?",id);

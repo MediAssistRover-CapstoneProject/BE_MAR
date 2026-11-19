@@ -48,6 +48,7 @@ public class QrVerificationServiceImpl implements QrVerificationService {
     private final JobRepository jobRepository;
     private final JobStepRepository stepRepository;
     private final DeliveryRequestRepository deliveryRepository;
+    private final DeliveryAuthenticationPolicy deliveryAuthentication;
     private final RuntimeStepCompletionService completionService;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
@@ -70,6 +71,7 @@ public class QrVerificationServiceImpl implements QrVerificationService {
 
         DeliveryRequest delivery = delivery(job);
         AuthVerificationPurpose purpose = RuntimeAuthorizationPolicy.purpose(step);
+        requireQr(delivery,purpose);
         Account expected = purpose == AuthVerificationPurpose.DELIVERY_SENDER
                 ? delivery.getExpectedSenderAccount() : delivery.getExpectedReceiverAccount();
         if (expected == null)
@@ -126,6 +128,8 @@ public class QrVerificationServiceImpl implements QrVerificationService {
         if (job.getStatus() != JobStatus.RUNNING || job.getCancelRequestedAt() != null
                 || step == null || step.getStatus() != JobStepStatus.RUNNING
                 || step.getStep().getStepType() != StepType.AUTHENTICATE) return Optional.empty();
+        if(!"QR_CODE".equals(step.getStep().getParamsJson().path("method").asText()))return Optional.empty();
+        requireQr(delivery(job),RuntimeAuthorizationPolicy.purpose(step));
         QrChallenge challenge = challengeRepository.findByAuthJobStepJobStepId(step.getJobStepId()).orElse(null);
         if (challenge == null || challenge.getUsedAt() != null
                 || !challenge.getExpiresAt().isAfter(Instant.now(clock))) return Optional.empty();
@@ -141,15 +145,19 @@ public class QrVerificationServiceImpl implements QrVerificationService {
                 .orElseThrow(() -> new BusinessRuleException("QR proof is outside this Job"));
         staffScope.requireJobAccess(job, actor);
         Account account = requireCurrentStaff(actor);
+        delivery(job);
         QrChallenge challenge = challengeRepository.lockByTokenHash(hash(proof))
                 .orElseThrow(() -> new BusinessRuleException("QR proof is invalid"));
         requireClaimsMatch(parsed, challenge);
+        requireQr(delivery(job),challenge.getPurpose());
 
         if (challenge.getUsedAt() != null) {
             AuthVerification existing = verificationRepository.findByAuthJobStepJobStepId(
                             challenge.getAuthJobStep().getJobStepId())
                     .orElseThrow(() -> new ConflictException("QR proof has already been used"));
-            if (!existing.getActorAccount().getAccountId().equals(account.getAccountId()))
+            if (existing.getMethod()!=AuthVerificationMethod.QR_CODE
+                    || !requireExpectedAccount(job,challenge).getAccountId().equals(account.getAccountId())
+                    || !existing.getActorAccount().getAccountId().equals(account.getAccountId()))
                 throw new ConflictException("QR proof has already been used by another account");
             return verificationResponse(existing);
         }
@@ -158,9 +166,7 @@ public class QrVerificationServiceImpl implements QrVerificationService {
         if (!challenge.getExpiresAt().isAfter(now)) throw new BusinessRuleException("QR proof has expired");
         JobStep step = challenge.getAuthJobStep();
         requireLiveAuthentication(job, step);
-        Account expected = challenge.getExpectedAccount();
-        if (expected == null) throw new BusinessRuleException("QR challenge has no expected staff account");
-        requireEligibleExpectedStaff(expected);
+        Account expected = requireExpectedAccount(job,challenge);
         if (!expected.getAccountId().equals(account.getAccountId()))
             throw new AccessDeniedException("QR challenge belongs to another Staff account");
 
@@ -246,6 +252,7 @@ public class QrVerificationServiceImpl implements QrVerificationService {
 
     private Account requireExpectedAccount(Job job, QrChallenge challenge) {
         DeliveryRequest delivery = delivery(job);
+        requireQr(delivery,challenge.getPurpose());
         Account current = challenge.getPurpose() == AuthVerificationPurpose.DELIVERY_SENDER
                 ? delivery.getExpectedSenderAccount() : delivery.getExpectedReceiverAccount();
         if (current == null || challenge.getExpectedAccount() == null
@@ -408,8 +415,14 @@ public class QrVerificationServiceImpl implements QrVerificationService {
         if (job.getServiceRequest() == null
                 || job.getServiceRequest().getRequestType() != ServiceRequestType.DELIVERY)
             throw new BusinessRuleException("QR authentication is restricted to delivery Jobs");
-        return deliveryRepository.findById(job.getServiceRequest().getServiceRequestId())
+        DeliveryRequest delivery=deliveryRepository.findById(job.getServiceRequest().getServiceRequestId())
                 .orElseThrow(() -> new BusinessRuleException("Delivery runtime requires its DeliveryRequest"));
+        return delivery;
+    }
+
+    private void requireQr(DeliveryRequest delivery,AuthVerificationPurpose purpose) {
+        if(deliveryAuthentication.methodFor(delivery,purpose)!=DeliveryAuthenticationMethod.QR_CODE)
+            throw new BusinessRuleException("QR authentication does not match the delivery authentication policy");
     }
 
     private Account requireCurrentStaff(AccountPrincipal actor) {
@@ -440,7 +453,7 @@ public class QrVerificationServiceImpl implements QrVerificationService {
                 || job.getStartedAt() == null
                 || !job.getStartedAt().plusSeconds(job.getWorkflow().getMaxDurationSec()).isAfter(now))
             throw new BusinessRuleException("QR requires the selected, unexpired AUTHENTICATE step");
-        delivery(job);
+        requireQr(delivery(job),RuntimeAuthorizationPolicy.purpose(step));
     }
 
     private String permission(AuthVerificationPurpose purpose) {

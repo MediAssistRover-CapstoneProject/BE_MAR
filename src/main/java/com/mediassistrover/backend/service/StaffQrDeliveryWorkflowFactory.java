@@ -32,7 +32,7 @@ public class StaffQrDeliveryWorkflowFactory {
         required.add("compartment_id").add("items");
 
         List<GraphStepRequest> steps = new ArrayList<>();
-        addHandover(steps, "SENDER", "pickup_endpoint_id", "LOAD", method);
+        addHandover(steps, "SENDER", "pickup_endpoint_id", "LOAD", DeliveryAuthenticationMethod.QR_CODE);
         addHandover(steps, "RECEIVER", "delivery_endpoint_id", "UNLOAD", method);
         var announcement = json.createObjectNode().put("action", "SPEAK").put("prompt_key", "DELIVERY_COMPLETED");
         announcement.putObject("data").put("text", "Đã giao vật phẩm thành công.").put("language_code", "vi");
@@ -40,7 +40,7 @@ public class StaffQrDeliveryWorkflowFactory {
                 announcement, json.createObjectNode());
         List<GraphTransitionRequest> transitions = transitions(steps);
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase(java.util.Locale.ROOT);
-        var workflow = new WorkflowUpsertRequest((method==DeliveryAuthenticationMethod.QR_CODE?"WF_STAFF_QR_DELIVERY_":"WF_STAFF_FACE_DELIVERY_") + suffix, 1, method==DeliveryAuthenticationMethod.QR_CODE?"Giao hàng A → B bằng QR staff":"Giao hàng A → B bằng khuôn mặt",
+        var workflow = new WorkflowUpsertRequest((method==DeliveryAuthenticationMethod.QR_CODE?"WF_STAFF_QR_DELIVERY_":"WF_STAFF_FACE_DELIVERY_") + suffix, 1, method==DeliveryAuthenticationMethod.QR_CODE?"Giao hàng A → B bằng QR staff":"Giao hàng quan trọng: gửi QR, nhận khuôn mặt",
                 "DELIVERY", "Robot xác thực người giao và người nhận, sau đó xác nhận hàng và khóa ngăn.",
                 schema, json.createObjectNode(), json.createObjectNode(), json.createObjectNode(),
                 json.createArrayNode().add("NAVIGATION").add("HARDWARE_CONTROL"), 2400, steps.size(), 3, 3);

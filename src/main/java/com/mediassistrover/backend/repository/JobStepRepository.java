@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.*;
 import org.springframework.data.repository.query.Param;
 import java.time.Instant;
 import java.util.*;
+import org.springframework.data.domain.Pageable;
 public interface JobStepRepository extends JpaRepository<JobStep,UUID> {
     interface HelloOperation {
         UUID getJobStepId();
@@ -22,6 +23,11 @@ public interface JobStepRepository extends JpaRepository<JobStep,UUID> {
     Optional<UUID> findJobId(@Param("id") UUID id);
     @Query("select s from JobStep s join fetch s.step where s.jobTask.job.jobId=:jobId order by s.executionSequenceNo")
     List<JobStep> findByJobId(@Param("jobId") UUID jobId);
+    @Query("select s from JobStep s join fetch s.step where s.jobTask.job.jobId=:jobId "
+            +"and s.patrolRound=:round and s.stepTypeSnapshot='MOVE' and s.status='SUCCEEDED' "
+            +"and s.executionSequenceNo<=:sequence order by s.executionSequenceNo desc")
+    List<JobStep> findReachedPatrolCheckpoints(@Param("jobId") UUID jobId,@Param("round") int round,
+                                               @Param("sequence") long sequence,Pageable page);
     // Discover IDs without range/gap locks: the joined locking scan can lock
     // unrelated schema-3 MOVE steps before applying the legacy-job predicate.
     @Query("select s.jobStepId from JobStep s where s.status='RUNNING' and s.jobTask.job.beOrchestrated=false and s.startedAt is not null and s.startedAt <= :threshold")

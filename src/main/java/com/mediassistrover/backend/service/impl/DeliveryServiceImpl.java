@@ -35,6 +35,8 @@ public class DeliveryServiceImpl implements DeliveryService {
 
     @Override @Transactional public DeliveryResponse create(Create r,String key,AccountPrincipal actor,RequestMetadata md){
         staffScope.requireCurrentStaffOrAdmin(actor);validateKey(key);ServiceRequest existing=requestRepository.findByIdempotencyKey(key).orElse(null);
+        DeliveryAuthenticationMethod required=DeliveryAuthenticationPolicy.required(r.items().stream().anyMatch(Item::sensitive));
+        if(r.authenticationMethod()!=required)throw new BusinessRuleException("DELIVERY_AUTHENTICATION_POLICY_MISMATCH: important goods require face; standard goods require QR");
         if(existing!=null){checkOwner(existing,actor);if(existing.getRequestType()!=ServiceRequestType.DELIVERY)throw new ConflictException("Idempotency-Key was used for another request type");DeliveryRequest previous=delivery(existing.getServiceRequestId());if(previous.getAuthenticationMethod()!=r.authenticationMethod())throw new ConflictException("Idempotency-Key authentication method differs");return response(previous);}
         faceAuth.requireDelivery(r.authenticationMethod(),r.expectedSenderAccountId(),r.expectedReceiverAccountId());
         UUID receiverShiftId=r.receiverShiftId();Shift receiverShift=null;
