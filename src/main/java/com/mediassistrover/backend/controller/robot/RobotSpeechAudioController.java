@@ -2,6 +2,7 @@ package com.mediassistrover.backend.controller.robot;
 
 import com.mediassistrover.backend.speech.OpenAiTtsService;
 import com.mediassistrover.backend.speech.OpenAiSttService;
+import com.mediassistrover.backend.speech.SpeechSettingsService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -20,6 +21,20 @@ import org.springframework.web.multipart.MultipartFile;
 public class RobotSpeechAudioController {
     private final OpenAiTtsService speech;
     private final OpenAiSttService transcription;
+    private final SpeechSettingsService settings;
+
+    @GetMapping("/profile")
+    @Operation(summary="Shared speech profile for direct AI audio; revision changes when voice, speed or instructions change")
+    public ResponseEntity<SpeechSettingsService.Profile> profile(
+            org.springframework.web.context.request.WebRequest request) {
+        var profile=settings.current();
+        String etag="\""+profile.revision()+"\"";
+        // Conditional delivery saves the profile payload, never device authentication.
+        boolean unchanged=request.checkNotModified(etag);
+        var response=ResponseEntity.status(unchanged?304:200)
+                .eTag(etag).header("Cache-Control","private, no-cache");
+        return response.body(unchanged?null:profile);
+    }
     @GetMapping("/status")
     @Operation(summary="Inspect STT/TTS model configuration; no provider requests or robot jobs")
     public Map<String,Object> status(){return Map.of("stt",transcription.configuration(),"tts",speech.configuration());}

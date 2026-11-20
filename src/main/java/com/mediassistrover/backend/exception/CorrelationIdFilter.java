@@ -16,6 +16,7 @@ import java.util.UUID;
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class CorrelationIdFilter extends OncePerRequestFilter {
+    private static final org.slf4j.Logger log=org.slf4j.LoggerFactory.getLogger(CorrelationIdFilter.class);
 
     public static final String CORRELATION_ID_HEADER = "X-Correlation-ID";
     public static final String CORRELATION_ID_ATTRIBUTE = CorrelationIdFilter.class.getName() + ".correlationId";
@@ -35,9 +36,20 @@ public class CorrelationIdFilter extends OncePerRequestFilter {
         request.setAttribute(CORRELATION_ID_ATTRIBUTE, correlationId);
         response.setHeader(CORRELATION_ID_HEADER, correlationId);
         MDC.put("correlationId", correlationId);
+        long started=System.nanoTime();
         try {
             filterChain.doFilter(request, response);
         } finally {
+            String stage=switch(request.getRequestURI()) {
+                case "/api/v1/pi/voice/navigation-destinations" -> "catalog";
+                case "/api/v1/pi/voice/navigation-requests" -> "navigation_request";
+                case "/api/v1/pi/speech/profile" -> "speech_profile";
+                case "/api/v1/pi/speech/transcribe" -> "transcribe";
+                case "/api/v1/pi/speech/synthesize" -> "synthesize";
+                default -> null;
+            };
+            if(stage!=null)log.info("VOICE_HTTP stage={} status={} elapsed_ms={} correlation_id={}",
+                    stage,response.getStatus(),(System.nanoTime()-started)/1_000_000,correlationId);
             MDC.remove("correlationId");
         }
     }

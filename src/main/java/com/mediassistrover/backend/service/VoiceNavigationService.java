@@ -33,6 +33,7 @@ public class VoiceNavigationService {
     private final ServiceRequestService requests;
     private final JobRepository jobs;
     private final MqttWire wire;
+    private final com.mediassistrover.backend.speech.SpeechSettingsService speechSettings;
 
     public ObjectNode destinations(DevicePrincipal device) {
         scope.requireCurrentDevice(device);
@@ -46,6 +47,7 @@ public class VoiceNavigationService {
         var workflow=workflows.findFirstByWorkflowCodeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(WORKFLOW_CODE,WorkflowStatus.PUBLISHED);
         result.put("workflowPrepared",workflow.isPresent());
         result.put("workflowOwnsInvite",workflow.map(VoiceNavigationService::ownsInvite).orElse(false));
+        result.set("speechProfile",wire.tree(speechSettings.current()));
         var points=result.putArray("endpoints");
         endpoints.findByMapMapIdOrderByEndpointCodeAsc(mapId).stream().filter(e->e.isActive()&&e.isAccessible()).forEach(e->{
             var p=points.addObject().put("endpointId",e.getEndpointId().toString()).put("mapId",mapId.toString())
@@ -53,6 +55,17 @@ public class VoiceNavigationService {
                 .put("spokenLabel",spokenDestination(e));
             if(e.getRoom()!=null&&e.getRoom().isActive())p.put("roomCode",e.getRoom().getRoomCode()).put("roomName",e.getRoom().getRoomName());
         });
+        // Clients can reuse labels/profile within this map/session. READY, expiry,
+        // job availability and request authorization remain live checks above/in create().
+        ObjectNode catalog=wire.object().set("endpoints",points);
+        catalog.set("speechProfile",result.path("speechProfile"));
+        catalog.put("sessionId",session.path("sessionId").asText());
+        catalog.put("mapId",mapId.toString());
+        catalog.put("mapAssetHash",session.path("mapAssetHash").asText());
+        catalog.put("initializationRevision",session.path("initialization").path("revision").asLong());
+        catalog.put("workflowId",workflow.map(w->w.getWorkflowId().toString()).orElse(""));
+        catalog.put("workflowOwnsInvite",result.path("workflowOwnsInvite").asBoolean());
+        result.put("catalogRevision",wire.canonicalHash(catalog));
         return result;
     }
 
