@@ -20,6 +20,7 @@ public interface AlertService {
                              boolean includeDeleted,AccountPrincipal actor,Pageable pageable);
     AlertResponse acknowledge(UUID id,AccountPrincipal actor,RequestMetadata metadata);
     AlertResponse resolve(UUID id,AccountPrincipal actor,RequestMetadata metadata);
+    AlertResponse falseAlarm(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
     AlertResponse close(UUID id,AccountPrincipal actor,RequestMetadata metadata);
     AlertResponse archive(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata);
     com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id,AccountPrincipal actor);

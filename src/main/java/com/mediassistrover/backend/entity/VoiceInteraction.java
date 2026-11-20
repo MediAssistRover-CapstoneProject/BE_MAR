@@ -40,6 +40,10 @@ public class VoiceInteraction {
     @Column(name = "ended_at")
     private Instant endedAt;
 
+    /** Null for older companions which did not negotiate heartbeat leases. */
+    @Column(name = "lease_expires_at")
+    private Instant leaseExpiresAt;
+
     @Column(name = "detected_intent", length = 80)
     private String detectedIntent;
 

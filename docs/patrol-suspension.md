@@ -85,10 +85,52 @@ Sau FAILED/CANCELLED đã có bằng chứng dừng, robot về IDLE và job ti�
 
 Request delivery/voice ghim robot đang chạy nhiệm vụ thông thường có thể bị
 từ chối vì tác vụ không thể ngắt; tiếp nhận để nhường hiện được thiết kế cho
-patrol schema 3. BE đã hỗ trợ nguồn VOICE để nhường patrol, nhưng wake listener
-trên Pi hiện chỉ nghe khi IDLE: nói MA giữa một MOVE tuần tra chưa tự tạo yêu
-cầu nhường. SOS/fall qua API vẫn có thể tạo INCIDENT hold. Không coi kiểm thử
-BE/mock là bằng chứng các trường hợp này đã chạy trên robot thật.
+patrol schema 3. Companion mới nghe wake trong patrol khi BE cho phép, mở
+VOICE hold rồi chờ cả trạng thái Pi IDLE và xác nhận BE đã dừng trước khi hội
+thoại. SOS/fall qua API tạo INCIDENT hold. Không coi kiểm thử BE/mock là bằng
+chứng các trường hợp này đã chạy trên robot thật.
+
+## Wake và nhận diện người dùng chung (bản source 20/11/2026)
+
+- `GET /api/v1/pi/voice/availability?voiceInteractionId=...` tách `wakeAllowed`
+  khỏi `conversationReady`; không đổi BUSY thành IDLE. Pi giới hạn truy vấn
+  một lần/giây khi cần xin nhường hoặc đang hội thoại. SOS/ASSIST, cảnh báo
+  vùng cấm, job foreground và operation chưa chốt đều có quyền chặn.
+- Companion mới gửi `leaseSupported=true` khi mở voice; gửi
+  `POST /api/v1/pi/voice/interactions/{id}/heartbeat` mỗi 10 giây.
+  `app.voice.interaction-lease-sec` mặc định 45 giây. BE hết hạn phiên bị bỏ
+  lại và giải phóng riêng VOICE hold; không hủy job dẫn đường đã được tạo.
+  Companion cũ không gửi cờ này vẫn giữ contract hoàn tất cũ.
+- EC2 `/v1/fall/frame` thêm `ground_people_version=1` và tối đa tám người với
+  track ID, độ tin cậy và hai điểm cổ chân từ cùng lượt suy luận. Không tải
+  model thứ hai lên Pi. Khung bao chạm sàn không thay thế điểm chân quan sát.
+- Pi dùng RGB-D đã đăng ký, TF tại thời điểm ảnh, cùng session/map/hash và
+  revision định vị để chiếu điểm chân lên bản đồ. Người phải vào trong vùng
+  KEEP_OUT liên tục qua nhiều mẫu; mặc định xác nhận 0,75 giây, inset 8 cm,
+  cooldown 30 giây. Điều chỉnh tại `ai.patrol_fall.restricted_monitor`.
+  Thiếu chân/depth/TF cho kết quả chưa xác định, không báo vùng đã trống.
+- `POST /api/v1/pi/restricted-zone-events`: `eventId`, `jobId`, `jobStepId`,
+  `detectedAt`, `algorithm`, `confidence`, `zoneId`, `trackId`, `personLocation`.
+  Person location gồm xM/yM/rangeM/capturedAt/navigationSessionId/mapId/
+  mapAssetHash/initializationRevision/depthSkewMs/floorHeightM. BE kiểm tra
+  đúng step PATROL đang chạy, map, zone và vị trí ground trước khi lưu.
+  Retry cùng event/body trả receipt cũ dù job đã tạm dừng.
+- Cảnh báo `PATROL_RESTRICTED_INTRUSION` tạo nguồn giữ `RESTRICTED_ALERT`,
+  gửi staff SOS được phân công. Không có staff vẫn lưu để admin xử lý.
+  ACK giữ nguyên hold; `POST /api/v1/alerts/{id}/resolve` hoặc `/false-alarm`
+  với `{ "reason": "..." }` giải phóng. Trang `media-call.html` giữ cả OPEN
+  và ACKNOWLEDGED trong danh sách, cho xem camera và kết luận.
+- Checkpoint RESTRICTED_ZONE dùng cùng stream. Nó lấy profile đóng băng từ
+  `GET /api/v1/pi/restricted-zone-events/profile?zoneId=...`; model phải khớp
+  profile đã cấu hình. Chỉ trả negative khi depth xác nhận toàn vùng đang thấy.
+
+Triển khai theo thứ tự: BE cùng migration `V64__voice_interaction_lease.sql`,
+AI camera, rồi source Pi. Bật `--restricted-monitor` trong lệnh phiên navigation
+(hoặc `ai.patrol_fall.restricted_monitor.enabled=true` khi stack dừng); mặc định
+nhánh mới tắt để Pi cũ/mới không gọi BE chưa cập nhật. Depth đăng ký phải bật.
+Giữ workflow đã publish bất biến: tạo tuyến đúng map/zone/checkpoint, thử bằng
+lịch PAUSED, chỉ kích hoạt khi có người vận hành. Thay đổi source không tự
+thay tuyến cũ, không tự bật lịch và không phát lệnh bánh.
 
 ## Triển khai và kiểm chứng
 

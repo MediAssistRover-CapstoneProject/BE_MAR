@@ -71,10 +71,12 @@ public class MqttOperationRecoveryService {
         JobStep step=steps.lockById(stepId).orElseThrow();
         JobStepStatus settledStatus=reconciledFailure?JobStepStatus.FAILED:JobStepStatus.CANCELLED;
         JobStepStatus previousStatus=step.getStatus();
-        // The generic Job reconciliation can leave its selected step in
+        // Job cancellation/reconciliation can leave the selected Pi step in
         // RECOVERY_REQUIRED. Retire it only after the same committed stop proof.
+        boolean selectedRecovery=previousStatus==JobStepStatus.RECOVERY_REQUIRED
+                &&job.getSelectedJobStep()!=null&&stepId.equals(job.getSelectedJobStep().getJobStepId());
         boolean compatibleStep=previousStatus==settledStatus
-                ||reconciledFailure&&previousStatus==JobStepStatus.RECOVERY_REQUIRED;
+                ||selectedRecovery;
         if(!compatibleStep||!"MOVE".equals(step.getStepTypeSnapshot())
                 ||reconciledFailure&&(job.getSelectedJobStep()==null||!stepId.equals(job.getSelectedJobStep().getJobStepId()))
                 ||!Objects.equals(step.getOperationKey(),request.operationKey())

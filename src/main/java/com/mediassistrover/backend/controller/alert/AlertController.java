@@ -33,6 +33,9 @@ public class AlertController {
     @GetMapping("/{id}") public AlertResponse get(@PathVariable UUID id,@RequestParam(defaultValue="false")boolean includeDeleted,@AuthenticationPrincipal AccountPrincipal actor){return service.get(id,includeDeleted,actor);}
     @PostMapping("/{id}/acknowledge") public AlertResponse acknowledge(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.acknowledge(id,actor,RequestMetadataFactory.from(request));}
     @PostMapping("/{id}/resolve") public AlertResponse resolve(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.resolve(id,actor,RequestMetadataFactory.from(request));}
+    @PostMapping("/{id}/false-alarm") public AlertResponse falseAlarm(@PathVariable UUID id,
+            @jakarta.validation.Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,
+            HttpServletRequest request){return service.falseAlarm(id,body.reason(),actor,RequestMetadataFactory.from(request));}
     @PostMapping("/{id}/close") public AlertResponse close(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.close(id,actor,RequestMetadataFactory.from(request));}
     @DeleteMapping("/{id}") public AlertResponse archive(@PathVariable UUID id,@jakarta.validation.Valid @RequestBody LifecycleActionRequest body,@AuthenticationPrincipal AccountPrincipal actor,HttpServletRequest request){return service.archive(id,body.reason(),actor,RequestMetadataFactory.from(request));}
     @GetMapping("/{id}/deletion-impact") @PreAuthorize("hasRole('ADMIN')") public DeletionImpactResponse impact(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor){return service.deletionImpact(id,actor);}

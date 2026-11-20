@@ -23,6 +23,7 @@ public class RobotTaskArbitrationService {
     private final OrchestrationWorkService wakeups;
     private final RobotRepository robots;
     private final NavigationSessionService navigation;
+    private final AlertRepository alerts;
 
     /** Caller already owns the selected job row and robot lock; this method is read-only. */
     public boolean canStart(Job candidate) {
@@ -46,6 +47,7 @@ public class RobotTaskArbitrationService {
         boolean emergency = emergency(candidate);
         if (!emergency && !voices.findByRobotRobotIdAndStatus(robotId, VoiceInteractionStatus.ACTIVE).isEmpty()) return false;
         if (!emergency && !incidents.findByRobotRobotIdAndStatusInAndArchivedAtIsNull(robotId, OPEN_INCIDENTS).isEmpty()) return false;
+        if (!emergency && alerts.existsActiveRestrictedByRobotId(robotId)) return false;
         return !JobOccupancyPolicy.patrol(candidate) || !suspension.hasHolds(candidate);
     }
 
@@ -87,7 +89,8 @@ public class RobotTaskArbitrationService {
     public boolean robotEventHeld(UUID robotId) {
         return media.findByActiveRobotId(robotId).filter(s -> s.getMode() == MediaSession.Mode.ASSIST).isPresent()
                 || !voices.findByRobotRobotIdAndStatus(robotId, VoiceInteractionStatus.ACTIVE).isEmpty()
-                || !incidents.findByRobotRobotIdAndStatusInAndArchivedAtIsNull(robotId, OPEN_INCIDENTS).isEmpty();
+                || !incidents.findByRobotRobotIdAndStatusInAndArchivedAtIsNull(robotId, OPEN_INCIDENTS).isEmpty()
+                || alerts.existsActiveRestrictedByRobotId(robotId);
     }
 
     /** Recheck at publication, including source commits whose after-commit listener is waiting on this Job. */

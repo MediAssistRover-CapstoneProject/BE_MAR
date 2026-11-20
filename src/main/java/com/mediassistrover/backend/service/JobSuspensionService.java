@@ -34,6 +34,7 @@ public class JobSuspensionService {
     private final VoiceInteractionRepository voices;
     private final EmergencyIncidentRepository incidents;
     private final MediaSessionRepository media;
+    private final AlertRepository alerts;
 
     public boolean isPatrol(Job job) {
         return job!=null && job.isBeOrchestrated() && job.getSchemaVersion()==3 && job.getWorkflow()!=null
@@ -119,6 +120,7 @@ public class JobSuspensionService {
         if(media.findByActiveRobotId(robot.getRobotId()).filter(row->row.getMode()==MediaSession.Mode.ASSIST).isPresent())return "MEDIA_ASSIST_ACTIVE";
         if(!incidents.findByRobotRobotIdAndStatusInAndArchivedAtIsNull(robot.getRobotId(),
                 List.of(EmergencyIncidentStatus.OPEN,EmergencyIncidentStatus.ACKNOWLEDGED,EmergencyIncidentStatus.IN_PROGRESS)).isEmpty())return "INCIDENT_ACTIVE";
+        if(alerts.existsActiveRestrictedByRobotId(robot.getRobotId()))return "RESTRICTED_REVIEW_ACTIVE";
         if(jobs.findByRobotRobotIdAndStatusIn(robot.getRobotId(),List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.SUSPENDING,JobStatus.RECOVERY_REQUIRED))
                 .stream().anyMatch(other->!other.getJobId().equals(job.getJobId())))return "FOREGROUND_JOB_PENDING";
         if(jobs.existsHigherPriorityQueuedForMap(job.getMap()==null?null:job.getMap().getMapId(),job.getPriority()))return "HIGHER_PRIORITY_JOB_PENDING";

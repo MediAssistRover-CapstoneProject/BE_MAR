@@ -36,6 +36,15 @@ public class MonitoringReceiptService {
                                      com.fasterxml.jackson.databind.JsonNode provenance) {
         recordExternal(messageId, robot, "CONTINUOUS_FALL_EVENT", payload, provenance);
     }
+    public java.util.Optional<com.fasterxml.jackson.databind.JsonNode> duplicateRestrictedZone(
+            UUID messageId, Robot robot, com.fasterxml.jackson.databind.node.ObjectNode payload) {
+        if (!duplicateExternal(messageId, robot, "RESTRICTED_ZONE_EVENT", payload)) return java.util.Optional.empty();
+        return receipts.findById(messageId).map(MonitoringIngestionReceipt::getProvenanceJson);
+    }
+    public void recordRestrictedZone(UUID messageId, Robot robot, com.fasterxml.jackson.databind.node.ObjectNode payload,
+                                     com.fasterxml.jackson.databind.JsonNode provenance) {
+        recordExternal(messageId, robot, "RESTRICTED_ZONE_EVENT", payload, provenance);
+    }
     private boolean duplicateExternal(UUID messageId,Robot robot,String type,com.fasterxml.jackson.databind.node.ObjectNode payload) {
         var receipt=receipts.findById(messageId).orElse(null);if(receipt==null)return false;
         if(!receipt.getRobotId().equals(robot.getRobotId()) || !receipt.getMessageType().equals(type)

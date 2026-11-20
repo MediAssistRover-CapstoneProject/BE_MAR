@@ -57,6 +57,9 @@ public class VoiceServiceImpl implements VoiceService {
     private final MediaFileValidator mediaValidator;
     private final S3ObjectStorageService storage;
     private final com.mediassistrover.backend.service.PatrolInterruptionEvents patrolInterruptions;
+    private final com.mediassistrover.backend.service.VoiceAdmissionService voiceAdmission;
+    @org.springframework.beans.factory.annotation.Value("${app.voice.interaction-lease-sec:45}")
+    private int voiceLeaseSeconds=45;
 
     @Override
     @Transactional
@@ -71,6 +74,11 @@ public class VoiceServiceImpl implements VoiceService {
             return ack(envelope, robot, true);
         }
         InteractionStartPayload payload = envelope.payload();
+        if(Boolean.TRUE.equals(payload.leaseSupported()) && !interactionRepository
+                .findByRobotRobotIdAndStatus(robot.getRobotId(),VoiceInteractionStatus.ACTIVE).isEmpty())
+            throw new BusinessRuleException("Another voice interaction is still active");
+        if(Boolean.TRUE.equals(payload.leaseSupported()) && !voiceAdmission.current(principal,null).wakeAllowed())
+            throw new BusinessRuleException("Voice wake must wait for the current priority task");
         validateNotFarFuture(payload.startedAt(), "startedAt");
         interactionRepository.save(VoiceInteraction.builder()
                 .voiceInteractionId(envelope.messageId())
@@ -78,6 +86,8 @@ public class VoiceServiceImpl implements VoiceService {
                 .languageCode(payload.languageCode().replace('_', '-'))
                 .status(VoiceInteractionStatus.ACTIVE)
                 .startedAt(payload.startedAt())
+                .leaseExpiresAt(Boolean.TRUE.equals(payload.leaseSupported())
+                        ?clock.instant().plusSeconds(Math.max(15,Math.min(300,voiceLeaseSeconds))):null)
                 .build());
         patrolInterruptions.hold(robot.getRobotId(), "VOICE", envelope.messageId());
         return ack(envelope, robot, false);
@@ -90,14 +100,17 @@ public class VoiceServiceImpl implements VoiceService {
                                            DevicePrincipal principal) {
         validateEnvelope(envelope, principal, "VOICE_INTERACTION_COMPLETED");
         Robot robot = robot(principal.robotId());
-        VoiceInteraction interaction = interaction(interactionId);
+        VoiceInteraction interaction = interactionRepository.lockById(interactionId)
+                .orElseThrow(()->new ResourceNotFoundException("Voice interaction not found"));
         ensureRobot(interaction, robot);
         InteractionCompletionPayload payload = envelope.payload();
         if (!TERMINAL_INTERACTION_STATUSES.contains(payload.status())) {
             throw new BusinessRuleException("Interaction completion status must be COMPLETED, CANCELLED or FAILED");
         }
         if (interaction.getStatus() != VoiceInteractionStatus.ACTIVE) {
-            if (interaction.getStatus() == payload.status()) {
+            boolean expiredLease=interaction.getStatus()==VoiceInteractionStatus.FAILED && interaction.getLeaseExpiresAt()!=null
+                    && !interaction.getLeaseExpiresAt().isAfter(clock.instant());
+            if (interaction.getStatus() == payload.status() || expiredLease) {
                 patrolInterruptions.release(robot.getRobotId(), "VOICE", interactionId);
                 return ack(envelope, robot, true);
             }
@@ -147,7 +160,8 @@ public class VoiceServiceImpl implements VoiceService {
         CommandPayload payload = envelope.payload();
         VoiceInteraction interaction = interaction(payload.voiceInteractionId());
         ensureRobot(interaction, robot);
-        if (interaction.getStatus() != VoiceInteractionStatus.ACTIVE) {
+        if (interaction.getStatus() != VoiceInteractionStatus.ACTIVE || interaction.getLeaseExpiresAt()!=null
+                && !interaction.getLeaseExpiresAt().isAfter(clock.instant())) {
             throw new BusinessRuleException("Commands can only be added to an ACTIVE interaction");
         }
         if (payload.receivedAt().isBefore(interaction.getStartedAt())) {

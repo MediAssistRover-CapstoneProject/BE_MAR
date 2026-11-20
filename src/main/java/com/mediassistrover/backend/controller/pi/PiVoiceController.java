@@ -35,6 +35,20 @@ import org.springframework.web.multipart.MultipartFile;
 public class PiVoiceController {
     private final VoiceService service;
     private final VoiceNavigationService navigation;
+    private final com.mediassistrover.backend.service.VoiceAdmissionService admission;
+    private final com.mediassistrover.backend.service.VoiceInteractionLeaseService leases;
+
+    @GetMapping("/availability")
+    public com.mediassistrover.backend.service.VoiceAdmissionService.Availability availability(
+            @RequestParam(required=false) UUID voiceInteractionId,@AuthenticationPrincipal DevicePrincipal device) {
+        return admission.current(device,voiceInteractionId);
+    }
+
+    @PostMapping("/interactions/{interactionId}/heartbeat")
+    public com.mediassistrover.backend.service.VoiceInteractionLeaseService.Lease heartbeat(
+            @PathVariable UUID interactionId,@AuthenticationPrincipal DevicePrincipal device) {
+        return leases.heartbeat(interactionId,device);
+    }
 
     @GetMapping("/navigation-destinations")
     @Operation(summary="List active accessible endpoint names in this device's current map session; no public visibility or room link required")

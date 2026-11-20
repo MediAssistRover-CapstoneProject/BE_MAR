@@ -22,7 +22,7 @@ import java.util.*;
 @Slf4j
 @ConditionalOnProperty(name="app.operations.scheduler-enabled", havingValue="true", matchIfMissing=true)
 public class PatrolInterruptionReconciler {
-    private static final Set<String> EVENT_SOURCES = Set.of("VOICE", "MEDIA", "INCIDENT");
+    private static final Set<String> EVENT_SOURCES = Set.of("VOICE", "MEDIA", "INCIDENT", "RESTRICTED_ALERT");
     private static final List<EmergencyIncidentStatus> OPEN_INCIDENTS = List.of(
             EmergencyIncidentStatus.OPEN, EmergencyIncidentStatus.ACKNOWLEDGED, EmergencyIncidentStatus.IN_PROGRESS);
     private final JobRepository jobs;
@@ -30,6 +30,7 @@ public class PatrolInterruptionReconciler {
     private final VoiceInteractionRepository voice;
     private final MediaSessionRepository media;
     private final EmergencyIncidentRepository incidents;
+    private final AlertRepository alerts;
     private final JobSuspensionService suspensions;
     private final PlatformTransactionManager transactions;
 
@@ -72,6 +73,8 @@ public class PatrolInterruptionReconciler {
                     .ifPresent(row -> expected.add(new Source("MEDIA", row.getSessionId())));
             incidents.findByRobotRobotIdAndStatusInAndArchivedAtIsNull(robotId, OPEN_INCIDENTS)
                     .forEach(row -> expected.add(new Source("INCIDENT", row.getIncidentId())));
+            alerts.findActiveRestrictedByRobotId(robotId)
+                    .forEach(row -> expected.add(new Source("RESTRICTED_ALERT", row.getAlertId())));
             for (Source source : expected) suspensions.request(job, source.type(), source.id());
             for (var hold : holds.findByJobJobIdOrderByCreatedAt(jobId)) {
                 if (hold.getReleasedAt() == null && EVENT_SOURCES.contains(hold.getSource())

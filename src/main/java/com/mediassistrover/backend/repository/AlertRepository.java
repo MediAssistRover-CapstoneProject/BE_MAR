@@ -13,6 +13,14 @@ public interface AlertRepository extends JpaRepository<Alert,UUID> {
     @Query("select distinct a from Alert a join AlertRecipient r on r.alert=a where r.account.accountId=:accountId and a.archivedAt is null and a.notificationType in ('DELIVERY_CREATED','DELIVERY_APPROACHING','DELIVERY_ARRIVED') order by a.createdAt desc")
     List<Alert> findDeliveryInbox(@Param("accountId") UUID accountId, Pageable pageable);
     Optional<Alert> findByOperationKey(String operationKey);
+    @Query("select a from Alert a where a.notificationType='PATROL_RESTRICTED_INTRUSION' " +
+            "and a.archivedAt is null and a.status in ('OPEN','ACKNOWLEDGED') " +
+            "and a.detectionEvent.robot.robotId=:robotId order by a.createdAt,a.alertId")
+    List<Alert> findActiveRestrictedByRobotId(@Param("robotId") UUID robotId);
+    @Query("select count(a)>0 from Alert a where a.notificationType='PATROL_RESTRICTED_INTRUSION' " +
+            "and a.archivedAt is null and a.status in ('OPEN','ACKNOWLEDGED') " +
+            "and a.detectionEvent.robot.robotId=:robotId")
+    boolean existsActiveRestrictedByRobotId(@Param("robotId") UUID robotId);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select a from Alert a where a.zone.zoneId = :zoneId and a.notificationType = :type and a.createdAt > :cutoff order by a.createdAt desc")
     List<Alert> findRecentZoneAlerts(@Param("zoneId") UUID zoneId, @Param("type") String type,

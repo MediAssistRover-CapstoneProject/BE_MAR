@@ -44,6 +44,9 @@ public class NavigationGuidanceService {
         var step=steps.findById(UUID.fromString(plan.path("jobStepId").asText())).orElse(null);
         if(job==null||step==null||job.getRobot()==null||!robot.equals(job.getRobot().getRobotId()))return out;
         out.set("plan",plan);
+        // Keep live route instructions on the UI. Robot arrival/handover speech
+        // is sequenced through INTERACT steps, never concurrent with MOVE.
+        out.put("speechEnabled",false);
         if(step.getStatus()==JobStepStatus.SUCCEEDED){
             if(step.getEndedAt()==null||step.getEndedAt().isBefore(now.minusSeconds(20)))return out.put("state","IDLE");
             if(job.getSelectedJobStep()!=null&&"MOVE".equals(job.getSelectedJobStep().getStepTypeSnapshot())
@@ -129,6 +132,7 @@ public class NavigationGuidanceService {
     }
 
     private void speech(ObjectNode out,UUID step,String cue,String direction,Point anchor,String text){
+        if(!out.path("speechEnabled").asBoolean())return;
         out.put("cueId",cue);
         ObjectNode command=out.putObject("interaction").put("stepType","INTERACT")
                 .put("parentJobStepId",step.toString()).put("cueId",cue).put("direction",direction);

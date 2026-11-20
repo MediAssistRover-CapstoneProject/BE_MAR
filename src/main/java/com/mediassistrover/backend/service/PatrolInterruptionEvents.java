@@ -33,6 +33,7 @@ public class PatrolInterruptionEvents {
     private final VoiceInteractionRepository voices;
     private final MediaSessionRepository media;
     private final EmergencyIncidentRepository incidents;
+    private final AlertRepository alerts;
     private static final Set<EmergencyIncidentStatus> OPEN_INCIDENTS=Set.of(
             EmergencyIncidentStatus.OPEN,EmergencyIncidentStatus.ACKNOWLEDGED,EmergencyIncidentStatus.IN_PROGRESS);
 
@@ -76,6 +77,10 @@ public class PatrolInterruptionEvents {
             case "INCIDENT" -> incidents.findById(event.sourceId()).filter(row->row.getRobot()!=null
                     && event.robotId().equals(row.getRobot().getRobotId()) && row.getArchivedAt()==null
                     && OPEN_INCIDENTS.contains(row.getStatus())).isPresent();
+            case "RESTRICTED_ALERT" -> alerts.findById(event.sourceId()).filter(row->row.getDetectionEvent()!=null
+                    && row.getDetectionEvent().getRobot()!=null
+                    && event.robotId().equals(row.getDetectionEvent().getRobot().getRobotId())
+                    && com.mediassistrover.backend.ai.RestrictedIntrusionAlertService.isReviewOpen(row)).isPresent();
             default -> throw new IllegalArgumentException("Unsupported patrol event source");
         };
     }

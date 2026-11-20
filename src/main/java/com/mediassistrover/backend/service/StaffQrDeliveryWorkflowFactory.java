@@ -30,19 +30,25 @@ public class StaffQrDeliveryWorkflowFactory {
         properties.putObject("compartment_id").put("const", "CART_MAIN");
         properties.putObject("items").put("type", "array").put("minItems", 1);
         required.add("compartment_id").add("items");
+        for (String field : List.of("pickup_arrival_text", "delivery_arrival_text", "delivery_completed_text"))
+            properties.putObject(field).put("type", "string").put("minLength", 1).put("maxLength", 500);
+        var defaults = json.createObjectNode()
+                .put("pickup_arrival_text", "Đã tới điểm nhận hàng. Mời nhân viên giao hàng chuẩn bị mã QR.")
+                .put("delivery_arrival_text", method == DeliveryAuthenticationMethod.QR_CODE
+                        ? "Đã tới điểm giao hàng. Mời nhân viên nhận hàng chuẩn bị mã QR."
+                        : "Đã tới điểm giao hàng. Mời nhân viên nhận hàng nhìn vào camera để xác thực khuôn mặt.")
+                .put("delivery_completed_text", "Đã giao vật phẩm thành công.");
 
         List<GraphStepRequest> steps = new ArrayList<>();
         addHandover(steps, "SENDER", "pickup_endpoint_id", "LOAD", DeliveryAuthenticationMethod.QR_CODE);
         addHandover(steps, "RECEIVER", "delivery_endpoint_id", "UNLOAD", method);
-        var announcement = json.createObjectNode().put("action", "SPEAK").put("prompt_key", "DELIVERY_COMPLETED");
-        announcement.putObject("data").put("text", "Đã giao vật phẩm thành công.").put("language_code", "vi");
-        add(steps, "RECEIVER", "ANNOUNCE", StepType.INTERACT, "Thông báo giao hàng thành công", 60,
-                announcement, json.createObjectNode());
+        addAnnouncement(steps, "RECEIVER", "ANNOUNCE", "Thông báo giao hàng thành công",
+                "DELIVERY_COMPLETED", "delivery_completed_text");
         List<GraphTransitionRequest> transitions = transitions(steps);
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase(java.util.Locale.ROOT);
         var workflow = new WorkflowUpsertRequest((method==DeliveryAuthenticationMethod.QR_CODE?"WF_STAFF_QR_DELIVERY_":"WF_STAFF_FACE_DELIVERY_") + suffix, 1, method==DeliveryAuthenticationMethod.QR_CODE?"Giao hàng A → B bằng QR staff":"Giao hàng quan trọng: gửi QR, nhận khuôn mặt",
                 "DELIVERY", "Robot xác thực người giao và người nhận, sau đó xác nhận hàng và khóa ngăn.",
-                schema, json.createObjectNode(), json.createObjectNode(), json.createObjectNode(),
+                schema, json.createObjectNode(), defaults, json.createObjectNode(),
                 json.createArrayNode().add("NAVIGATION").add("HARDWARE_CONTROL"), 2400, steps.size(), 3, 3);
         var tasks = List.of(new TaskRequest("SENDER", "Nhận hàng", 1, null, json.createObjectNode()),
                 new TaskRequest("RECEIVER", "Bàn giao", 2, null, json.createObjectNode()));
@@ -54,6 +60,8 @@ public class StaffQrDeliveryWorkflowFactory {
         add(steps, stage, "MOVE", StepType.MOVE, "Đi tới điểm giao nhận", 180,
                 json.createObjectNode().put("mode", "NORMAL").put("max_speed_mps", 0.35),
                 inputs(Map.of("map_id", "map_id", "endpoint_id", endpoint)));
+        addAnnouncement(steps, stage, "ARRIVAL", "Thông báo đã tới điểm giao nhận",
+                "DELIVERY_ARRIVAL_" + stage, "SENDER".equals(stage) ? "pickup_arrival_text" : "delivery_arrival_text");
         add(steps, stage, "AUTH", StepType.AUTHENTICATE, method==DeliveryAuthenticationMethod.QR_CODE?"Xác thực QR staff":"Xác thực khuôn mặt staff", 120,
                 json.createObjectNode().put("method", method.name()).put("purpose", purpose),
                 inputs(Map.of("service_request_id", "service_request_id")));
@@ -82,10 +90,12 @@ public class StaffQrDeliveryWorkflowFactory {
         for (int i = 0; i < steps.size(); i++) {
             GraphStepRequest step = steps.get(i);
             String from = step.stepCode();
-            if ("ANNOUNCE_RECEIVER".equals(from)) {
-                // The handover is already confirmed. Speech failure does not reopen it.
+            if (step.stepType() == StepType.INTERACT && "SPEAK".equals(step.paramsJson().path("action").asText())) {
+                // Audio failure must not repeat an arrived MOVE or reopen a confirmed handover.
+                String next = i + 1 < steps.size() ? steps.get(i + 1).stepCode() : null;
                 for (var outcome : List.of(TransitionOutcome.SUCCESS, TransitionOutcome.FAILURE, TransitionOutcome.TIMEOUT))
-                    result.add(new GraphTransitionRequest(from, null, outcome, null, 1, true, TerminalStatus.SUCCEEDED));
+                    result.add(new GraphTransitionRequest(from, next, outcome, null, 1, true,
+                            next == null ? TerminalStatus.SUCCEEDED : null));
                 continue;
             }
             String next = i + 1 < steps.size() ? steps.get(i + 1).stepCode() : null;
@@ -116,6 +126,15 @@ public class StaffQrDeliveryWorkflowFactory {
                      int timeout, ObjectNode params, ObjectNode mapping) {
         steps.add(new GraphStepRequest(stage, type, code + "_" + stage, name, steps.size() + 1, null,
                 params, mapping, timeout, 1, 0, json.createArrayNode(), 1, StepAuditLevel.FULL));
+    }
+
+    private void addAnnouncement(List<GraphStepRequest> steps, String stage, String code, String name,
+                                 String prompt, String textInput) {
+        var mapping = json.createObjectNode();
+        var data = mapping.putObject("data").put("language_code", "vi");
+        data.putObject("text").put("$ref", "/inputs/" + textInput);
+        add(steps, stage, code, StepType.INTERACT, name, 25,
+                json.createObjectNode().put("action", "SPEAK").put("prompt_key", prompt), mapping);
     }
 
     private ObjectNode inputs(Map<String, String> fields) {

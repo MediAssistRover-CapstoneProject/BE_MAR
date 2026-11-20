@@ -13,6 +13,7 @@ import com.mediassistrover.backend.enums.AlertStatus;
 import com.mediassistrover.backend.repository.AlertRecipientRepository;
 import com.mediassistrover.backend.repository.AlertRepository;
 import com.mediassistrover.backend.service.SosResponderRouting;
+import com.mediassistrover.backend.service.PatrolInterruptionEvents;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -33,18 +34,41 @@ public class RestrictedIntrusionAlertService {
     private final SosResponderRouting routing;
     private final ObjectMapper json;
     private final Clock clock;
+    private final PatrolInterruptionEvents interruptions;
 
     public static boolean isRoutedAlert(Alert alert) {
         return alert != null && TYPE.equals(alert.getNotificationType()) && alert.getDetectionEvent() != null;
     }
 
+    public static boolean isReviewOpen(Alert alert) {
+        return isRoutedAlert(alert) && alert.getArchivedAt() == null
+                && (alert.getStatus() == AlertStatus.OPEN || alert.getStatus() == AlertStatus.ACKNOWLEDGED);
+    }
+
     /** The sensing result transaction holds the Zone row lock before persisting the DetectionEvent. */
     @Transactional(propagation = Propagation.MANDATORY)
-    public void record(DetectionEvent event, JobStep step) {
+    public Alert record(DetectionEvent event, JobStep step) {
+        return record(event, step, false);
+    }
+
+    /** A verified live patrol observation always gets a review, even after an older review was resolved. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public Alert recordTracked(DetectionEvent event, JobStep step) {
+        return record(event, step, true);
+    }
+
+    private Alert record(DetectionEvent event, JobStep step, boolean tracked) {
         var zone = event.getZone();
         Instant now = Instant.now(clock);
+        var active = alerts.findActiveRestrictedByRobotId(event.getRobot().getRobotId()).stream()
+                .filter(a -> a.getZone() != null && zone.getZoneId().equals(a.getZone().getZoneId())).findFirst();
+        if (active.isPresent()) {
+            var alert = active.get();
+            interruptions.hold(event.getRobot().getRobotId(), "RESTRICTED_ALERT", alert.getAlertId());
+            return alert;
+        }
         Instant cutoff = now.minusSeconds(properties.getRestrictedAlertCooldownSeconds());
-        if (!alerts.findRecentZoneAlerts(zone.getZoneId(), TYPE, cutoff, PageRequest.of(0, 1)).isEmpty()) return;
+        if (!tracked && !alerts.findRecentZoneAlerts(zone.getZoneId(), TYPE, cutoff, PageRequest.of(0, 1)).isEmpty()) return null;
 
         var assignment = routing.resolve(event.getMap(), now, properties.getRestrictedAlertRoomId());
         var responder = assignment.responder();
@@ -55,11 +79,17 @@ public class RestrictedIntrusionAlertService {
                 .put("zone_name", zone.getZoneName())
                 .put("robot_id", event.getRobot().getRobotId().toString())
                 .put("detected_at", event.getDetectedAt().toString())
-                .put("routing_status", assignment.status().name());
+                .put("routing_status", assignment.status().name())
+                .put("staff_review_required", true).put("camera_review_mode", "MONITOR")
+                .put("location_basis", event.getLocationBasis().name());
+        if (event.getEventPayloadJson().has("person_location"))
+            data.set("person_location", event.getEventPayloadJson().path("person_location").deepCopy());
+        if (event.getEventPayloadJson().has("track_id"))
+            data.set("track_id", event.getEventPayloadJson().path("track_id"));
         var requested = json.createArrayNode();
         if (responder != null) requested.add(responder.getAccountId().toString());
 
-        Alert alert = alerts.save(Alert.builder().detectionEvent(event).jobStep(step).zone(zone)
+        Alert alert = alerts.saveAndFlush(Alert.builder().detectionEvent(event).jobStep(step).zone(zone)
                 .notificationType(TYPE).severity(AlertSeverity.WARNING).status(AlertStatus.OPEN)
                 .message("Phát hiện người trong vùng cấm " + zone.getZoneName())
                 .dataJson(data).requestedRecipientsJson(requested).requireAck(true).ackPolicy(AlertAckPolicy.ANY)
@@ -69,5 +99,7 @@ public class RestrictedIntrusionAlertService {
                     .recipientAddressSnapshot(responder.getUsername()).resolvedRoleSnapshot(responder.getRole().name())
                     .deliveryStatus(AlertDeliveryStatus.PENDING).createdAt(now).build());
         }
+        interruptions.hold(event.getRobot().getRobotId(), "RESTRICTED_ALERT", alert.getAlertId());
+        return alert;
     }
 }

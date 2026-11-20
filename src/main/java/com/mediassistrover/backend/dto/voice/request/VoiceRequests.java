@@ -14,8 +14,13 @@ public final class VoiceRequests {
 
     public record InteractionStartPayload(
             @NotBlank @Size(max = 16) @Pattern(regexp = "[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})*") String languageCode,
-            @NotNull Instant startedAt
-    ) { }
+            @NotNull Instant startedAt,
+            Boolean leaseSupported
+    ) {
+        public InteractionStartPayload(String languageCode, Instant startedAt) {
+            this(languageCode, startedAt, null);
+        }
+    }
 
     public record InteractionCompletionPayload(
             @NotNull VoiceInteractionStatus status,

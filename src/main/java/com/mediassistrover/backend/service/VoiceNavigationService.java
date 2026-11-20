@@ -34,6 +34,7 @@ public class VoiceNavigationService {
     private final JobRepository jobs;
     private final MqttWire wire;
     private final com.mediassistrover.backend.speech.SpeechSettingsService speechSettings;
+    private final VoiceAdmissionService admission;
 
     public ObjectNode destinations(DevicePrincipal device) {
         scope.requireCurrentDevice(device);
@@ -41,8 +42,7 @@ public class VoiceNavigationService {
         var result=wire.object();result.set("navigationSession",session);
         // Queried only on wake/explicit confirmation, never in a polling loop.
         // Include server-side steps and gaps between Pi commands in this job fence.
-        result.put("robotAvailable",jobs.findRobotJobIds(device.robotId(),List.of(
-            JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED)).isEmpty());
+        result.put("robotAvailable",admission.current(device,null).conversationReady());
         result.put("workflowCode",WORKFLOW_CODE);
         var workflow=workflows.findFirstByWorkflowCodeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(WORKFLOW_CODE,WorkflowStatus.PUBLISHED);
         result.put("workflowPrepared",workflow.isPresent());
@@ -89,6 +89,8 @@ public class VoiceNavigationService {
                 throw new ConflictException("Idempotency-Key belongs to another voice navigation request");
             return requests.getDeviceRequest(prior.getServiceRequestId(),device);
         }
+        if(!admission.current(device,input.voiceInteractionId()).conversationReady())
+            throw new BusinessRuleException("VOICE_ROBOT_NOT_READY: wait for confirmed patrol suspension or the current foreground task");
         var session=sessions.device(device);
         if(!input.navigationSessionId().toString().equals(session.path("sessionId").asText())||!"READY".equals(session.path("state").asText()))
             throw new BusinessRuleException("VOICE_NAVIGATION_SESSION_NOT_READY");

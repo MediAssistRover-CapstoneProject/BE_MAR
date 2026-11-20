@@ -369,26 +369,38 @@ async function refreshPatrolAlerts(){
   const list=$('patrolAlerts'),status=$('patrolAlertStatus');
   patrolAlertsPending=true;
   try{
-    const page=await api('/api/v1/alerts?type=PATROL_RESTRICTED_INTRUSION&status=OPEN&size=10');
+    const pages=await Promise.all(['OPEN','ACKNOWLEDGED'].map(state=>
+      api('/api/v1/alerts?type=PATROL_RESTRICTED_INTRUSION&status='+state+'&size=10')));
     if(token!==accessToken)return;
-    const items=page.content||[];
-    status.textContent=items.length?'':'Không có cảnh báo tuần tra đang mở.';
+    const items=pages.flatMap(page=>page.content||[]);
+    status.textContent=items.length?'Tuần tra chờ staff xử lý xong cảnh báo.':'';
+    if(!items.length)status.textContent='Không có cảnh báo tuần tra đang mở.';
     list.replaceChildren(...items.map(alert=>{
-      const item=document.createElement('li'), label=document.createElement('span'), acknowledge=document.createElement('button');
-      const time=new Date(alert.dataJson?.detected_at||alert.createdAt).toLocaleString('vi-VN');
-      label.textContent=alert.message+' · '+time;
-      if(alert.dataJson?.routing_status&&alert.dataJson.routing_status!=='ASSIGNED')
-        label.textContent+=' · Chưa phân công staff ('+alert.dataJson.routing_status+')';
-      acknowledge.textContent='Đã nhận';
-      acknowledge.onclick=async()=>{
-        acknowledge.disabled=true;
-        try{
-          await api('/api/v1/alerts/'+alert.alertId+'/acknowledge',{});
-          if(token===accessToken){item.remove();await refreshPatrolAlerts();}
-        }catch(error){if(token===accessToken)status.textContent=error.message;}
-        finally{acknowledge.disabled=false;}
+      const item=document.createElement('li'),label=document.createElement('span');
+      const data=alert.dataJson||{},point=data.person_location;
+      label.textContent=alert.message+' · '+new Date(data.detected_at||alert.createdAt).toLocaleString('vi-VN');
+      if(point&&Number.isFinite(point.rangeM))label.textContent+=' · Cách camera '+point.rangeM.toFixed(2)+' m';
+      if(data.routing_status&&data.routing_status!=='ASSIGNED')label.textContent+=' · Chưa phân công staff';
+      item.append(label);
+      const action=(text,run)=>{
+        const button=document.createElement('button');button.textContent=text;
+        button.onclick=async()=>{
+          button.disabled=true;
+          try{await run();if(token===accessToken){patrolAlertsPending=false;await refreshPatrolAlerts();}}
+          catch(error){if(token===accessToken)status.textContent=error.message;}
+          finally{button.disabled=false;}
+        };item.append(button);return button;
       };
-      item.append(label,acknowledge);
+      if(alert.status==='OPEN')action('Đã nhận',()=>api('/api/v1/alerts/'+alert.alertId+'/acknowledge',{}));
+      const camera=action('Xem camera',()=>connect(()=>api('/api/v1/media-sessions',{
+        robotId:data.robot_id,mode:'MONITOR'})));
+      camera.disabled=!data.robot_id||!!room||connecting;
+      action('Đã xử lý',async()=>{
+        if(alert.status==='OPEN')await api('/api/v1/alerts/'+alert.alertId+'/acknowledge',{});
+        await api('/api/v1/alerts/'+alert.alertId+'/resolve',{});
+      });
+      action('Báo nhầm',()=>api('/api/v1/alerts/'+alert.alertId+'/false-alarm',{
+        reason:'Staff xác minh đây là cảnh báo vùng cấm bị nhầm.'}));
       return item;
     }));
   }catch(error){
