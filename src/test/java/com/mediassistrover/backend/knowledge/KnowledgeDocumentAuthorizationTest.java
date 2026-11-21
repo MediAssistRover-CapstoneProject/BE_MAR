@@ -40,6 +40,10 @@ class KnowledgeDocumentAuthorizationTest {
             assertThrows(AccessDeniedException.class, () -> controller.upload(file, actor));
             assertThrows(AccessDeniedException.class, () -> controller.get(UUID.randomUUID()));
             assertThrows(AccessDeniedException.class, () -> controller.list(0, 20));
+            assertThrows(AccessDeniedException.class, () -> controller.chunks(UUID.randomUUID()));
+            assertThrows(AccessDeniedException.class, () -> controller.delete(UUID.randomUUID()));
+            assertThrows(AccessDeniedException.class, () -> controller.retry(UUID.randomUUID()));
+            assertThrows(AccessDeniedException.class, () -> controller.replace(UUID.randomUUID(),file,actor));
         }
         as("ADMIN");
         controller.upload(file, actor);

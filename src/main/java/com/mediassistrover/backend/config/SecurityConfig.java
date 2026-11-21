@@ -38,6 +38,8 @@ public class SecurityConfig {
                         .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ASYNC,jakarta.servlet.DispatcherType.ERROR).permitAll()
                         .requestMatchers(
                                 "/actuator/health",
+                                // Authenticated with a dedicated service credential in its controller.
+                                "/api/v1/internal/knowledge/resolve",
                                 "/v3/api-docs/**",
                                 "/swagger-ui.html",
                                 "/mapping.html",

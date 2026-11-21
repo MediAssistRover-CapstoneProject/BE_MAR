@@ -27,7 +27,7 @@ public class KnowledgeDocumentController {
 
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.ACCEPTED)
-    @Operation(summary = "Upload PDF, DOCX, UTF-8 TXT or MD (20 MB maximum)",
+    @Operation(summary = "Upload PDF, DOCX, DOC, UTF-8 TXT or MD (20 MB maximum)",
         description = "Returns a durable document ID. Poll GET /{id} until COMPLETED before asking voice questions. "
             + "Identical bytes in the same vector store return the existing document, including its failure status.")
     public KnowledgeDocumentService.Document upload(
@@ -46,4 +46,24 @@ public class KnowledgeDocumentController {
     @GetMapping("/{id}")
     @Operation(summary = "Read indexing status and sanitized error code")
     public KnowledgeDocumentService.Document get(@PathVariable UUID id) { return service.get(id); }
+
+    @GetMapping("/{id}/chunks")
+    @Operation(summary="Read extracted chunks (no additional approval required)")
+    public java.util.List<KnowledgeDocumentService.ChunkView> chunks(@PathVariable UUID id) { return service.chunks(id); }
+
+    @PostMapping("/{id}/retry")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    @Operation(summary="Retry a failed extraction/indexing job after fixing the cause (not unknown upload outcomes)")
+    public KnowledgeDocumentService.Document retry(@PathVariable UUID id) { return service.retry(id); }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary="Disable document immediately; detach remote files asynchronously")
+    public void delete(@PathVariable UUID id) { service.delete(id); }
+
+    @PostMapping(value="/{id}/replace",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    @Operation(summary="Replace a ready document; old content remains available until new content is fully indexed")
+    public KnowledgeDocumentService.Document replace(@PathVariable UUID id, @RequestPart("file") MultipartFile file,
+            @AuthenticationPrincipal AccountPrincipal actor) { return service.replace(id,file,actor.accountId()); }
 }

@@ -9,6 +9,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -29,7 +30,7 @@ public class KnowledgeDocumentService {
     public static final int MAX_BYTES = 20 * 1024 * 1024;
     private static final Map<String, String> TYPES = Map.of(
         "pdf", "application/pdf", "docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "txt", "text/plain", "md", "text/markdown");
+        "doc", "application/msword", "txt", "text/plain", "md", "text/markdown");
     private static final String COLUMNS = "document_id,vector_store_id,filename,content_type,size_bytes,sha256,"
         + "BIN_TO_UUID(uploaded_by) AS uploaded_by,openai_file_id,status,error_code,created_at,updated_at";
     public record Document(UUID id, String vectorStoreId, String filename, String contentType,
@@ -57,22 +58,87 @@ public class KnowledgeDocumentService {
 
     public Document upload(MultipartFile file, UUID actor) {
         Upload upload = validate(file);
+        return create(upload, actor, null);
+    }
+
+    private Document create(Upload upload, UUID actor, UUID replaces) {
         client.requireConfigured();
         UUID id = UUID.randomUUID();
         try {
             jdbc.update("""
                 INSERT INTO KnowledgeDocument
                 (document_id,vector_store_id,filename,content_type,size_bytes,sha256,uploaded_by,status,payload,
-                 next_attempt_at,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,UUID_TO_BIN(?),'QUEUED',?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))
+                 pipeline_version,replaces_document_id,next_attempt_at,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,UUID_TO_BIN(?),'QUEUED',?,2,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))
                 """, id.toString(), vectorStoreId, upload.filename(), upload.contentType(), upload.bytes().length,
-                upload.sha256(), actor.toString(), upload.bytes());
+                upload.sha256(), actor.toString(), upload.bytes(), replaces == null ? null : replaces.toString());
         } catch (DuplicateKeyException duplicate) {
             // The database unique constraint also handles concurrent uploads of identical bytes.
+            if (replaces != null) throw new BusinessRuleException("KNOWLEDGE_REPLACEMENT_CONTENT_ALREADY_EXISTS");
             return jdbc.queryForObject("SELECT " + COLUMNS
-                + " FROM KnowledgeDocument WHERE vector_store_id=? AND sha256=?", MAPPER, vectorStoreId, upload.sha256());
+                + " FROM KnowledgeDocument WHERE vector_store_id=? AND sha256=? AND pipeline_version=2", MAPPER, vectorStoreId, upload.sha256());
         }
         return get(id);
+    }
+
+    @Transactional
+    public Document replace(UUID id, MultipartFile file, UUID actor) {
+        Upload upload = validate(file);
+        if (jdbc.queryForList("SELECT document_id FROM KnowledgeDocument WHERE document_id=? AND active=TRUE AND status='COMPLETED' FOR UPDATE",
+                String.class, id.toString()).isEmpty()) throw new BusinessRuleException("KNOWLEDGE_REPLACEMENT_REQUIRES_ACTIVE_DOCUMENT");
+        Long pending = jdbc.queryForObject("SELECT COUNT(*) FROM KnowledgeDocument WHERE replaces_document_id=? AND active=TRUE AND status IN ('QUEUED','ATTACHING','PROCESSING')",
+            Long.class,id.toString());
+        if (pending != null && pending > 0) throw new BusinessRuleException("KNOWLEDGE_REPLACEMENT_PENDING");
+        return create(upload,actor,id);
+    }
+
+    @Transactional
+    public void delete(UUID id) {
+        get(id);
+        // Logical removal is immediate; external detach is retried by the worker.
+        // Keep any outstanding lease so cleanup cannot race an in-flight attach.
+        jdbc.update("UPDATE KnowledgeDocument SET active=FALSE,status='CANCELLED',updated_at=UTC_TIMESTAMP(6) WHERE document_id=? OR (replaces_document_id=? AND status IN ('QUEUED','ATTACHING','PROCESSING'))",
+            id.toString(),id.toString());
+    }
+
+    public record ChunkView(String id, int ordinal, String content, String status, String errorCode) { }
+
+    @Transactional
+    public Document retry(UUID id) {
+        var found=jdbc.queryForList("SELECT document_id FROM KnowledgeDocument WHERE document_id=? AND pipeline_version=2 AND active=TRUE AND status='FAILED' AND payload IS NOT NULL AND (lease_until IS NULL OR lease_until<UTC_TIMESTAMP(6)) FOR UPDATE",String.class,id.toString());
+        if (found.isEmpty()) throw new BusinessRuleException("KNOWLEDGE_RETRY_REQUIRES_FAILED_DOCUMENT");
+        jdbc.update("""
+            INSERT IGNORE INTO KnowledgeRemoteCleanup(vector_store_id,openai_file_id)
+            SELECT d.vector_store_id,c.openai_file_id FROM KnowledgeDocument d JOIN KnowledgeDocumentChunk c ON c.document_id=d.document_id
+            WHERE d.document_id=? AND c.openai_file_id IS NOT NULL
+            """,id.toString());
+        jdbc.update("DELETE FROM KnowledgeDocumentChunk WHERE document_id=?",id.toString());
+        jdbc.update("UPDATE KnowledgeDocument SET status='QUEUED',processing_stage=NULL,error_code=NULL,attempts=0,next_attempt_at=UTC_TIMESTAMP(6),updated_at=UTC_TIMESTAMP(6) WHERE document_id=?",id.toString());
+        return get(id);
+    }
+
+    public List<ChunkView> chunks(UUID id) {
+        get(id);
+        return jdbc.query("SELECT chunk_id,ordinal_no,content,status,error_code FROM KnowledgeDocumentChunk WHERE document_id=? ORDER BY ordinal_no",
+            (rs,n)->new ChunkView(rs.getString(1),rs.getInt(2),rs.getString(3),rs.getString(4),rs.getString(5)),id.toString());
+    }
+
+    public record ResolvedFile(String fileId, String documentId, String title, String text, int pipelineVersion) { }
+    public List<ResolvedFile> resolve(String store, List<String> files) {
+        if (!vectorStoreId.equals(store)) throw new BusinessRuleException("KNOWLEDGE_VECTOR_STORE_MISMATCH");
+        if (files == null || files.isEmpty() || files.size()>20 || files.stream().anyMatch(f->f==null || !f.matches("file-[A-Za-z0-9_-]+")))
+            throw new BusinessRuleException("KNOWLEDGE_FILE_IDS_INVALID");
+        String placeholders=String.join(",",java.util.Collections.nCopies(files.size(),"?"));
+        var args=new java.util.ArrayList<Object>(); args.add(store); args.addAll(files);
+        var resolved=new java.util.ArrayList<>(jdbc.query("""
+            SELECT c.openai_file_id,d.document_id,d.filename,c.content,d.pipeline_version
+            FROM KnowledgeDocumentChunk c JOIN KnowledgeDocument d ON d.document_id=c.document_id
+            WHERE d.vector_store_id=? AND d.active=TRUE AND d.status='COMPLETED' AND c.status='COMPLETED'
+              AND c.openai_file_id IN (
+            """+placeholders+")",(rs,n)->new ResolvedFile(rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getInt(5)),args.toArray()));
+        resolved.addAll(jdbc.query("SELECT openai_file_id,document_id,filename FROM KnowledgeDocument WHERE vector_store_id=? AND active=TRUE AND status='COMPLETED' AND pipeline_version=1 AND openai_file_id IN ("+placeholders+")",
+            (rs,n)->new ResolvedFile(rs.getString(1),rs.getString(2),rs.getString(3),null,1),args.toArray()));
+        return resolved;
     }
 
     public Document get(UUID id) {
@@ -97,7 +163,7 @@ public class KnowledgeDocumentService {
             throw new BusinessRuleException("KNOWLEDGE_FILENAME_INVALID");
         String extension = name.substring(name.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
         String type = TYPES.get(extension);
-        if (type == null) throw new BusinessRuleException("KNOWLEDGE_FILE_TYPE_UNSUPPORTED: use PDF, DOCX, TXT or MD");
+        if (type == null) throw new BusinessRuleException("KNOWLEDGE_FILE_TYPE_UNSUPPORTED: use PDF, DOCX, DOC, TXT or MD");
         try (var input = file.getInputStream()) {
             byte[] bytes = input.readNBytes(MAX_BYTES + 1);
             if (bytes.length > MAX_BYTES) throw new FileTooLargeException("Knowledge document exceeds 20 MB");
@@ -108,6 +174,10 @@ public class KnowledgeDocumentService {
                         throw new BusinessRuleException("KNOWLEDGE_PDF_INVALID");
                 }
                 case "docx" -> validateDocx(bytes);
+                case "doc" -> {
+                    if (bytes.length<8 || !HexFormat.of().formatHex(java.util.Arrays.copyOf(bytes,8)).equals("d0cf11e0a1b11ae1"))
+                        throw new BusinessRuleException("KNOWLEDGE_DOC_INVALID");
+                }
                 default -> {
                     String text = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
                     if (text.replace("\uFEFF", "").isBlank() || text.indexOf('\0') >= 0)

@@ -74,12 +74,31 @@ public class OpenAiKnowledgeClient {
     }
 
     public void attach(String store, String file, String title) {
+        attach(store, file, Map.of("title", title), false);
+    }
+
+    public void attachChunk(String store, String file, String documentId) {
+        attach(store, file, Map.of("knowledge_document_id", documentId, "pipeline_version", 2), true);
+    }
+
+    private void attach(String store, String file, Map<String, Object> attributes, boolean chunk) {
         try {
-            byte[] bytes = json.writeValueAsBytes(Map.of("file_id", file, "attributes", Map.of("title", title)));
+            var body = new java.util.HashMap<String, Object>();
+            body.put("file_id", file);
+            body.put("attributes", attributes);
+            // Processor caps chunks at 700 cl100k tokens; avoid another arbitrary split.
+            if (chunk) body.put("chunking_strategy", Map.of("type", "static", "static",
+                Map.of("max_chunk_size_tokens", 800, "chunk_overlap_tokens", 0)));
+            byte[] bytes = json.writeValueAsBytes(body);
             send("POST", "vector_stores/" + segment(store) + "/files", "application/json", bytes);
         } catch (IOException exception) {
             throw new IllegalStateException(exception);
         }
+    }
+
+    public void detach(String store, String file) {
+        try { send("DELETE", path(store, file), null, null); }
+        catch (Failure failure) { if (failure.status != 404) throw failure; }
     }
 
     private String path(String store, String file) {

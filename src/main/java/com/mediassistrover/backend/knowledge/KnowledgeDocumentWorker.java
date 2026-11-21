@@ -26,10 +26,10 @@ public class KnowledgeDocumentWorker {
         jdbc.update("""
             UPDATE KnowledgeDocument SET status='RECONCILIATION_REQUIRED',error_code='UPLOAD_OUTCOME_UNKNOWN',
                 payload=NULL,lease_token=NULL,lease_until=NULL,updated_at=UTC_TIMESTAMP(6)
-            WHERE status='UPLOADING' AND lease_until < UTC_TIMESTAMP(6)
+            WHERE pipeline_version=1 AND status='UPLOADING' AND lease_until < UTC_TIMESTAMP(6)
             """);
         List<String> ids = jdbc.queryForList("""
-            SELECT document_id FROM KnowledgeDocument WHERE status IN ('QUEUED','ATTACHING','PROCESSING')
+            SELECT document_id FROM KnowledgeDocument WHERE pipeline_version=1 AND active=TRUE AND status IN ('QUEUED','ATTACHING','PROCESSING')
                 AND next_attempt_at <= UTC_TIMESTAMP(6) AND (lease_until IS NULL OR lease_until < UTC_TIMESTAMP(6))
             ORDER BY next_attempt_at LIMIT 4
             """, String.class);
@@ -46,7 +46,7 @@ public class KnowledgeDocumentWorker {
         String token = UUID.randomUUID().toString();
         int claimed = jdbc.update("""
             UPDATE KnowledgeDocument SET lease_token=?,lease_until=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 180 SECOND)
-            WHERE document_id=? AND status IN ('QUEUED','ATTACHING','PROCESSING')
+            WHERE document_id=? AND pipeline_version=1 AND active=TRUE AND status IN ('QUEUED','ATTACHING','PROCESSING')
                 AND (lease_until IS NULL OR lease_until < UTC_TIMESTAMP(6))
                 AND next_attempt_at <= UTC_TIMESTAMP(6)
             """, token, id);
@@ -66,10 +66,11 @@ public class KnowledgeDocumentWorker {
                 byte[] bytes = jdbc.queryForObject("SELECT payload FROM KnowledgeDocument WHERE document_id=?", byte[].class, id);
                 file = client.upload(work.filename(), work.contentType(), bytes);
                 int saved = jdbc.update("""
-                    UPDATE KnowledgeDocument SET openai_file_id=?,status='ATTACHING',payload=NULL,updated_at=UTC_TIMESTAMP(6)
+                    UPDATE KnowledgeDocument SET openai_file_id=?,payload=NULL,updated_at=UTC_TIMESTAMP(6)
                     WHERE document_id=? AND lease_token=?
                     """, file, id, token);
                 if (saved == 0) return;
+                if (jdbc.update("UPDATE KnowledgeDocument SET status='ATTACHING' WHERE document_id=? AND lease_token=? AND active=TRUE",id,token)==0) return;
                 stage = "ATTACHING";
             }
             String status;
@@ -102,7 +103,7 @@ public class KnowledgeDocumentWorker {
     private void finish(String id, String token, String state, String error) {
         jdbc.update("""
             UPDATE KnowledgeDocument SET status=?,error_code=?,payload=NULL,lease_token=NULL,lease_until=NULL,
-                updated_at=UTC_TIMESTAMP(6) WHERE document_id=? AND lease_token=?
+                updated_at=UTC_TIMESTAMP(6) WHERE document_id=? AND lease_token=? AND active=TRUE
             """, state, error, id, token);
     }
     private void retry(String id, String token, String state, String error, boolean healthy) {
@@ -110,7 +111,7 @@ public class KnowledgeDocumentWorker {
             UPDATE KnowledgeDocument SET status=?,error_code=?,lease_token=NULL,lease_until=NULL,
                 attempts=CASE WHEN ? THEN 0 ELSE attempts+1 END,
                 next_attempt_at=DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 30 SECOND),updated_at=UTC_TIMESTAMP(6)
-            WHERE document_id=? AND lease_token=?
+            WHERE document_id=? AND lease_token=? AND active=TRUE
             """, state, error, healthy, id, token);
     }
 }

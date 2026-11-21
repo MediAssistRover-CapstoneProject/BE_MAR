@@ -146,6 +146,18 @@
         </dependency>
     </dependencies>
 
+    <profiles>
+        <!-- Focused suite: unrelated legacy tests currently have constructor drift. -->
+        <profile>
+            <id>knowledge-tests</id>
+            <properties><maven.test.skip>false</maven.test.skip></properties>
+            <build><plugins><plugin>
+                <groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId>
+                <configuration><testIncludes><testInclude>**/knowledge/*Test.java</testInclude></testIncludes></configuration>
+            </plugin></plugins></build>
+        </profile>
+    </profiles>
+
     <build>
         <plugins>
             <plugin>
