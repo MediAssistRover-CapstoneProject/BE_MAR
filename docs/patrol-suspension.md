@@ -270,3 +270,32 @@ Sao lưu: `/home/ubuntu/mediassist-mqtt-2026-10-08/pi/state/patch-backups/patrol
 BE/UI observer-token chưa deploy: camera vẫn dùng hợp đồng staff hiện có
 cho đến khi cập nhật BE. Các dữ liệu map/zone/ca trực/lịch còn thiếu ở snapshot
 bên trên chưa được tự tạo hoặc kích hoạt.
+
+### Chạy workflow đã publish từ trang Map và workflow
+
+`/mapping.html` có mục **Chạy workflow đã xuất bản**: chọn phiên bản, điền
+inputs theo `inputSchemaJson` và `defaultInputsJson`, rồi tạo một job từ
+workflow hiện có. Có JSON nâng cao, lấy ID từ map/endpoint đang mở, theo dõi
+step, hủy và tạm dừng/tiếp tục tuần tra. Runner này không tạo thêm definition.
+
+API dành cho ADMIN:
+
+- `GET /api/v1/workflows/published` và `GET /api/v1/workflows/published/{id}`.
+- `POST /api/v1/workflows/{id}/jobs`, header `Idempotency-Key`, body:
+  `{"robotId":"UUID","mapId":"UUID","navigationSessionId":"UUID","inputs":{},"priority":50}`.
+  `mapId` và `navigationSessionId` dùng cho MOVE; MAPPING dùng `floor_id`
+  và `map_name` trong inputs. Priority mặc định: tuần tra 5, mapping 1, còn lại 50.
+- `GET /api/v1/workflows/{id}/jobs/by-idempotency-key?key=...` trả kết quả
+  cũ hoặc HTTP 204. Khi timeout, gửi lại nguyên body/key để lấy cùng job.
+
+Kết quả tạo/tra là `{jobId,workflowId,status,replayed}`. Job thông thường
+có thể xếp hàng cho robot đang BUSY; BE kiểm tra quyền chạy và phiên định vị
+trước khi bắt đầu. Tạo tuần tra và mapping vẫn yêu cầu robot rảnh theo
+điều kiện nghiệp vụ của chúng. Tuần tra giữ map/checkpoint của definition,
+priority tối đa 10. Delivery và các step xác thực vật phẩm dùng API yêu cầu
+giao hàng để có staff, vật phẩm và xác minh QR/face được BE liên kết.
+
+Theo dõi `GET /api/v1/jobs/{id}`; điều khiển bằng các API `/cancel`,
+`/suspend`, `/resume` hiện có. Resume tuần tra gỡ MANUAL hold;
+`QUEUED` chờ scheduler. Hủy vẫn phải theo dõi `stopStatus` tới khi có
+xác nhận dừng; terminal status riêng lẻ không chứng minh Pi đã dừng.

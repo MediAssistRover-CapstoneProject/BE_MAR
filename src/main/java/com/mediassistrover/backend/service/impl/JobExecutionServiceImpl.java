@@ -38,6 +38,87 @@ public class JobExecutionServiceImpl implements JobExecutionService {
     private final com.mediassistrover.backend.service.NavigationSessionService navigationSessions;
     private final PatrolWorkflowService patrol;
     private final com.mediassistrover.backend.service.RobotTaskArbitrationService arbitration;
+    private final com.mediassistrover.backend.validation.WorkflowInputValidator workflowInputs;
+
+    @Override public Job createForPublished(UUID workflowId,UUID robotId,UUID mapId,UUID sessionId,JsonNode inputs,Integer priority) {
+        var policy=rollout.lockForRuntimeCreation();
+        Workflow workflow=workflowRepository.findById(workflowId).orElseThrow(()->new ResourceNotFoundException("Workflow not found"));
+        rollout.requireSchema(policy,workflow.getSchemaVersion());
+        if(workflow.getSchemaVersion()!=3 || workflow.getStatus()!=WorkflowStatus.PUBLISHED
+                || !workflow.isAcceptsNewJobs() || workflow.getDefinitionHash()==null)
+            throw new BusinessRuleException("Select a published schema 3 workflow that accepts new jobs");
+        if(!Set.of("NAVIGATION","ROBOT_TEST","SPEECH","MAPPING","PATROL","CUSTOM").contains(workflow.getServiceType()))
+            throw new BusinessRuleException("This workflow requires its service request API; delivery must bind staff, items and QR/face verification");
+        var actions=stepRepository.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflowId).stream().filter(Step::isEnabled).toList();
+        if(actions.isEmpty())throw new BusinessRuleException("Workflow has no enabled steps");
+        if(actions.stream().anyMatch(s->Set.of(StepType.AUTHENTICATE,StepType.HANDLE_PAYLOAD).contains(s.getStepType())))
+            throw new BusinessRuleException("Verification and payload steps require a delivery service request");
+        ObjectNode input=inputSnapshots.forWorkflow(workflow,inputs);
+        input.remove(Set.of("requested_by_account_id","service_request_id","test_request_key","test_request_fingerprint","test_sequence","test_confirm_keys"));
+        boolean patrolRun=PatrolWorkflowService.isPatrol(workflow);
+        if("PATROL".equals(workflow.getServiceType()) && !patrolRun)
+            throw new BusinessRuleException("Use a patrol definition created with the patrol workflow API");
+        int rank=priority==null?(patrolRun?5:"MAPPING".equals(workflow.getServiceType())?1:50):priority;
+        if(rank<0 || rank>100 || patrolRun && rank>10)throw new BusinessRuleException("Priority must be 0..100; patrol priority must be 0..10");
+        boolean move=actions.stream().anyMatch(s->s.getStepType()==StepType.MOVE);
+        if(patrolRun && !move)throw new BusinessRuleException("Patrol requires MOVE and sensing checkpoint pairs");
+        if(mapId!=null) {
+            if(input.hasNonNull("map_id") && !mapId.toString().equals(input.path("map_id").asText()))
+                throw new BusinessRuleException("Selected map differs from workflow inputs");
+            if(move)input.put("map_id",mapId.toString());
+        }
+        workflowInputs.validate(workflow.getInputSchemaJson(),input);
+        if("MAPPING".equals(workflow.getServiceType())) {
+            UUID floorId=inputUuid(input,"floor_id");
+            if(!floors.findById(floorId).map(Floor::isActive).orElse(false))
+                throw new BusinessRuleException("Mapping requires an active floor");
+            Robot robot=selectPinnedRobotId(robotId);
+            if(!mappingSessions.findByRobotIdAndPotentiallyOpenTrue(robotId).isEmpty())
+                throw new BusinessRuleException("Robot holds an open mapping session");
+            return create(workflow,null,null,robot,null,rank,input,null,null);
+        }
+        if("ROBOT_TEST".equals(workflow.getServiceType()) && actions.stream().anyMatch(s->!testStepSupported(s)))
+            throw new BusinessRuleException("Robot test workflow contains unsupported test steps");
+        if("ROBOT_TEST".equals(workflow.getServiceType()))for(Step step:actions)
+            if(step.getStepType()==StepType.WAIT && "EVENT".equals(step.getParamsJson().path("wait_type").asText())
+                    && "TEST_OPERATOR_CONFIRMED".equals(step.getParamsJson().path("event_type").asText()))
+                input.withObject("test_confirm_keys").put(step.getStepCode(),UUID.randomUUID().toString());
+        if("SPEECH".equals(workflow.getServiceType()) && actions.stream().anyMatch(s->s.getStepType()!=StepType.INTERACT
+                || !"SPEAK".equals(s.getParamsJson().path("action").asText())))
+            throw new BusinessRuleException("Speech workflows accept INTERACT/SPEAK only");
+        if(actions.stream().anyMatch(s->s.getStepType()==StepType.CONTROL_HARDWARE
+                && (s.getInputMappingJson().has("action") || "UNLOCK_COMPARTMENT".equals(s.getParamsJson().path("action").asText())))
+                && !mqttProperties.isAllowCommissioningUnlock())
+            throw new BusinessRuleException("Commissioning unlock is disabled; delivery uses verified service requests");
+        Robot robot=robotRepository.findByIdForUpdate(robotId).orElseThrow(()->new ResourceNotFoundException("Robot not found"));
+        if(!Set.of(RobotStatus.IDLE,RobotStatus.BUSY).contains(robot.getStatus()))
+            throw new BusinessRuleException("Selected robot must be online and operational before queuing a job");
+        if(!mappingSessions.findByRobotIdAndPotentiallyOpenTrue(robotId).isEmpty())
+            throw new BusinessRuleException("Finish the current mapping session before running another workflow");
+        FacilityMap map=null;
+        if(move) {
+            UUID selectedMap=inputUuid(input,"map_id");
+            if(patrolRun && !selectedMap.toString().equals(workflow.getDefaultInputsJson().path("map_id").asText()))
+                throw new BusinessRuleException("Patrol checkpoints belong to the workflow map; create a patrol for the other map");
+            map=mapRepository.findById(selectedMap).orElseThrow(()->new ResourceNotFoundException("Map not found"));
+            if(map.getStatus()!=MapStatus.ACTIVE)throw new BusinessRuleException("MOVE requires an ACTIVE map");
+            if(sessionId==null)throw new BusinessRuleException("MOVE requires the current navigationSessionId");
+            if(input.hasNonNull("navigation_session_id") && !sessionId.toString().equals(input.path("navigation_session_id").asText()))
+                throw new BusinessRuleException("Navigation session differs from workflow inputs");
+            navigationSessions.pinReadyContextForLockedRoute(robotId,sessionId,selectedMap);
+            if(patrolRun) {
+                patrol.validateSchedule(workflow,robot,rank,null,objectMapper.createObjectNode());
+                if(patrol.readyMap(workflow,robot,rank)==null)
+                    throw new BusinessRuleException("PATROL_NOT_READY: robot must be idle with matching map, fresh sensors and no pending incident or job");
+            }
+            input.put("navigation_session_id",sessionId.toString());
+        }
+        return create(workflow,null,null,robot,map,rank,input,null,null);
+    }
+    private UUID inputUuid(JsonNode input,String key) {
+        try{return UUID.fromString(input.path(key).asText());}
+        catch(IllegalArgumentException e){throw new BusinessRuleException(key+" must be a UUID");}
+    }
     @Override public Job createForTest(UUID workflowId,UUID robotId,UUID mapId,UUID sessionId,JsonNode input) {
         var policy=rollout.lockForRuntimeCreation();
         Workflow workflow=workflowRepository.findById(workflowId).orElseThrow(()->new ResourceNotFoundException("Workflow not found"));

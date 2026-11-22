@@ -61,6 +61,7 @@
 </section>
 <section id="mappingAutonomy" class="panel"></section>
 <section id="mapNavigation" class="panel" aria-label="Đặt endpoint và dẫn đường trên map đã lưu"></section>
+<section id="publishedWorkflowRunner" class="panel" aria-label="Chạy workflow đã xuất bản"></section>
 <section class="panel" aria-label="Cấu hình dẫn đường bằng giọng nói">
 <h2>Dẫn robot tới endpoint bằng giọng nói</h2>
 <button id="prepareVoiceNavigation">Chuẩn bị workflow voice mời đi theo → dẫn đường → báo đến nơi</button>
@@ -426,9 +427,11 @@ autoMapping=MappingAutonomy.mount({
 });buttons();
 </script>
 <script src="/robot-test-workflow.js?v=20261117-speed"></script>
+<script src="/published-workflow-runner.js?v=20261122-published"></script>
 <script>
-let workflowRunner;
-const savedMapNavigation=SavedMapNavigation.mount({element:document.getElementById('mapNavigation'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,isMappingActive:()=>mapping||jog.active,getSavedMapId:()=>document.getElementById('savedMapId').value,isWorkflowActive:()=>workflowRunner?.isActive()||false,refreshWorkflowState:()=>workflowRunner?.refresh(),onContextChange:()=>workflowRunner?.refreshContext()});
+let workflowRunner,publishedRunner;
+const savedMapNavigation=SavedMapNavigation.mount({element:document.getElementById('mapNavigation'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,isMappingActive:()=>mapping||jog.active,getSavedMapId:()=>document.getElementById('savedMapId').value,isWorkflowActive:()=>workflowRunner?.isActive()||publishedRunner?.isActive()||false,refreshWorkflowState:()=>Promise.all([workflowRunner?.refresh(),publishedRunner?.refresh()]),onContextChange:()=>{workflowRunner?.refreshContext();publishedRunner?.refreshContext()}});
+publishedRunner=PublishedWorkflowRunner.mount({element:document.getElementById('publishedWorkflowRunner'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,getNavigation:()=>savedMapNavigation.state,isMappingActive:()=>mapping||jog.active,onCreated:(result,workflow)=>{if(workflow.serviceType==='MAPPING'){$('job').value=result.jobId;watch().catch(error=>notice(error.message))}}});
 workflowRunner=RobotTestWorkflow.mount({element:document.getElementById('robotTestWorkflow'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,getNavigation:()=>savedMapNavigation.state,isMappingActive:()=>mapping||jog.active});
 </script>
 </html>
