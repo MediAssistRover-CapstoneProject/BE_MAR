@@ -3,6 +3,8 @@
 const $=id=>document.getElementById(id),sdk=window.LivekitClient;
 let room=null,current=null,refreshTimer=null,lastFrame=0,frameHandle=null;
 let accessToken='',signingIn=false,connecting=false,listPending=false;
+const manualCatalog=RobotDataCatalog.create({getToken:()=>accessToken});
+let manualCatalogEpoch=0,manualCatalogLoading=false,manualIncidents=[];
 let connectionGeneration=0;
 let patrolAlertsPending=false,fallAlertsPending=false;
 let fallIncident=null,reviewPending=false,fallRouteBasis=null;
@@ -93,9 +95,48 @@ function api(path,body,keepalive=false,timeoutMs=8000){
   if(!accessToken)throw Error('Cần đăng nhập tài khoản Staff/Admin.');
   return request(path,body,accessToken,keepalive,timeoutMs);
 }
+function selectValue(element,value,label){
+  if(value&&!Array.from(element.options).some(option=>option.value===value))element.add(new Option(label||value,value));
+  element.value=value||'';
+}
+function catalogOptions(element,rows,placeholder,selected=element.value){
+  const previous=Array.from(element.options).find(option=>option.value===selected)?.textContent;
+  element.replaceChildren(new Option(placeholder,''),...rows.map(row=>new Option(row.label,row.id)));
+  selectValue(element,selected,previous);
+}
+function showManualIncidents(selected=$('incident').value){
+  const robotId=$('robot').value;
+  const rows=manualIncidents.filter(row=>!robotId||row.raw.robotId===robotId);
+  if(selected&&manualIncidents.some(row=>row.id===selected)&&!rows.some(row=>row.id===selected))selected='';
+  catalogOptions($('incident'),rows,'Không chọn sự cố',selected);
+}
+async function loadManualCatalog(reload=false){
+  if(!accessToken||room||connecting)return;
+  const token=accessToken,epoch=++manualCatalogEpoch;
+  if(reload)manualCatalog.invalidate();
+  manualCatalogLoading=true;buttons();
+  $('callCatalogStatus').textContent='Đang tải robot và sự cố…';
+  try{
+    const [robots,incidents]=await Promise.all([manualCatalog.robots(),manualCatalog.incidents()]);
+    if(epoch!==manualCatalogEpoch||accessToken!==token)return;
+    manualIncidents=incidents.filter(row=>['OPEN','ACKNOWLEDGED','IN_PROGRESS'].includes(row.raw.status));
+    catalogOptions($('robot'),robots,'Chọn robot');
+    const selected=manualIncidents.find(row=>row.id===$('incident').value);
+    if(selected&&!$('robot').value)selectValue($('robot'),selected.raw.robotId,selected.raw.robotId);
+    showManualIncidents();
+    $('callCatalogStatus').textContent=robots.length
+      ?'Chọn robot và sự cố nếu cần. Chỉ hiển thị sự cố đang xử lý trong phạm vi được phép.'
+      :'Chưa có robot. Tải lại danh sách sau khi đăng ký robot.';
+  }catch(error){
+    if(epoch===manualCatalogEpoch&&accessToken===token)$('callCatalogStatus').textContent=error.message+' Bấm tải lại để thử lại.';
+  }finally{
+    if(epoch===manualCatalogEpoch&&accessToken===token){manualCatalogLoading=false;buttons();}
+  }
+}
 function buttons(){
   const active=!!room,busy=active||connecting;
-  $('create').disabled=busy||!accessToken;
+  $('create').disabled=busy||!accessToken||manualCatalogLoading||!$('robot').value;
+  $('robot').disabled=$('incident').disabled=$('reloadCallCatalog').disabled=busy||!accessToken||manualCatalogLoading;
   $('refresh').disabled=busy||listPending||!accessToken;
   $('signOut').disabled=busy;
   $('loginButton').disabled=$('tokenSignIn').disabled=signingIn;
@@ -248,6 +289,10 @@ function authView(label){
 }
 function clearSignIn(label){
   accessToken='';
+  ++manualCatalogEpoch;manualCatalogLoading=false;manualIncidents=[];manualCatalog.invalidate();
+  $('robot').replaceChildren(new Option('Chọn robot',''));
+  $('incident').replaceChildren(new Option('Không chọn sự cố',''));
+  $('callCatalogStatus').textContent='';
   $('sessions').replaceChildren();
   $('patrolAlerts').replaceChildren();
   $('patrolAlertStatus').textContent='';
@@ -268,6 +313,8 @@ async function signIn(loadToken){
     $('staffLogin').reset();$('token').value='';
     authView('Đã đăng nhập · '+(account.fullName||account.username));
     message('Đang chờ phiên được giao.');
+    restoreManualLink();
+    loadManualCatalog();
     await refreshPanel();
     if(requestedIncident){
       const incident=await api('/api/v1/emergency-incidents/'+encodeURIComponent(requestedIncident));
@@ -487,6 +534,13 @@ $('tokenSignIn').onclick=()=>signIn(()=>{
   return token;
 });
 $('signOut').onclick=()=>{if(!room&&!connecting)clearSignIn('Đã thoát trang SOS.');};
+$('reloadCallCatalog').onclick=()=>loadManualCatalog(true);
+$('robot').onchange=()=>{showManualIncidents('');buttons();};
+$('incident').onchange=()=>{
+  const selected=manualIncidents.find(row=>row.id===$('incident').value);
+  if(selected){selectValue($('robot'),selected.raw.robotId,selected.raw.robotId);showManualIncidents(selected.id);}
+  buttons();
+};
 $('create').onclick=()=>connect(()=>{
   const body={robotId:$('robot').value.trim(),mode:$('mode').value};
   if($('incident').value.trim())body.incidentId=$('incident').value.trim();
@@ -510,7 +564,12 @@ $('end').onclick=async()=>{try{
   await leave();message('Đã rời phiên.');
 }catch(e){message(e.message,true);}};
 window.addEventListener('pagehide',()=>{++connectionGeneration;if(room)room.disconnect();});
-const requestedIncident=new URLSearchParams(location.search).get('incidentId');
-if(requestedIncident)$('incident').value=requestedIncident;
+const manualLink=new URLSearchParams(location.search);
+const requestedIncident=manualLink.get('incidentId'),requestedRobot=manualLink.get('robotId');
+function restoreManualLink(){
+  if(requestedRobot&&!$('robot').value)selectValue($('robot'),requestedRobot,'Robot từ liên kết · '+requestedRobot);
+  if(requestedIncident&&!$('incident').value)selectValue($('incident'),requestedIncident,'Sự cố từ liên kết · '+requestedIncident);
+}
+restoreManualLink();
 authView('');
 })();

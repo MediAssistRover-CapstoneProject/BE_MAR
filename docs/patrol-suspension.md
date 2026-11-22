@@ -299,3 +299,32 @@ Theo dõi `GET /api/v1/jobs/{id}`; điều khiển bằng các API `/cancel`,
 `/suspend`, `/resume` hiện có. Resume tuần tra gỡ MANUAL hold;
 `QUEUED` chờ scheduler. Hủy vẫn phải theo dõi `stopStatus` tới khi có
 xác nhận dừng; terminal status riêng lẻ không chứng minh Pi đã dừng.
+
+### Danh mục dropdown và tuyến tuần tra trên HTML
+
+Trang mapping có danh mục robot, tầng, workflow quét và job quét. Form chạy
+workflow dùng dropdown cho map, endpoint, phòng, zone, staff (Account ID),
+ca đang trực và yêu cầu dịch vụ; endpoint/room/zone được lọc đúng map.
+Token chỉ giữ trong bộ nhớ trang. Cache danh mục 30 giây, đổi token hoặc
+bấm tải lại sẽ làm mới; phản hồi cũ không ghi đè lựa chọn mới.
+
+Mục **Cấu hình tuyến tuần tra** dùng `POST /api/v1/admin/patrol-workflows/preview`
+để kiểm tra, và `POST /api/v1/admin/patrol-workflows` để publish. Operator
+chọn 1–5 endpoint có hướng, sắp thứ tự, kiểu quan sát và vùng của từng điểm.
+Có thể lặp endpoint để quay lại; mỗi điểm sinh cặp MOVE/EXECUTE_SENSING.
+`repeatCount=0` lặp liên tục, 1..1000 là hữu hạn. Fall cần cửa sổ quan sát
+ít nhất 3 giây; `RESTRICTED_ZONE` cần một zone KEEP_OUT đang bật trên map.
+Publish chỉ lưu definition, không tạo job hoặc di chuyển robot.
+
+Snapshot kiểm tra ngày 22/11: map cuối `f5448b68-db7c-4240-8215-d3de3c8d2934`
+(final o truong) ACTIVE, có 11 endpoint hợp lệ, chưa có zone. Workflow patrol
+cũ `9b6f776e-3052-4615-b56b-e85f8e514c44` thuộc map `bdf6503a...`, không
+được đổi map_id đầu vào để dùng chung các checkpoint. Tạo tuyến mới bằng
+endpoint của map cuối; không tự kích hoạt job khi publish.
+
+Giám sát liên tục của Pi dùng một nguồn inference chung trong MOVE tuần tra;
+không dừng bánh ở từng frame. Việc quan sát tại checkpoint vẫn có cửa sổ riêng.
+Wake M A có thể yêu cầu patrol nhường; chỉ bắt đầu hội thoại sau xác nhận dừng.
+Cảnh báo, SOS và công việc ưu tiên tạo hold; patrol chỉ tiếp tục khi các hold
+đã được xử lý và map/transport/định vị còn hợp lệ. Map cuối cần bổ sung polygon
+KEEP_OUT và profile Pi ACK để giám sát người trong vùng cấm.

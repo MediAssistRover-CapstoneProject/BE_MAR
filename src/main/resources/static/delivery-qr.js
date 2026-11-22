@@ -5,6 +5,31 @@ const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 let token = '', jobId = '', selectedStep = null, action = null, qrUntil = 0;
 let generation = 0, timer, qrTimer, responseKey = '', pending = false, respondedStep = '';
 let staff = null, endpoints = [], catalogLoaded = false, catalogLoading = false, draft = null;
+const recentJobsCatalog = RobotDataCatalog.create({getToken: () => token});
+let recentJobsEpoch = 0;
+
+async function loadRecentJobs(reload = false) {
+  if (!token || !staff) return;
+  const currentToken = token, epoch = ++recentJobsEpoch;
+  if (reload) recentJobsCatalog.invalidate();
+  $('reloadRecentJobs').disabled = $('recentJob').disabled = true;
+  $('recentJobsStatus').textContent = 'Đang tải nhiệm vụ…';
+  try {
+    const jobs = await recentJobsCatalog.jobs();
+    if (epoch !== recentJobsEpoch || token !== currentToken) return;
+    const selected = $('recentJob').value || jobId;
+    $('recentJob').replaceChildren(new Option('Chọn nhiệm vụ để theo dõi', ''), ...jobs.map(job =>
+      new Option(job.label + (job.raw.serviceRequestId ? ' · Yêu cầu dịch vụ' : ' · Workflow'), job.id)));
+    if (jobs.some(job => job.id === selected)) $('recentJob').value = selected;
+    $('recentJobsStatus').textContent = jobs.length
+      ? 'Chọn nhiệm vụ để xem tiến độ. Danh sách gồm các nhiệm vụ bạn có quyền truy cập.'
+      : 'Chưa có nhiệm vụ trong danh sách. Có thể dùng Job ID hoặc liên kết được chia sẻ.';
+  } catch (error) {
+    if (epoch === recentJobsEpoch && token === currentToken) $('recentJobsStatus').textContent = error.message + ' Bấm tải lại để thử lại.';
+  } finally {
+    if (epoch === recentJobsEpoch && token === currentToken) $('reloadRecentJobs').disabled = $('recentJob').disabled = false;
+  }
+}
 
 async function api(path, body, key) {
   const response = await fetch(path, {
@@ -266,6 +291,7 @@ $('login').addEventListener('submit', async event => {
     $('loginSection').hidden = true;
     $('jobSection').hidden = false;
     startNotices();
+    loadRecentJobs();
     if (uuid.test($('jobId').value.trim())) followJob($('jobId').value.trim());
   } catch (error) {
     token = '';
@@ -281,6 +307,7 @@ function followJob(value) {
   $('showQr').hidden = $('confirm').hidden = $('items').hidden = true;
   message('');
   $('jobId').value = value;
+  $('recentJob').value = Array.from($('recentJob').options).some(option => option.value === value) ? value : '';
   $('copyJobLink').hidden = false;
   jobId = value;
   refresh(++generation);
@@ -291,6 +318,11 @@ $('watch').addEventListener('submit', event => {
   const value = $('jobId').value.trim();
   if (!uuid.test(value)) { message('Nhập Job ID hợp lệ.'); return; }
   followJob(value);
+});
+$('reloadRecentJobs').addEventListener('click', () => loadRecentJobs(true));
+$('recentJob').addEventListener('change', () => {
+  const value = $('recentJob').value;
+  if (uuid.test(value)) followJob(value);
 });
 
 $('copyJobLink').addEventListener('click', async () => {
@@ -364,6 +396,11 @@ async function signOut() {
   generation++;
   clearTimeout(timer);
   token = jobId = responseKey = respondedStep = '';
+  ++recentJobsEpoch;
+  recentJobsCatalog.invalidate();
+  $('recentJob').replaceChildren(new Option('Chọn nhiệm vụ để theo dõi', ''));
+  $('reloadRecentJobs').disabled = $('recentJob').disabled = false;
+  $('recentJobsStatus').textContent = '';
   staff = null;
   dutyStaff = [];
   $('profileForm').reset();$('ownShifts').replaceChildren();$('profileAvatar').hidden=true;$('profileAvatar').removeAttribute('src');$('avatarFile').value='';

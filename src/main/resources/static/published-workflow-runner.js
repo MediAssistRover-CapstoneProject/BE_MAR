@@ -66,6 +66,7 @@
     const host=options.element,storageKey='mar.published-workflow-runner.v1';
     host.innerHTML=`<style>
       #publishedWorkflowRunner select,#publishedWorkflowRunner textarea{width:100%;padding:9px;border:1px solid #999;border-radius:4px;background:white;font:inherit}
+      #publishedWorkflowRunner .published-fields small{display:block;margin:4px 0 10px;overflow-wrap:anywhere}
       #publishedWorkflowRunner .published-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:0 16px}
       #publishedWorkflowRunner .published-fields label{min-width:0}
       #publishedWorkflowRunner textarea{font:13px ui-monospace,monospace;min-height:160px}
@@ -84,6 +85,7 @@
       <small id="publishedMapContext"></small>
       <p id="publishedDelivery" hidden>Giao hàng cần tạo yêu cầu giao hàng để gắn staff, QR/face. <a href="/delivery-qr.html">Mở trang giao nhận</a>.</p>
       <div id="publishedFields" class="published-fields"></div>
+      <button id="publishedReloadCatalog" type="button">Tải lại danh sách dữ liệu</button>
       <label>Độ ưu tiên job (0–100)<input id="publishedPriority" type="number" min="0" max="100" step="1" value="50"></label>
       <details><summary>Inputs JSON nâng cao / schema</summary>
         <small>JSON là toàn bộ inputs gửi đi. Sửa các object, array hoặc trường phức tạp ở đây; các trường đơn giản bên trên sẽ đồng bộ khi rời ô JSON.</small>
@@ -103,7 +105,7 @@
     <button id="publishedCreate" type="button" disabled>Tạo job từ workflow</button>
     <p id="publishedNotice" class="published-status" role="status" aria-live="polite">Tải danh sách workflow để bắt đầu.</p>
     <label>Job ID<input id="publishedJobId" placeholder="Hoặc dán Job ID để theo dõi"></label>
-    <button id="publishedWatch" type="button">Theo dõi Job ID</button><button id="publishedRefresh" type="button" disabled>Cập nhật trạng thái</button>
+    <button id="publishedWatch" type="button">Theo dõi Job ID</button><button id="publishedRefresh" type="button" disabled>Cập nhật trạng thái</button><button id="publishedUnwatch" type="button">Ngừng theo dõi trên trang</button>
     <p id="publishedJobStatus" role="status">Chưa theo dõi nhiệm vụ.</p>
     <ol id="publishedJobSteps"></ol>
     <div id="publishedPatrol" hidden><h3>Tuần tra</h3><p id="publishedPatrolStatus"></p><ul id="publishedHolds"></ul><p id="publishedResumeReason"></p></div>
@@ -111,7 +113,10 @@
     <button id="publishedCancel" type="button" disabled>Hủy nhiệm vụ</button><button id="publishedSuspend" type="button" hidden disabled>Tạm dừng tuần tra</button><button id="publishedResume" type="button" hidden disabled>Tiếp tục tuần tra</button>
     <details><summary>Chi tiết trạng thái nhiệm vụ</summary><pre id="publishedJobJson"></pre></details>`;
     const $=id=>host.querySelector('#'+id);
-    const state={definition:null,page:0,pageCount:0,pending:null,detail:null,busy:false,polling:false,timer:null,closed:false,fields:[]};
+    const state={definition:null,page:0,pageCount:0,pending:null,detail:null,busy:false,polling:false,timer:null,closed:false,fields:[],fieldGeneration:0,referenceItems:new Map()};
+    const catalog=globalThis.RobotDataCatalog?.create({getToken:options.getToken});
+    const tokenIdentity=()=>String(options.getToken()||'').trim().replace(/^Bearer\s+/i,'');
+    let catalogToken=tokenIdentity();
     try{
       const restored=JSON.parse(sessionStorage.getItem(storageKey)||'null');
       if(restored&&UUID.test(restored.robotId)&&UUID.test(restored.workflowId)&&UUID.test(restored.key)&&object(restored.body)&&(!restored.jobId||UUID.test(restored.jobId)))state.pending=restored;
@@ -137,15 +142,17 @@
     }
     function render(){
       const locked=state.busy||unknown(),available=actions(state.detail);
+      if(!locked&&state.definition&&(state.referencesDeferred||catalogToken!==tokenIdentity())){state.referencesDeferred=false;renderFields();return;}
       $('publishedLoad').disabled=locked;
       $('publishedPrevious').disabled=locked||state.page===0;
       $('publishedNext').disabled=locked||state.page+1>=state.pageCount;
-      for(const input of $('publishedConfiguration').querySelectorAll('input,select,textarea,button'))input.disabled=locked||input.dataset.fixed==='true';
+      for(const input of $('publishedConfiguration').querySelectorAll('input,select,textarea,button'))input.disabled=locked||input.dataset.fixed==='true'||input.dataset.loading==='true';
       $('publishedCreate').disabled=state.busy||(!unknown()&&(!state.definition||delivery()));
       $('publishedCreate').textContent=unknown()?'Gửi lại cùng yêu cầu tạo job':'Tạo job từ workflow';
       $('publishedJobId').disabled=locked;
       $('publishedWatch').disabled=locked;
       $('publishedRefresh').disabled=state.busy||!state.pending;
+      $('publishedUnwatch').disabled=state.busy||!state.pending||unknown();
       $('publishedCancel').disabled=state.busy||!available.cancel;
       $('publishedSuspend').hidden=$('publishedResume').hidden=!state.detail?.patrol;
       $('publishedSuspend').disabled=state.busy||!available.suspend;
@@ -157,20 +164,99 @@
     }
     function inputs(){return parseInputs($('publishedInputs').value);}
     function setInputs(value,rebuild=true){$('publishedInputs').value=JSON.stringify(value,null,2);if(rebuild)renderFields();}
+    const SOURCES={map:'maps',maps:'maps',robot:'robots',robots:'robots',floor:'floors',floors:'floors',room:'rooms',rooms:'rooms',endpoint:'endpoints',endpoints:'endpoints',staff:'staff',account:'staff',accounts:'staff',service_request:'serviceRequests',serviceRequests:'serviceRequests',service_requests:'serviceRequests',shift:'shifts',shifts:'shifts',zone:'zones',zones:'zones',endpoint_group:'endpointGroups',endpointGroups:'endpointGroups',endpoint_groups:'endpointGroups',job:'jobs',jobs:'jobs',incident:'incidents',incidents:'incidents'};
+    const MAP_SOURCES=new Set(['endpoints','rooms','zones','endpointGroups','serviceRequests','shifts']);
+    const FIELD_LABELS={map_id:'Bản đồ',floor_id:'Tầng',robot_id:'Robot',pickup_endpoint_id:'Điểm lấy hàng',delivery_endpoint_id:'Điểm giao hàng',endpoint_id:'Điểm đến',service_request_id:'Yêu cầu dịch vụ',expected_sender_account_id:'Nhân viên giao',expected_receiver_account_id:'Nhân viên nhận',sender_account_id:'Nhân viên giao',receiver_account_id:'Nhân viên nhận',zone_id:'Vùng quan sát',room_id:'Phòng',endpoint_group_id:'Nhóm điểm đến',compartment_id:'Ngăn hàng',patrol_repeat_count:'Số vòng tuần tra (0 = liên tục)'};
+    function referenceSource(key,field,presentation){
+      if(fieldType(field)!=='string')return null;
+      const configured=presentation.dataSource||presentation.datasource||presentation.source;
+      const name=typeof configured==='string'?configured:configured?.type||configured?.resource||configured?.source;
+      if(name&&own(SOURCES,name))return SOURCES[name];
+      if(key==='map_id')return 'maps';
+      if(key==='robot_id')return 'robots';
+      if(key==='floor_id')return 'floors';
+      if(/(?:^|_)endpoint_id$/.test(key))return 'endpoints';
+      if(/(?:^|_)room_id$/.test(key))return 'rooms';
+      if(key==='service_request_id')return 'serviceRequests';
+      if(/(?:^|_)account_id$/.test(key))return 'staff';
+      if(/(?:^|_)shift_id$/.test(key))return 'shifts';
+      if(/(?:^|_)zone_id$/.test(key))return 'zones';
+      if(/(?:^|_)endpoint_group_id$/.test(key)||key==='delivery_group_id')return 'endpointGroups';
+      return null;
+    }
+    function rowMap(item){return item?.mapId||item?.raw?.mapId||item?.raw?.map_id||item?.raw?.requestDataJson?.mapId||item?.raw?.requestDataJson?.map_id;}
+    function changeMap(next,previous){
+      if(next.map_id===previous.map_id)return;
+      const workflow=state.definition?.workflow,ui=workflow?.inputUiJson||{};
+      for(const [key,field] of Object.entries(workflow?.inputSchemaJson?.properties||{})){
+        const source=referenceSource(key,field,ui.properties?.[key]||ui.fields?.[key]||{});
+        if(!MAP_SOURCES.has(source)||!own(next,key))continue;
+        const selected=state.referenceItems.get(key)?.find(item=>item.id===next[key]);
+        // Unknown or previous-map references must be explicitly selected again.
+        if(!next.map_id||rowMap(selected)!==next.map_id)delete next[key];
+      }
+    }
+    function loadReference(control,help,key,source,field,values,generation){
+      const definition=state.definition,token=tokenIdentity(),mapId=values.map_id,robotId=values.robot_id||options.getRobotId?.();
+      const requiredMap=MAP_SOURCES.has(source)&&!['serviceRequests'].includes(source);
+      const current=own(values,key)?values[key]:undefined;
+      function choices(rows,message){
+        const selected=control.value;
+        control.replaceChildren(new Option(message||'Chưa chọn',''));
+        const allowed=Array.isArray(field.enum)?field.enum:own(field,'const')?[field.const]:null;
+        const visible=rows.filter(item=>item&&UUID.test(item.id||'')&&(!allowed||allowed.includes(item.id))&&
+          (source!=='maps'||!item.raw?.status||item.raw.status==='ACTIVE')&&
+          (source!=='endpoints'||item.raw?.active!==false&&item.raw?.accessible!==false)&&
+          (!mapId||!MAP_SOURCES.has(source)||!rowMap(item)||rowMap(item)===mapId));
+        for(const item of visible)control.add(new Option(item.label||item.id,item.id));
+        if(current!==undefined&&!visible.some(item=>same(item.id,current))){
+          const known=rows.find(item=>same(item.id,current));
+          const option=new Option((known?.label||String(current))+' · giá trị hiện tại không có trong danh sách',typeof current==='string'?current:'__current_json__');
+          control.add(option);control.dataset.unavailable='true';
+        }else delete control.dataset.unavailable;
+        control.value=current===undefined?'':typeof current==='string'?current:'__current_json__';
+        if(selected&&control.value===''&&current!==undefined)control.value=selected;
+      }
+      control.dataset.loading='true';choices([],requiredMap&&!UUID.test(mapId||'')?'Chọn map trước':'Đang tải danh sách…');
+      help.textContent=requiredMap&&!UUID.test(mapId||'')?'Chọn map để tải dữ liệu tương ứng.':'Đang tải tên và mã từ hệ thống…';
+      const valid=()=>{
+        if(unknown()){state.referencesDeferred=true;return false;}
+        try{return !state.closed&&generation===state.fieldGeneration&&definition===state.definition&&token===tokenIdentity()&&control.isConnected&&inputs().map_id===mapId;}catch{return false;}
+      };
+      if(requiredMap&&!UUID.test(mapId||'')){
+        delete control.dataset.loading;control.dataset.fixed=control.dataset.fixed||'false';render();return;
+      }
+      Promise.resolve().then(()=>{
+        if(!catalog||typeof catalog[source]!=='function')throw Error('Danh mục chưa sẵn sàng.');
+        return catalog[source](source==='jobs'||source==='incidents'?robotId:source==='maps'||source==='robots'||source==='floors'?undefined:mapId);
+      }).then(rows=>{
+        if(!valid())return;
+        rows=Array.isArray(rows)?rows:[];state.referenceItems.set(key,rows);choices(rows,'Chưa chọn');
+        const count=control.options.length-1-(control.dataset.unavailable==='true'?1:0);
+        help.textContent=(count?'Có '+count+' lựa chọn.':'Không có dữ liệu phù hợp.')+(control.dataset.unavailable==='true'?' Giá trị hiện tại được giữ nguyên; hãy kiểm tra hoặc chọn lại.':'');
+      }).catch(error=>{
+        if(!valid())return;
+        choices([],'Chưa tải được danh sách');help.textContent='Không tải được dữ liệu: '+error.message+' Bấm “Tải lại danh sách dữ liệu” để thử lại.';
+      }).finally(()=>{if(valid()){delete control.dataset.loading;render();}});
+    }
     function renderFields(){
+      if(catalogToken!==tokenIdentity()){catalogToken=tokenIdentity();catalog?.invalidate();state.referenceItems.clear();}
       const workflow=state.definition?.workflow,schema=workflow?.inputSchemaJson||{},ui=workflow?.inputUiJson||{},values=inputs();
+      const generation=++state.fieldGeneration;
       const container=$('publishedFields');container.replaceChildren();state.fields=[];
       const required=new Set(schema.required||[]);
       for(const [key,field] of Object.entries(schema.properties||{})){
         if(!object(field))continue;
         const type=fieldType(field),enumeration=Array.isArray(field.enum)?field.enum:own(field,'const')?[field.const]:null;
         if(!enumeration&&!['string','integer','number','boolean'].includes(type))continue;
-        const presentation=ui.properties?.[key]||ui.fields?.[key]||{},label=document.createElement('label');
-        label.append(document.createTextNode((presentation.label||presentation.title||field.title||key)+(required.has(key)?' *':'')));
-        const control=document.createElement(enumeration||type==='boolean'?'select':'input');
+        const presentation=ui.properties?.[key]||ui.fields?.[key]||{},label=document.createElement('label'),source=referenceSource(key,field,presentation);
+        label.append(document.createTextNode((presentation.label||presentation.title||field.title||FIELD_LABELS[key]||key)+(required.has(key)?' *':'')));
+        const control=document.createElement(source||enumeration||type==='boolean'?'select':'input');
         control.dataset.inputKey=key;
         if(fixedMap()&&key==='map_id')control.dataset.fixed='true';
-        if(enumeration||type==='boolean'){
+        if(source){
+          control.add(new Option('Đang tải danh sách…',''));
+        }else if(enumeration||type==='boolean'){
           const choices=enumeration||(Array.isArray(field.type)&&field.type.includes('null')?[true,false,null]:[true,false]);
           control.add(new Option('Chưa đặt giá trị',''));
           for(const choice of choices)control.add(new Option(typeof choice==='string'?choice:JSON.stringify(choice),JSON.stringify(choice)));
@@ -191,15 +277,19 @@
         }
         control.addEventListener('change',()=>{
           try{
-            const next=inputs();
+            if(state.busy||unknown()||control.dataset.fixed==='true')return;
+            const previous=inputs(),next={...previous};
             if(control.value==='')delete next[key];
-            else Object.defineProperty(next,key,{value:enumeration||type==='boolean'?JSON.parse(control.value):['number','integer'].includes(type)?Number(control.value):control.value,enumerable:true,configurable:true,writable:true});
-            setInputs(next,false);
+            else Object.defineProperty(next,key,{value:source?(control.value==='__current_json__'?values[key]:control.value):enumeration||type==='boolean'?JSON.parse(control.value):['number','integer'].includes(type)?Number(control.value):control.value,enumerable:true,configurable:true,writable:true});
+            if(key==='map_id')changeMap(next,previous);
+            setInputs(next,key==='map_id'||key==='robot_id'||key==='floor_id');
           }catch(error){say(error.message,true);}
         });
         label.append(control);
         if(presentation.description||field.description){const help=document.createElement('small');help.textContent=presentation.description||field.description;label.append(help);}
         container.append(label);state.fields.push(control);
+        if(source){const help=document.createElement('small');help.setAttribute('role','status');label.append(help);loadReference(control,help,key,source,field,values,generation);}
+        else if(type==='string'&&field.format==='uuid'){const help=document.createElement('small');help.textContent='Chưa có danh mục cho trường này. Nhập UUID hoặc dùng Inputs JSON nâng cao.';label.append(help);}
       }
       if(!state.fields.length){const hint=document.createElement('small');hint.textContent='Workflow này dùng Inputs JSON bên dưới. Các object và array được nhập trong JSON.';container.append(hint);}
       render();
@@ -213,6 +303,7 @@
       return result;
     }
     function refreshContext(){
+      if(catalogToken!==tokenIdentity()&&state.definition&&!unknown()){try{renderFields();}catch{}}
       const oldField=$('publishedContextField').value,oldValue=$('publishedContextValue').value;
       $('publishedContextField').replaceChildren();$('publishedContextValue').replaceChildren();
       for(const [key,field] of Object.entries(state.definition?.workflow?.inputSchemaJson?.properties||{})){
@@ -229,7 +320,7 @@
         hasMove()?'MOVE sử dụng map và phiên navigation đang mở: '+(nav?.meta?.map_id||'chưa chọn map')+' · '+(nav?.snapshot?.navigationSession?.sessionId||'chưa có phiên navigation')+'.':'';
     }
     function clearDefinition(){
-      state.definition=null;$('publishedFields').replaceChildren();$('publishedDescription').textContent='';$('publishedMetadata').textContent='';$('publishedSchema').textContent='';$('publishedDefinitionSteps').replaceChildren();$('publishedDelivery').hidden=true;setInputs({},false);refreshContext();
+      ++state.fieldGeneration;state.referenceItems.clear();state.definition=null;$('publishedFields').replaceChildren();$('publishedDescription').textContent='';$('publishedMetadata').textContent='';$('publishedSchema').textContent='';$('publishedDefinitionSteps').replaceChildren();$('publishedDelivery').hidden=true;setInputs({},false);refreshContext();
     }
     async function loadPage(page){
       const result=await api('/api/v1/workflows/published?page='+page+'&size=100');
@@ -310,6 +401,9 @@
         if(!workflow||workflow.acceptsNewJobs===false||workflow.status!=='PUBLISHED')throw Error('Chọn workflow đã publish nhận job mới.');
         if(delivery())throw Error('Giao hàng cần tạo yêu cầu giao hàng để gắn staff, QR/face.');
         const value=inputs();validateInputs(value,workflow.inputSchemaJson);
+        const unavailable=state.fields.find(field=>field.dataset.unavailable==='true'&&field.value);
+        if(unavailable)throw Error((FIELD_LABELS[unavailable.dataset.inputKey]||unavailable.dataset.inputKey)+' đang giữ giá trị không có trong danh sách hợp lệ. Tải lại hoặc chọn giá trị khác trước khi tạo job.');
+        if(state.fields.some(field=>field.dataset.loading==='true'))throw Error('Chờ danh sách dữ liệu tải xong trước khi tạo job.');
         const priority=Number($('publishedPriority').value);
         if($('publishedPriority').value===''||!Number.isInteger(priority)||priority<0||priority>100)throw Error('Độ ưu tiên phải là số nguyên từ 0 đến 100.');
         const body={robotId,inputs:value,priority},nav=options.getNavigation?.();
@@ -363,7 +457,18 @@
     $('publishedPrevious').onclick=()=>mutate(()=>loadPage(state.page-1));
     $('publishedNext').onclick=()=>mutate(()=>loadPage(state.page+1));
     $('publishedWorkflow').onchange=()=>mutate(loadDefinition);
-    $('publishedInputs').onchange=()=>{try{renderFields();}catch(error){say(error.message,true);}};
+    $('publishedInputs').onchange=()=>{try{if(!unknown())renderFields();}catch(error){say(error.message,true);}};
+    $('publishedReloadCatalog').onclick=()=>{
+      if(state.busy||unknown())return;
+      try{catalog?.invalidate();state.referenceItems.clear();renderFields();}catch(error){say(error.message,true);}
+    };
+    const tokenChanged=()=>{
+      if(!host.isConnected||state.closed||!state.definition||catalogToken===tokenIdentity())return;
+      if(state.busy||unknown()){state.referencesDeferred=true;return;}
+      try{renderFields();}catch{}
+    };
+    document.addEventListener('input',tokenChanged,true);
+    document.addEventListener('change',tokenChanged,true);
     $('publishedDefaults').onclick=()=>mutate(()=>{if(state.definition)setInputs(initialInputs(state.definition.workflow));});
     $('publishedUseContext').onclick=()=>mutate(()=>{
       refreshContext();const key=$('publishedContextField').value,value=$('publishedContextValue').value;
@@ -380,13 +485,27 @@
       state.pending={key:crypto.randomUUID(),workflowId:detail.job.workflowId,robotId:detail.job.robotId,body:{},jobId:id,done:false};persist();renderDetail(detail);say('Đang theo dõi job '+id+'.');poll();
     });
     $('publishedRefresh').onclick=()=>mutate(refresh);
+    $('publishedUnwatch').onclick=()=>{
+      if(state.busy||unknown())return;
+      clearTimeout(state.timer);state.pending=null;state.detail=null;persist();
+      $('publishedJobId').value='';$('publishedJobStatus').textContent='';$('publishedJobSteps').replaceChildren();$('publishedPatrol').hidden=true;$('publishedJobJson').textContent='';
+      say('Đã ngừng theo dõi trên trang. Job trên BE vẫn giữ trạng thái hiện tại; dùng Hủy nhiệm vụ để yêu cầu robot dừng.');render();
+    };
     for(const action of ['cancel','suspend','resume'])$('published'+action[0].toUpperCase()+action.slice(1)).onclick=()=>mutate(()=>jobAction(action));
     window.addEventListener('pagehide',()=>{state.closed=true;clearTimeout(state.timer);});
     window.addEventListener('pageshow',()=>{state.closed=false;if(active())poll();});
     if(state.pending?.jobId){$('publishedJobId').value=state.pending.jobId;$('publishedJobStatus').textContent='Job từ phiên trước: '+state.pending.jobId+'. Bấm cập nhật để xem trạng thái mới.';poll();}
     else if(unknown())say('Có yêu cầu tạo job chưa xác nhận từ phiên trước. Gửi lại cùng yêu cầu để nhận đúng Job ID.');
     refreshContext();render();
-    return {isActive:active,refresh,refreshContext};
+    async function selectWorkflow(id){
+      if(state.busy||unknown())throw Error('Hoàn tất yêu cầu tạo job hiện tại trước khi chọn tuyến mới.');
+      await mutate(async()=>{
+        await loadPage(0);
+        if(![...$('publishedWorkflow').options].some(option=>option.value===id))$('publishedWorkflow').add(new Option('Tuyến vừa publish',id));
+        $('publishedWorkflow').value=id;await loadDefinition();
+      });
+    }
+    return {isActive:active,refresh,refreshContext,selectWorkflow};
   }
   return {initialInputs,parseInputs,validateInputs,actions,settled,mount};
 });

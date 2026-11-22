@@ -17,7 +17,8 @@
     .qr-frame canvas{margin:0 auto}.qr-frame p{margin:.8rem 0 0;text-align:center;color:#183b59}
     [hidden]{display:none!important}#message{min-height:1.5em;color:#4f2430}#stage{font-weight:650}
   </style>
-  <script src="/delivery-qr.js" defer></script>
+  <script src="/robot-data-selectors.js?v=20261122-catalog" defer></script>
+  <script src="/delivery-qr.js?v=20261122-catalog" defer></script>
 </head>
 <body><main>
   <h1>Giao nhận hàng với MAR</h1>
@@ -75,7 +76,12 @@
       <p id="deliveryMessage" role="status"></p>
     </details>
     <form id="watch">
-      <label>Job ID<input id="jobId" autocomplete="off" spellcheck="false" maxlength="36" required></label>
+      <label>Nhiệm vụ có quyền truy cập<select id="recentJob"><option value="">Chọn nhiệm vụ để theo dõi</option></select></label>
+      <button id="reloadRecentJobs" type="button" class="secondary">Tải lại danh sách nhiệm vụ</button>
+      <p id="recentJobsStatus" role="status"></p>
+      <details><summary>Dùng Job ID hoặc liên kết được chia sẻ</summary>
+        <label>Job ID<input id="jobId" autocomplete="off" spellcheck="false" maxlength="36"></label>
+      </details>
       <button>Theo dõi nhiệm vụ</button>
     </form>
     <button id="copyJobLink" class="secondary" hidden>Sao chép liên kết job cho staff nhận</button>

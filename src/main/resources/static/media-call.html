@@ -26,8 +26,10 @@ body{font:16px system-ui,sans-serif;max-width:1000px;margin:24px auto;padding:0 
 <label><input id="relay" type="checkbox" style="width:auto"> Dùng TURN relay — khi mạng chặn WebRTC/UDP</label>
 <details id="manualCall">
   <summary>Mở phiên thủ công</summary>
-  <label>Robot ID<input id="robot" value="0e3f1083-2546-4f45-8004-5eda5cb75a6f"></label>
-  <label>Incident ID — khi hỗ trợ SOS<input id="incident" placeholder="Admin có thể để trống khi thử"></label>
+  <label>Robot<select id="robot"><option value="">Chọn robot</option></select></label>
+  <label>Sự cố đang xử lý — khi hỗ trợ SOS<select id="incident"><option value="">Không chọn sự cố</option></select></label>
+  <button id="reloadCallCatalog" type="button">Tải lại robot và sự cố</button>
+  <p id="callCatalogStatus" role="status"></p>
   <label>Chế độ<select id="mode"><option value="MONITOR">Xem camera — không bật micro/loa robot</option><option value="ASSIST">Hỗ trợ SOS — camera và thoại hai chiều</option></select></label>
   <button id="create">Mở phiên và kết nối</button>
 </details>
@@ -63,5 +65,5 @@ body{font:16px system-ui,sans-serif;max-width:1000px;margin:24px auto;padding:0 
 <button id="resolveFall" hidden>Đã xử lý xong</button>
 <button id="dismissFall" hidden>Báo nhầm</button>
 </section>
-<script src="/vendor/livekit-client.umd.min.js"></script><script src="/map-navigation.js"></script><script src="/media-call.js"></script>
+<script src="/vendor/livekit-client.umd.min.js"></script><script src="/map-navigation.js"></script><script src="/robot-data-selectors.js?v=20261122-catalog"></script><script src="/media-call.js?v=20261122-catalog"></script>
 </html>
