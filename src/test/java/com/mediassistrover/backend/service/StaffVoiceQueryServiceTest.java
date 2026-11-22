@@ -60,7 +60,11 @@ class StaffVoiceQueryServiceTest {
         assertEquals("NAME_REQUIRED", service.answer("Bác sĩ đó đang ở phòng nào?", null).code());
         doctor.getAccount().setLockedUntil(null);
         doctor.setJobTitle("Điều dưỡng");
-        assertEquals("DOCTOR_NOT_FOUND", service.answer("Bác sĩ Nguyễn Thanh đang ở đâu?", null).code());
+        assertEquals("STAFF_NOT_DOCTOR", service.answer("Bác sĩ Nguyễn Thanh đang ở đâu?", null).code());
+        when(duty.list(null, null)).thenReturn(List.of(checkedIn(doctor, UUID.randomUUID(), "Phòng lễ tân")));
+        var working = service.answer("Bác sĩ Nguyễn Thanh đang ở đâu?", null);
+        assertEquals("STAFF_ON_DUTY_NOT_DOCTOR", working.code());
+        assertTrue(working.answer().contains("Phòng lễ tân"));
     }
 
     @Test void roomQueryListsOnlyCheckedInDoctorsOnActiveMap() {
@@ -83,6 +87,12 @@ class StaffVoiceQueryServiceTest {
         assertEquals("ROOM_DOCTORS", service.answer("Phòng x quang bác sĩ nào đg trực?", mapId).code());
         when(duty.list(mapId, roomId)).thenReturn(List.of());
         assertEquals("ROOM_NO_DOCTOR", service.answer("Bác sĩ nào đang trực ở phòng x quang?", mapId).code());
+        doctor.setJobTitle("lao cong");
+        when(duty.list(mapId, roomId)).thenReturn(List.of(checkedIn(doctor, roomId, "Phòng x quang")));
+        var staff = service.answer("Phòng x quang bác sĩ nào đang trực?", mapId);
+        assertEquals("ROOM_STAFF_NO_DOCTOR", staff.code());
+        assertTrue(staff.answer().contains("Nguyễn Thanh"));
+        assertTrue(staff.answer().contains("chưa xác nhận"));
     }
 
     @Test void unrelatedLocationQuestionIsLeftForKnowledgeAndNavigation() {

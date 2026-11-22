@@ -58,7 +58,7 @@ public class StaffVoiceQueryService {
             return result("NAME_REQUIRED", "Bạn vui lòng nói rõ họ tên bác sĩ cần tìm.", now);
         String target = matcher.group(1).trim();
         List<StaffProfile> candidates = profiles.findVoiceDirectory().stream()
-                .filter(this::availableDoctor)
+                .filter(this::availableStaff)
                 .filter(p -> matches(target, normalized(p.getAccount().getFullName()))
                         || matches(target, normalized(p.getStaffCode())))
                 .toList();
@@ -75,6 +75,13 @@ public class StaffVoiceQueryService {
         List<String> rooms = duty.list(null, null).stream()
                 .filter(s -> s.accountId().equals(profile.getAccount().getAccountId()))
                 .map(StaffDutyService.Duty::roomName).distinct().toList();
+        if (!isDoctor(profile)) {
+            if (!rooms.isEmpty())
+                return result("STAFF_ON_DUTY_NOT_DOCTOR", "Nhân viên " + fullName + " đang trực tại "
+                        + String.join(" và ", rooms) + ". Hồ sơ hiện chưa xác nhận người này là bác sĩ.", now);
+            return result("STAFF_NOT_DOCTOR", "Hồ sơ của " + fullName
+                    + " hiện chưa xác nhận người này là bác sĩ và không có ca trực đang check-in.", now);
+        }
         if (rooms.isEmpty())
             return result("DOCTOR_OFF_DUTY", "Hiện giờ bác sĩ " + fullName + " đang không trong ca trực.", now);
         return result("DOCTOR_ON_DUTY", "Bác sĩ " + fullName + " đang trực tại " + String.join(" và ", rooms) + ".", now);
@@ -94,23 +101,38 @@ public class StaffVoiceQueryService {
         rooms = rooms.stream().filter(r -> normalized(r.getRoomName()).length() == longest).toList();
         if (rooms.size() > 1) return result("ROOM_AMBIGUOUS", "Bạn vui lòng nói rõ tên phòng cần hỏi.", now);
         Room room = rooms.getFirst();
-        Set<UUID> doctorAccounts = profiles.findVoiceDirectory().stream().filter(this::availableDoctor)
+        List<StaffProfile> directory = profiles.findVoiceDirectory().stream().filter(this::availableStaff).toList();
+        Set<UUID> staffAccounts = directory.stream().map(p -> p.getAccount().getAccountId())
+                .collect(Collectors.toSet());
+        Set<UUID> doctorAccounts = directory.stream().filter(this::isDoctor)
                 .map(p -> p.getAccount().getAccountId()).collect(Collectors.toSet());
-        List<String> names = duty.list(mapId, room.getRoomId()).stream()
+        List<StaffDutyService.Duty> onDuty = duty.list(mapId, room.getRoomId()).stream()
+                .filter(s -> staffAccounts.contains(s.accountId())).toList();
+        List<String> names = onDuty.stream()
                 .filter(s -> doctorAccounts.contains(s.accountId()))
                 .map(StaffDutyService.Duty::fullName).distinct().toList();
+        if (names.isEmpty() && !onDuty.isEmpty()) {
+            String staffNames = onDuty.stream().map(StaffDutyService.Duty::fullName).distinct()
+                    .collect(Collectors.joining(", "));
+            return result("ROOM_STAFF_NO_DOCTOR", "Hiện tại " + room.getRoomName()
+                    + " có nhân viên " + staffNames
+                    + " đang check-in trực. Hồ sơ chưa xác nhận có bác sĩ đang trực tại phòng này.", now);
+        }
         if (names.isEmpty())
             return result("ROOM_NO_DOCTOR", "Hiện tại không có bác sĩ nào check-in trực tại " + room.getRoomName() + ".", now);
         return result("ROOM_DOCTORS", "Bác sĩ đang check-in trực tại " + room.getRoomName() + ": " + String.join(", ", names) + ".", now);
     }
 
-    private boolean availableDoctor(StaffProfile profile) {
+    private boolean availableStaff(StaffProfile profile) {
         Account account = profile.getAccount();
-        String title = normalized(profile.getJobTitle());
         return profile.isActive() && account.getStatus() == AccountStatus.ACTIVE
                 && account.getRole() == Role.STAFF && !account.isMustChangePassword()
-                && (account.getLockedUntil() == null || !account.getLockedUntil().isAfter(clock.instant()))
-                && (title.contains("bac si") || title.contains("doctor") || title.contains("physician"));
+                && (account.getLockedUntil() == null || !account.getLockedUntil().isAfter(clock.instant()));
+    }
+
+    private boolean isDoctor(StaffProfile profile) {
+        String title = normalized(profile.getJobTitle());
+        return title.contains("bac si") || title.contains("doctor") || title.contains("physician");
     }
 
     private static boolean matches(String target, String name) {
