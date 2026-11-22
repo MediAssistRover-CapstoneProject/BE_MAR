@@ -40,7 +40,7 @@ public class PiVoiceController {
     private final com.mediassistrover.backend.service.StaffVoiceQueryService staffQuestions;
 
     @PostMapping("/staff-questions")
-    @Operation(summary="Answer a doctor-on-duty question from the current DB and this robot's map")
+    @Operation(summary="Answer a staff or doctor duty question from the current DB and this robot's map")
     public com.mediassistrover.backend.service.StaffVoiceQueryService.Answer staffQuestion(
             @Valid @RequestBody com.mediassistrover.backend.service.StaffVoiceQueryService.Query body,
             @AuthenticationPrincipal DevicePrincipal device) {

@@ -48,7 +48,10 @@ class StaffVoiceQueryServiceTest {
         StaffProfile doctor = doctor("Nguyễn Thanh", AccountStatus.ACTIVE);
         when(profiles.findVoiceDirectory()).thenReturn(List.of(doctor));
         when(duty.list(null, null)).thenReturn(List.of());
-        assertEquals("DOCTOR_OFF_DUTY", service.answer("Bác sĩ Nguyễn Thanh đang ở đâu?", null).code());
+        var offDutyDoctor = service.answer("Bác sĩ Nguyễn Thanh đang ở đâu?", null);
+        assertEquals("DOCTOR_OFF_DUTY", offDutyDoctor.code());
+        assertTrue(offDutyDoctor.answer().contains("có bác sĩ Nguyễn Thanh"));
+        assertTrue(offDutyDoctor.answer().contains("không trong ca trực"));
         assertEquals("DOCTOR_NOT_FOUND", service.answer("Bác sĩ An đang ở đâu?", null).code());
         doctor.getAccount().setStatus(AccountStatus.LOCKED);
         var locked = service.answer("Bác sĩ Nguyễn Thanh đang ở đâu?", null);
@@ -60,11 +63,35 @@ class StaffVoiceQueryServiceTest {
         assertEquals("NAME_REQUIRED", service.answer("Bác sĩ đó đang ở phòng nào?", null).code());
         doctor.getAccount().setLockedUntil(null);
         doctor.setJobTitle("Điều dưỡng");
-        assertEquals("STAFF_NOT_DOCTOR", service.answer("Bác sĩ Nguyễn Thanh đang ở đâu?", null).code());
+        var offDutyStaff = service.answer("Bác sĩ Nguyễn Thanh đang ở đâu?", null);
+        assertEquals("STAFF_OFF_DUTY", offDutyStaff.code());
+        assertTrue(offDutyStaff.answer().contains("có nhân viên Nguyễn Thanh"));
+        assertTrue(offDutyStaff.answer().contains("không trong ca trực"));
+        assertTrue(offDutyStaff.answer().contains("chưa xác nhận người này là bác sĩ"));
         when(duty.list(null, null)).thenReturn(List.of(checkedIn(doctor, UUID.randomUUID(), "Phòng lễ tân")));
         var working = service.answer("Bác sĩ Nguyễn Thanh đang ở đâu?", null);
         assertEquals("STAFF_ON_DUTY_NOT_DOCTOR", working.code());
         assertTrue(working.answer().contains("Phòng lễ tân"));
+    }
+
+    @Test void namedStaffInDirectoryWithoutCheckedInShiftIsReportedOffDuty() {
+        StaffProfile staff = doctor("Nguyễn Thanh", AccountStatus.ACTIVE);
+        staff.setJobTitle("Điều dưỡng");
+        StaffProfile other = doctor("Trần An", AccountStatus.ACTIVE);
+        when(profiles.findVoiceDirectory()).thenReturn(List.of(staff, other));
+        when(duty.list(null, null)).thenReturn(List.of(checkedIn(other, UUID.randomUUID(), "Phòng thuốc")));
+
+        var answer = service.answer("Nhân viên Nguyễn Thanh đang ở phòng nào?", null);
+        assertEquals("STAFF_OFF_DUTY", answer.code());
+        assertEquals("Bệnh viện có nhân viên Nguyễn Thanh, nhưng hiện tại không trong ca trực.", answer.answer());
+        assertEquals("STAFF_OFF_DUTY",
+                service.answer("Có nhân viên Nguyễn Thanh trong bệnh viện không?", null).code());
+        assertEquals("STAFF_NOT_FOUND", service.answer("Nhân viên Mai đang trực không?", null).code());
+
+        when(duty.list(null, null)).thenReturn(List.of(checkedIn(staff, UUID.randomUUID(), "Phòng lễ tân")));
+        var onDuty = service.answer("Nhân viên Nguyễn Thanh đang ở phòng nào?", null);
+        assertEquals("STAFF_ON_DUTY", onDuty.code());
+        assertTrue(onDuty.answer().contains("Phòng lễ tân"));
     }
 
     @Test void roomQueryListsOnlyCheckedInDoctorsOnActiveMap() {

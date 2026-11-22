@@ -29,7 +29,7 @@ public class StaffVoiceQueryService {
 
     public record Query(@NotBlank @Size(max = 300) String question, UUID mapId) {}
     public record Answer(boolean recognized, String code, String answer, Instant checkedAt) {}
-    private static final Pattern NAME = Pattern.compile("(?:^| )(?:bac si|bs) (.+?)(?= (?:dang|hien|o|co|truc|ca|hom|check|lam)(?: |$)|$)");
+    private static final Pattern NAME = Pattern.compile("(?:^| )(?:bac si|bs|nhan vien) (.+?)(?= (?:dang|hien|o|co|truc|ca|hom|check|lam|trong|khong|chua)(?: |$)|$)");
 
     public Answer answerForRobot(String question, UUID robotId) {
         RobotNavigationSession session = sessions.current(robotId);
@@ -40,22 +40,24 @@ public class StaffVoiceQueryService {
         String text = normalized(question).replaceAll("\\bdg\\b", "dang");
         if (text.isBlank()) return unknown();
         boolean aboutDoctor = text.contains("bac si") || text.startsWith("bs ") || text.contains(" bs ");
+        boolean aboutStaff = text.contains("nhan vien");
         boolean roomQuery = text.contains("phong") &&
                 (text.contains("bac si nao") || text.contains("ai dang truc") || text.contains("ai truc")
                         || text.contains("nhan vien nao dang truc"));
-        boolean personQuery = aboutDoctor && !roomQuery &&
+        boolean personQuery = (aboutDoctor || aboutStaff) && !roomQuery &&
                 (text.contains("phong nao") || text.contains("o dau") || text.contains("truc")
                         || text.contains("check in") || text.contains("dang o")
-                        || text.contains("hien o") || text.contains("benh vien"));
+                        || text.contains("hien o") || text.contains("benh vien") || text.contains("ca lam"));
         if (!roomQuery && !personQuery) return unknown();
         Instant now = clock.instant();
-        return roomQuery ? inRoom(text, mapId, now) : findDoctor(text, now);
+        return roomQuery ? inRoom(text, mapId, now) : findPerson(text, aboutDoctor, now);
     }
 
-    private Answer findDoctor(String question, Instant now) {
+    private Answer findPerson(String question, boolean askedForDoctor, Instant now) {
         Matcher matcher = NAME.matcher(question);
         if (!matcher.find() || matcher.group(1).matches("(?:do|nay|nao|ay|kia)(?: (?:do|nay|nao|ay|kia))*"))
-            return result("NAME_REQUIRED", "Bạn vui lòng nói rõ họ tên bác sĩ cần tìm.", now);
+            return result("NAME_REQUIRED", "Bạn vui lòng nói rõ họ tên "
+                    + (askedForDoctor ? "bác sĩ" : "nhân viên") + " cần tìm.", now);
         String target = matcher.group(1).trim();
         List<StaffProfile> candidates = profiles.findVoiceDirectory().stream()
                 .filter(this::availableStaff)
@@ -67,9 +69,13 @@ public class StaffVoiceQueryService {
                         || target.equals(normalized(p.getStaffCode()))).toList();
         if (!exact.isEmpty()) candidates = exact;
         if (candidates.isEmpty())
-            return result("DOCTOR_NOT_FOUND", "Hiện tại bác sĩ bạn hỏi không có trong bệnh viện.", now);
+            return result(askedForDoctor ? "DOCTOR_NOT_FOUND" : "STAFF_NOT_FOUND",
+                    "Hiện tại " + (askedForDoctor ? "bác sĩ" : "nhân viên")
+                            + " bạn hỏi không có trong bệnh viện.", now);
         if (candidates.size() > 1)
-            return result("DOCTOR_AMBIGUOUS", "Có nhiều bác sĩ trùng tên. Bạn vui lòng nói đầy đủ họ tên hoặc mã nhân viên.", now);
+            return result(askedForDoctor ? "DOCTOR_AMBIGUOUS" : "STAFF_AMBIGUOUS",
+                    "Có nhiều " + (askedForDoctor ? "bác sĩ" : "nhân viên")
+                            + " trùng tên. Bạn vui lòng nói đầy đủ họ tên hoặc mã nhân viên.", now);
         StaffProfile profile = candidates.getFirst();
         String fullName = profile.getAccount().getFullName();
         List<String> rooms = duty.list(null, null).stream()
@@ -77,13 +83,16 @@ public class StaffVoiceQueryService {
                 .map(StaffDutyService.Duty::roomName).distinct().toList();
         if (!isDoctor(profile)) {
             if (!rooms.isEmpty())
-                return result("STAFF_ON_DUTY_NOT_DOCTOR", "Nhân viên " + fullName + " đang trực tại "
-                        + String.join(" và ", rooms) + ". Hồ sơ hiện chưa xác nhận người này là bác sĩ.", now);
-            return result("STAFF_NOT_DOCTOR", "Hồ sơ của " + fullName
-                    + " hiện chưa xác nhận người này là bác sĩ và không có ca trực đang check-in.", now);
+                return result(askedForDoctor ? "STAFF_ON_DUTY_NOT_DOCTOR" : "STAFF_ON_DUTY",
+                        "Nhân viên " + fullName + " đang trực tại " + String.join(" và ", rooms) + "."
+                                + (askedForDoctor ? " Hồ sơ hiện chưa xác nhận người này là bác sĩ." : ""), now);
+            return result("STAFF_OFF_DUTY", "Bệnh viện có nhân viên " + fullName
+                    + ", nhưng hiện tại không trong ca trực."
+                    + (askedForDoctor ? " Hồ sơ hiện chưa xác nhận người này là bác sĩ." : ""), now);
         }
         if (rooms.isEmpty())
-            return result("DOCTOR_OFF_DUTY", "Hiện giờ bác sĩ " + fullName + " đang không trong ca trực.", now);
+            return result("DOCTOR_OFF_DUTY", "Bệnh viện có bác sĩ " + fullName
+                    + ", nhưng hiện tại không trong ca trực.", now);
         return result("DOCTOR_ON_DUTY", "Bác sĩ " + fullName + " đang trực tại " + String.join(" và ", rooms) + ".", now);
     }
 
