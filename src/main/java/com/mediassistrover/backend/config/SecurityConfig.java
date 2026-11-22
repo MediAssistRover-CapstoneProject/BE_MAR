@@ -46,6 +46,7 @@ public class SecurityConfig {
                                 "/map-navigation.js",
                                 "/mapping-autonomy.js",
                                 "/robot-test-workflow.js",
+                                "/published-workflow-runner.js",
                                 "/delivery-qr.html",
                                 "/delivery-qr.js",
                                 "/media-call.html",
