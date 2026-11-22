@@ -43,7 +43,8 @@ public class MediaSessionService {
     public Map<String,Object> configuration(AccountPrincipal actor) {
         staffScope.requireCurrentStaffOrAdmin(actor);
         return Map.of("enabled",properties.isEnabled(),"url",properties.getUrl(),"videoWidth",640,
-                "videoHeight",480,"videoFps",15,"recordingEnabled",false,"internalTls",false);
+                "videoHeight",480,"videoFps",15,"recordingEnabled",false,"internalTls",false,
+                "monitorMaxViewers",properties.getMonitorMaxViewers());
     }
     public List<View> list(AccountPrincipal actor) {
         staffScope.requireCurrentStaffOrAdmin(actor);
@@ -83,6 +84,8 @@ public class MediaSessionService {
         var old=sessions.findByActiveRobotId(robotId);
         if(old.isPresent()) {
             var s=old.get();
+            if(incidentId==null && mode==MediaSession.Mode.MONITOR && s.getMode()==MediaSession.Mode.MONITOR
+                    && s.getIncident()==null)return view(s);
             if(s.getStaff()!=null && s.getStaff().getAccountId().equals(staff.getAccountId()) && s.getMode()==mode
                     && Objects.equals(incidentId,s.getIncident()==null?null:s.getIncident().getIncidentId()))return view(s);
             if(!canPreemptManualMonitorForFall(incident,s))
@@ -144,6 +147,19 @@ public class MediaSessionService {
             throw new AccessDeniedException("Accept this session before joining");
         requireAssistStopped(s);
         return credentials(s,"staff-"+actor.accountId(),false);
+    }
+    public Credentials observerToken(UUID id,UUID viewerId,AccountPrincipal actor) {
+        var s=locked(id);requireRead(s,actor);requireOpen(s);
+        if(s.getMode()!=MediaSession.Mode.MONITOR)
+            throw new BusinessRuleException("MEDIA_OBSERVERS_REQUIRE_MONITOR");
+        requireSosResponder(s.getIncident(),actor);
+        if(s.getStaff()==null)throw new BusinessRuleException("MEDIA_WAITING_FOR_STAFF");
+        if(s.getState()!=ACTIVE || s.getDeviceSeenAt()==null
+                || s.getDeviceSeenAt().plusSeconds(properties.getDeviceTimeoutSec()).isBefore(now()))
+            throw new BusinessRuleException("MEDIA_CAMERA_CONNECTING");
+        // Each browser joins the existing camera publication independently.
+        // Ownership and incident review remain with the assigned responder.
+        return credentials(s,"viewer-"+actor.accountId()+"-"+Objects.requireNonNull(viewerId),false);
     }
     public Credentials deviceToken(UUID id,DevicePrincipal actor) {
         var robot=deviceScope.requireCurrentDevice(actor);var s=locked(id);
@@ -280,6 +296,9 @@ public class MediaSessionService {
         if(actor.role()==Role.ADMIN)return true;
         if(s.getIncident()!=null&&s.getIncident().isRoutedSos())
             return s.getIncident().isSosResponder(actor.accountId());
+        // Current staff may already start a manual monitor on any robot;
+        // joining its existing video avoids opening a second publication.
+        if(s.getIncident()==null&&s.getMode()==MediaSession.Mode.MONITOR)return true;
         return s.getStaff()!=null&&s.getStaff().getAccountId().equals(actor.accountId())
                 || s.getIncident()!=null&&staffScope.canAccessIncident(s.getIncident(),actor);
     }

@@ -144,3 +144,117 @@ thay tuyến cũ, không tự bật lịch và không phát lệnh bánh.
 Đã chạy `mvn.cmd -o clean package -Dmaven.test.skip=false`: 216 test, 215 đạt, 0 lỗi, 1 bỏ qua. Test bị bỏ qua là kiểm tra schema MySQL độc lập cần `MAP_SCHEMA_TEST_JDBC_URL`; chưa áp dụng migration lên DB vận hành. Artifact là `target/backend-0.0.1-SNAPSHOT.jar`.
 
 Các test mới bao gồm chuyển giao giữa service thật với repository giả lập, giữ cùng job/endpoint/vòng, timeout loại trừ thời gian treo, nguồn giữ độc lập, khôi phục holds, API HTTP/quyền truy cập, ORM và truy vấn trên H2, chặn phát lệnh trong khoảng chờ callback, ACK lịch sử đến muộn. Chưa gửi lệnh MQTT thật hoặc xác nhận phần cứng. Web tuần tra hiện có và tiến trình voice/fall chạy trên Pi phải sử dụng các contract này trước khi kiểm thử toàn hệ thống.
+
+
+## Bản đã cài, kiểm tra sau nửa đêm 21/11/2026 (UTC+7)
+
+- BE artifact SHA-256: `a42fe6eded5a85e7ec736af3144c9eca28a1865820aa2186a24eaaad9a1afeb6`.
+  Service UP; Flyway MySQL 8 đã áp dụng V64. Đây là artifact cài trực tiếp từ
+  workspace, không phải commit đã push. Cần push source để CI tiếp theo giữ bản này.
+- AI camera release `9799e4cf99585e9efca5574d908f7a827e7d2edc`:
+  fall-ai active, READY, ground_people_version=1; AI voice vẫn active.
+- Pi `192.168.1.140`: cài và xác minh hash 10 file production; không cài test.
+  Continuous fall/depth/shared restricted và voice đều enabled. Stack giữ dừng.
+- Sao lưu source trên Pi:
+  `/home/ubuntu/mediassist-mqtt-2026-10-08/pi/state/patch-backups/navigation-continuity-20261120T165936606441Z`.
+  Cấu hình:
+  `/home/ubuntu/mediassist-mqtt-2026-10-08/pi/state/patch-backups/shared-patrol-config-20261120T165936Z`.
+- Hậu kiểm: không có job queued/running/suspended/recovery; journal Pi không có
+  ACCEPTED/RUNNING/RECOVERY_REQUIRED; outbox chưa ACK=0. Phiên navigation CLOSED.
+  Availability trả ROBOT_NOT_CONNECTED do stack đang dừng, không còn lỗi API 404.
+- Chưa chạy thử bánh hoặc kịch bản tuần tra trên robot thật. Mở phiên navigation
+  mới và chạy lệnh BE sinh để kiểm thử có người vận hành.
+
+
+## Kiểm tra vận hành ngày 22/11/2026 và cách thử
+
+Kết quả đọc API trực tiếp: robot `0e3f1083-2546-4f45-8004-5eda5cb75a6f`
+đang chọn map `f5448b68-db7c-4240-8215-d3de3c8d2934`; map này có 0 zone
+trong navigation profile. Không có Schedule và không có staff on-duty đã
+check-in khi kiểm tra. Workflow patrol đang publish `9b6f776e-3052-4615-b56b-e85f8e514c44`
+vẫn tham chiếu map cũ `bdf6503a-d38e-4bde-9a67-763e91668593`, gồm một checkpoint
+CROWD_DENSITY và một PATROL_FALL; nó không phải tuyến vùng cấm của map hiện tại.
+Phòng nhận SOS đang cấu hình là `9aa7ada8-30cc-4537-9544-8fd413a0e442` (`SOS_05`).
+Đây là snapshot, không phải các ID hardcode trong triển khai.
+
+Pi `192.168.1.148` đang dừng stack; continuous fall, registered depth, shared
+restricted monitoring, voice và media đều bật trong base config. MOVE được
+thêm trong generated navigation worker, không cần bật MOVE trên base mapping
+worker. Một request chẩn đoán ảnh trống chỉ tới server AI (không gửi sự kiện
+cho BE) trả `yolov8n-pose-fall-v5`, `ground_people_version=1`.
+
+Bản sửa source ngày 22/11 chuyển kết quả inference checkpoint cho shared
+restricted monitor khi `fall_detection=true`; trước đó checkpoint có thể đợi
+mẫu mãi dù AI vẫn chạy. Khi resume thẳng ở SENSE sau khi observer khởi tạo lại,
+Pi chỉ nhận job làm patrol sau khi BE xác thực profile của đúng checkpoint;
+đổi active step trong lúc HTTP đang chạy thì hủy mẫu đó. Không tạo model,
+camera owner hay hàng đợi job thứ hai trên Pi.
+
+Trình tự thử có người vận hành, sau khi triển khai source tương ứng:
+
+1. Tạo polygon KEEP_OUT bằng `POST /api/v1/zones`, dùng đúng `mapId` của phiên.
+   Chọn endpoint quan sát nằm ngoài polygon, hướng camera nhìn thấy vùng và
+   chân người; robot không đi vào vùng KEEP_OUT. API danh sách `/zones` hiện
+   không có query filter mapId: client phải lọc trường mapId trong dữ liệu.
+2. Kiểm tra `GET /api/v1/robots/{robotId}/navigation-zones`: đúng map,
+   restrictedZoneCount > 0 và profileAcknowledged=true sau khi Pi kết nối idle.
+3. ADMIN tạo/chọn đúng ca trực bằng `/api/v1/admin/shifts`; staff SOS thực hiện
+   `POST /api/v1/staff/shifts/{shiftId}/check-in`. Xác nhận
+   `GET /api/v1/staff/on-duty?mapId={mapId}&roomId={sosRoomId}` có đúng một
+   staff. Chỉ tạo ca chưa đủ; nhiều staff cùng check-in sẽ AMBIGUOUS_SHIFT.
+4. Với checkpoint RESTRICTED_ZONE, cấu hình profile bằng
+   `PUT /api/v1/admin/monitoring/robots/{robotId}/ai-profile`:
+   `zoneId`, `sensingType=RESTRICTED_ZONE`, `modelVersion=yolov8n-pose-fall-v5`,
+   `producerRef=SHARED_POSE_RGBD`, `enabled=true`,
+   `personPositionsEnabled=false`, và commissioningNote mô tả phép thử thực tế.
+   Profile gắn map asset hash/frame; đổi map phải cấu hình lại. Crowd producer
+   cũ là nhánh riêng, không coi shared restricted là producer CROWD_DENSITY.
+5. Preview rồi publish bằng `/api/v1/admin/patrol-workflows/preview` và
+   `/api/v1/admin/patrol-workflows`. Checkpoints theo thứ tự:
+   `{endpointId,zoneId,sensingType:RESTRICTED_ZONE}`; đặt fallDetection=true,
+   maxSpeedMps=0.25, sensingWindowSec=10 và repeatCount=0 để tuần tra liên tục.
+   Giới hạn 1–5 checkpoints; hệ thống không tự đi qua mọi endpoint.
+6. Mở phiên navigation mới trên đúng map, dùng lệnh BE sinh; thêm
+   `--voice-chat --fall-monitor --restricted-monitor`. Chọn `--load-profile`
+   theo thân robot thực tế. Chờ LOCALIZED và profile ACK. Chưa tạo chuyển động
+   từ thao tác đọc source hay preview workflow.
+7. Tạo lịch ONCE bằng `POST /api/v1/schedules` với workflowId, robotId,
+   scheduleCode/name, timezone=Asia/Bangkok, startsAt là thời điểm thật,
+   inputTemplateJson={}, priority thấp hơn job foreground (ví dụ 5), và
+   misfirePolicy hợp lệ trong API; activate bằng `/schedules/{id}/activate`.
+8. Khi patrol RUNNING, một người đi vào polygon trong khung camera. Pi cần
+   RGB-D đồng bộ, TF tại thời điểm ảnh và tọa độ chân nằm trong vùng; khung
+   người trên video chưa đủ chứng minh người nằm trong polygon. Đọc log
+   RESTRICTED_REVIEW_REQUESTED; staff đọc `/api/v1/alerts?status=OPEN` và mở
+   MONITOR bằng `/api/v1/media-sessions` theo robotId. Đây là cảnh báo vùng
+   cấm, không tự tạo cuộc gọi ASSIST hay tự bật micro của staff.
+9. `POST /api/v1/alerts/{id}/acknowledge` chỉ ghi nhận đã nhận; patrol vẫn giữ.
+   Sau khi kiểm tra, gọi `/resolve`, hoặc `/false-alarm` với reason. Chỉ khi
+   các hold còn lại đã hết và kết nối/định vị hợp lệ mới resume.
+10. Trong patrol, nói Mờ A/Em A. Kiểm tra job cũ SUSPENDING → SUSPENDED, Pi
+    dừng trước khi nói. Hỏi thông tin rồi kết thúc hội thoại; cùng patrol job
+    RUNNING trở lại. Thử yêu cầu dẫn đường, xác nhận đích: job foreground chạy
+    trước, hoàn tất rồi patrol tiếp tục. Đang delivery hoặc SOS ASSIST không
+    được giành robot bằng wake. GET /jobs/{id}, /events hoặc /stream cho biết
+    holds và resumeBlockedReason; RECOVERY_REQUIRED cần xử lý bằng chứng dừng.
+
+API điều khiển: `/api/v1/jobs/{id}/suspend`, `/resume`, `/cancel`, body reason.
+Resume chỉ giải phóng hold MANUAL; không giải phóng incident/voice/alert khác.
+Hủy patrol là kết thúc ý định tuần tra, không phải tạm dừng. Queue nằm trong
+DB BE; Pi nhận một operation. MQTT vận chuyển lệnh và ACK, không xếp thêm một
+hàng đợi nghiệp vụ độc lập.
+
+Camera nhiều người: source mới hỗ trợ MONITOR tối đa bốn người xem khi robot
+đang kết nối (LiveKit room có robot + 4 viewers), cấu hình
+`MEDIA_MONITOR_MAX_VIEWERS`. Dùng
+`POST /api/v1/media-sessions/{id}/observer-token` với viewerId UUID riêng cho
+mỗi trình duyệt; token chỉ nhận video/metadata. Rời camera trên UI chỉ ngắt
+người xem đó. ASSIST vẫn robot + người nhận SOS được chỉ định. Pi phát một
+luồng video, EC2 LiveKit phân phối các subscriber; không chạy thêm model hay
+encode camera riêng cho từng người xem. FE_WEB_MAR chưa có LiveKit client;
+client đang được cập nhật ở static media-call.html/media-call.js của BE.
+
+Các thay đổi này đang ở source workspace; chưa deploy BE hoặc cài ba file
+production Pi trong lượt audit này. Ca trực, polygon và lịch chưa được tạo
+vì cần chọn hình học vùng cấm cùng lịch trực thực tế. Không tự kích hoạt
+lịch hoặc phát lệnh di chuyển để kiểm tra phần cứng.

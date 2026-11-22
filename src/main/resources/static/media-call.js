@@ -1,8 +1,9 @@
-/* One staff participant; the backend owns scope, assignment and call lifetime. */
+/* Shared receive-only monitoring; the backend owns SOS assignment and call lifetime. */
 (()=>{'use strict';
 const $=id=>document.getElementById(id),sdk=window.LivekitClient;
 let room=null,current=null,refreshTimer=null,lastFrame=0,frameHandle=null;
 let accessToken='',signingIn=false,connecting=false,listPending=false;
+let connectionGeneration=0;
 let patrolAlertsPending=false,fallAlertsPending=false;
 let fallIncident=null,reviewPending=false,fallRouteBasis=null;
 let aiOverlay=null,overlaySequence=0,overlayAt=0;
@@ -77,20 +78,20 @@ $('mirrorVideo').addEventListener('change',()=>{
 new ResizeObserver(drawOverlay).observe($('videoStage'));
 setInterval(()=>{if(room)drawOverlay();},200);
 function message(value,error=false){$('status').textContent=value;$('status').className=error?'error':'';}
-async function request(path,body,token='',keepalive=false){
+async function request(path,body,token='',keepalive=false,timeoutMs=8000){
   const result=await fetch(path,{
     method:body===undefined?'GET':'POST',
     headers:{...(token?{Authorization:'Bearer '+token}:{}),...(body!==undefined?{'Content-Type':'application/json'}:{})},
     body:body===undefined?undefined:JSON.stringify(body),cache:'no-store',keepalive,
-    ...(keepalive?{}:{signal:AbortSignal.timeout(8000)})
+    ...(keepalive?{}:{signal:AbortSignal.timeout(timeoutMs)})
   });
   const value=await result.json().catch(()=>null);
   if(!result.ok)throw Object.assign(Error(value?.message||('HTTP '+result.status)),{status:result.status});
   return value?.data??value;
 }
-function api(path,body,keepalive=false){
+function api(path,body,keepalive=false,timeoutMs=8000){
   if(!accessToken)throw Error('Cần đăng nhập tài khoản Staff/Admin.');
-  return request(path,body,accessToken,keepalive);
+  return request(path,body,accessToken,keepalive,timeoutMs);
 }
 function buttons(){
   const active=!!room,busy=active||connecting;
@@ -99,6 +100,7 @@ function buttons(){
   $('signOut').disabled=busy;
   $('loginButton').disabled=$('tokenSignIn').disabled=signingIn;
   $('end').disabled=!active||connecting;
+  $('end').textContent=current?.mode==='MONITOR'?'Rời camera':'Kết thúc phiên';
   $('mic').disabled=!active||connecting||current?.mode!=='ASSIST';
   $('enableAudio').disabled=!active||connecting||current?.mode!=='ASSIST';
   reviewButtons();
@@ -279,21 +281,44 @@ async function signIn(loadToken){
   finally{signingIn=false;buttons();}
 }
 async function leave(){
+  ++connectionGeneration;
   clearOverlay();overlaySequence=0;
   const previous=room;room=null;current=null;clearInterval(refreshTimer);refreshTimer=null;
   if(frameHandle!=null&&$('video').cancelVideoFrameCallback)$('video').cancelVideoFrameCallback(frameHandle);frameHandle=null;
   if(previous){previous.removeAllListeners();await previous.disconnect();}
   $('video').srcObject=null;$('audio').replaceChildren();buttons();
 }
+async function observerCredentials(session,generation){
+  const deadline=performance.now()+10000,viewerId=crypto.randomUUID();
+  for(;;){
+    if(generation!==connectionGeneration)throw Error('Đã ngừng kết nối camera.');
+    const remaining=Math.ceil(deadline-performance.now());
+    if(remaining<=0)throw Error('Robot chưa kết nối camera; thử lại sau.');
+    try{
+      const join=await api('/api/v1/media-sessions/'+session.sessionId+'/observer-token',
+        {viewerId},false,Math.min(8000,remaining));
+      if(generation!==connectionGeneration)throw Error('Đã ngừng kết nối camera.');
+      return join;
+    }catch(error){
+      if(error.message!=='MEDIA_CAMERA_CONNECTING'||performance.now()>=deadline)throw error;
+      message('Đang chờ robot kết nối camera…');
+      await new Promise(resolve=>setTimeout(resolve,400));
+    }
+  }
+}
 async function connect(openSession){
   if(!sdk)throw Error('Chưa tải được WebRTC SDK.');
   if(room||connecting)return;
+  const generation=++connectionGeneration;
   connecting=true;buttons();
   try{
     clearReview();
     const requested=await openSession();
-    const session=await api('/api/v1/media-sessions/'+requested.sessionId+'/accept',{});
-    const join=await api('/api/v1/media-sessions/'+session.sessionId+'/join-token',{});
+    const session=requested.mode==='MONITOR'&&requested.staffAccountId?requested
+      :await api('/api/v1/media-sessions/'+requested.sessionId+'/accept',{});
+    const join=session.mode==='MONITOR'?await observerCredentials(session,generation)
+      :await api('/api/v1/media-sessions/'+session.sessionId+'/join-token',{});
+    if(generation!==connectionGeneration)throw Error('Đã ngừng kết nối camera.');
     current=session;lastFrame=0;const active=new sdk.Room({adaptiveStream:true,dynacast:true});room=active;
     overlaySequence=0;clearOverlay();
     active.on(sdk.RoomEvent.DataReceived,(payload,participant,kind,topic)=>{
@@ -480,8 +505,11 @@ setInterval(()=>{if(!document.hidden)refreshPanel();},7000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshPanel();});
 $('enableAudio').onclick=()=>room?.startAudio().catch(e=>message(e.message,true));
 $('mic').onclick=async()=>{try{if(room)await room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled,{echoCancellation:true,noiseSuppression:true});}catch(e){message(e.message,true);}};
-$('end').onclick=async()=>{try{if(current)await api('/api/v1/media-sessions/'+current.sessionId+'/end',{reason:'STAFF_ENDED'});await leave();message('Đã kết thúc phiên.');}catch(e){message(e.message,true);}};
-window.addEventListener('pagehide',()=>{if(room)room.disconnect();});
+$('end').onclick=async()=>{try{
+  if(current?.mode!=='MONITOR'&&current)await api('/api/v1/media-sessions/'+current.sessionId+'/end',{reason:'STAFF_ENDED'});
+  await leave();message('Đã rời phiên.');
+}catch(e){message(e.message,true);}};
+window.addEventListener('pagehide',()=>{++connectionGeneration;if(room)room.disconnect();});
 const requestedIncident=new URLSearchParams(location.search).get('incidentId');
 if(requestedIncident)$('incident').value=requestedIncident;
 authView('');

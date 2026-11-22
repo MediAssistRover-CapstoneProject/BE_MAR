@@ -37,7 +37,8 @@ public class LiveKitGateway {
                 || properties.getTokenTtlSec()<30 || properties.getTokenTtlSec()>120
                 || properties.getSessionMaxSec()<60 || properties.getSessionMaxSec()>7200
                 || properties.getRingTimeoutSec()<15 || properties.getRingTimeoutSec()>180
-                || properties.getDeviceTimeoutSec()<20 || properties.getDeviceTimeoutSec()>120)
+                || properties.getDeviceTimeoutSec()<20 || properties.getDeviceTimeoutSec()>120
+                || properties.getMonitorMaxViewers()<1 || properties.getMonitorMaxViewers()>8)
             throw new BusinessRuleException("MEDIA_CONFIGURATION_INVALID");
     }
     private boolean privateHost(String host) {
@@ -67,7 +68,11 @@ public class LiveKitGateway {
         return sign(identity,grant,limit.isBefore(session.getExpiresAt())?limit:session.getExpiresAt());
     }
     public void createRoom(MediaSession session) {
-        rpc("CreateRoom",Map.of("name",session.room(),"empty_timeout",60,"departure_timeout",15,"max_participants",2),Map.of("roomCreate",true));
+        rpc("CreateRoom",roomOptions(session),Map.of("roomCreate",true));
+    }
+    Map<String,Object> roomOptions(MediaSession session) {
+        return Map.of("name",session.room(),"empty_timeout",60,"departure_timeout",15,
+                "max_participants",session.getMode()==MediaSession.Mode.MONITOR?1+properties.getMonitorMaxViewers():2);
     }
     public void deleteRoom(MediaSession session) {
         rpc("DeleteRoom",Map.of("room",session.room()),Map.of("roomCreate",true));

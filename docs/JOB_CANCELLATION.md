@@ -4,6 +4,69 @@
 `{"reason":"Stop requested"}` returns the job with `status: CANCELLED` immediately.
 The existing job access rules still apply. A repeated request is idempotent.
 
+## API for each stop state
+
+After cancelling, `GET /api/v1/jobs/{jobId}` returns `job.stopStatus` and
+`steps`; the cancel POST returns JobResponse directly.
+
+- `NOT_REQUIRED`: cancellation is finished; no Pi recovery call is needed.
+- `CONFIRMED`: settlement is finished, unless the selected step still has
+  `RECOVERY_REQUIRED` and needs the operation recovery below.
+- `PENDING`: keep/reconnect the owning worker, so BE can deliver CANCEL_STEP
+  and receive the physical stop receipt. A repeated cancel is safe. Do not
+  remove its journal or force status changes in SQL.
+- `RECOVERY_REQUIRED`: read `GET /api/v1/jobs/{jobId}/operations/recovery`.
+  Select the EXECUTE_STEP command in `commands`, not CANCEL_STEP. Use its
+  commandId/operationKey/jobStepId and the current transportSessionId:
+
+```http
+POST /api/v1/jobs/{jobId}/operations/{jobStepId}/reconcile
+Idempotency-Key: <new UUID, reused only for an identical retry>
+Content-Type: application/json
+Authorization: Bearer <Staff/Admin access token>
+```
+
+```json
+{
+  "commandId": "<EXECUTE_STEP commandId>",
+  "operationKey": "<exact operationKey>",
+  "transportSessionId": "<current transportSessionId>",
+  "evidence": "PI_STOP_CONFIRMED",
+  "confirmedStopped": true,
+  "outcome": "CONFIRM_CANCELLED",
+  "note": "Pi confirmed the operation stopped; settle cancellation."
+}
+```
+
+PI_STOP_CONFIRMED requires committed Pi stop evidence, current HELLO, fresh
+IDLE heartbeat, no open mapping/active step and terminal journal entries.
+Recovery returns `requiresNewHello:true`; the worker must reconnect.
+
+If a person inspected the stop but Pi lacks automatic stop evidence, stop
+the stack and record that inspection inside MentorPi first:
+
+```bash
+cd /home/ubuntu/mediassist-mqtt-2026-10-08
+PYTHONPATH=pi pi/.venv/bin/python -m mediassist.worker_cli reconcile \
+  --config pi/config/mqtt.worker.json --job-step-id JOB_STEP_ID \
+  --reason "Robot wheels and servo inspected and stopped"
+```
+
+Reconnect the worker to send OPERATOR_RECONCILED and terminal HELLO; then use
+the same API/body with `evidence: STAFF_INSPECTED_STOP`. A browser flag alone
+does not replace that receipt. Open SLAM requires mapping recovery separately.
+
+ADMIN may close the narrower expired MOVE rejected before acceptance with
+LOCALIZATION_NOT_READY using
+`POST /api/v1/jobs/{jobId}/operations/{jobStepId}/close-rejected`, an
+Idempotency-Key and `{ "commandId": "...", "operationKey": "...", "note": "..." }`.
+BE verifies the stored rejection ACK; this is not an offline stop bypass.
+
+No ordinary cancel-all API exists. Cancel explicit job IDs, and pause schedules
+first if they must not create more jobs. Cancelling foreground work can resume
+suspended patrol; cancel that patrol too when stopping everything. Cancelling
+a MOVE job does not close its saved-map navigation session.
+
 Physical completion is tracked separately:
 
 | stopStatus | Meaning |

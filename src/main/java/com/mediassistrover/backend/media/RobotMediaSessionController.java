@@ -16,6 +16,7 @@ public class RobotMediaSessionController {
     private final MediaSessionService media;
     public record Create(@NotNull UUID robotId,UUID incidentId,@NotNull MediaSession.Mode mode) { }
     public record End(@NotBlank @Pattern(regexp="[A-Z0-9_]{1,96}") String reason) { }
+    public record ViewerJoin(@NotNull UUID viewerId) { }
     public record DeviceState(@NotBlank @Pattern(regexp="CONNECTED|RECONNECTING|FAILED") String state,
                               @Pattern(regexp="[A-Z0-9_]{1,96}") String reason) { }
     @GetMapping("/api/v1/media/configuration") @PreAuthorize("hasAnyRole('ADMIN','STAFF')")
@@ -30,6 +31,9 @@ public class RobotMediaSessionController {
     public MediaSessionService.View accept(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor){return media.accept(id,actor);}
     @PostMapping("/api/v1/media-sessions/{id}/join-token") @PreAuthorize("hasAnyRole('ADMIN','STAFF')")
     public MediaSessionService.Credentials join(@PathVariable UUID id,@AuthenticationPrincipal AccountPrincipal actor){return media.staffToken(id,actor);}
+    @PostMapping("/api/v1/media-sessions/{id}/observer-token") @PreAuthorize("hasAnyRole('ADMIN','STAFF')")
+    public MediaSessionService.Credentials observer(@PathVariable UUID id,@Valid @RequestBody ViewerJoin body,
+            @AuthenticationPrincipal AccountPrincipal actor){return media.observerToken(id,body.viewerId(),actor);}
     @PostMapping("/api/v1/media-sessions/{id}/end") @PreAuthorize("hasAnyRole('ADMIN','STAFF')")
     public MediaSessionService.View end(@PathVariable UUID id,@Valid @RequestBody End body,@AuthenticationPrincipal AccountPrincipal actor){return media.end(id,body.reason(),actor);}
     @GetMapping(value="/api/v1/pi/media-session/events",produces="text/event-stream") @PreAuthorize("hasRole('DEVICE')")

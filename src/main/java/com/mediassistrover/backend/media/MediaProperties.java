@@ -18,4 +18,5 @@ public class MediaProperties {
     private int sessionMaxSec = 1800;
     private int ringTimeoutSec = 60;
     private int deviceTimeoutSec = 35;
+    private int monitorMaxViewers = 4;
 }
