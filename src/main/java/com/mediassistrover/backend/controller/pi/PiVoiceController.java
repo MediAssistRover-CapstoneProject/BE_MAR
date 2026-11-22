@@ -37,6 +37,15 @@ public class PiVoiceController {
     private final VoiceNavigationService navigation;
     private final com.mediassistrover.backend.service.VoiceAdmissionService admission;
     private final com.mediassistrover.backend.service.VoiceInteractionLeaseService leases;
+    private final com.mediassistrover.backend.service.StaffVoiceQueryService staffQuestions;
+
+    @PostMapping("/staff-questions")
+    @Operation(summary="Answer a doctor-on-duty question from the current DB and this robot's map")
+    public com.mediassistrover.backend.service.StaffVoiceQueryService.Answer staffQuestion(
+            @Valid @RequestBody com.mediassistrover.backend.service.StaffVoiceQueryService.Query body,
+            @AuthenticationPrincipal DevicePrincipal device) {
+        return staffQuestions.answerForRobot(body.question(), device.robotId());
+    }
 
     @GetMapping("/availability")
     public com.mediassistrover.backend.service.VoiceAdmissionService.Availability availability(
