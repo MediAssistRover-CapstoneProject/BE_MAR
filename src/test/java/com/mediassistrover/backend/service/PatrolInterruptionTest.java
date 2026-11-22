@@ -20,11 +20,12 @@ class PatrolInterruptionTest {
     final VoiceInteractionRepository voice=mock(VoiceInteractionRepository.class);
     final MediaSessionRepository media=mock(MediaSessionRepository.class);
     final EmergencyIncidentRepository incidents=mock(EmergencyIncidentRepository.class);
+    final AlertRepository alerts=mock(AlertRepository.class);
     final JobSuspensionService suspensions=mock(JobSuspensionService.class);
     final PlatformTransactionManager transactions=mock(PlatformTransactionManager.class);
     final ApplicationEventPublisher publisher=mock(ApplicationEventPublisher.class);
-    final PatrolInterruptionReconciler reconciler=new PatrolInterruptionReconciler(jobs,holds,voice,media,incidents,suspensions,transactions);
-    final PatrolInterruptionEvents events=new PatrolInterruptionEvents(publisher,suspensions,transactions,voice,media,incidents);
+    final PatrolInterruptionReconciler reconciler=new PatrolInterruptionReconciler(jobs,holds,voice,media,incidents,alerts,suspensions,transactions);
+    final PatrolInterruptionEvents events=new PatrolInterruptionEvents(publisher,suspensions,transactions,voice,media,incidents,alerts);
     final Robot robot=Robot.builder().robotId(UUID.randomUUID()).build();
     final Job job=Job.builder().jobId(UUID.randomUUID()).robot(robot).status(JobStatus.SUSPENDED).build();
 
@@ -34,6 +35,38 @@ class PatrolInterruptionTest {
         when(suspensions.isPatrol(job)).thenReturn(true);
     }
     JobSuspensionHold hold(String source,UUID id){return JobSuspensionHold.builder().job(job).source(source).sourceId(id).createdAt(Instant.now()).build();}
+
+    @Test void acknowledgingRestrictedReviewKeepsPatrolHeldUntilResolution(){
+        UUID id=UUID.randomUUID();var alert=Alert.builder().alertId(id).notificationType("PATROL_RESTRICTED_INTRUSION")
+                .status(AlertStatus.ACKNOWLEDGED).detectionEvent(DetectionEvent.builder().robot(robot).build()).build();
+        when(alerts.findById(id)).thenReturn(Optional.of(alert));
+        events.apply(new PatrolInterruptionEvents.Changed(robot.getRobotId(),"RESTRICTED_ALERT",id,true));
+        verify(suspensions).holdRobot(robot.getRobotId(),"RESTRICTED_ALERT",id);
+        alert.setStatus(AlertStatus.RESOLVED);
+        events.apply(new PatrolInterruptionEvents.Changed(robot.getRobotId(),"RESTRICTED_ALERT",id,false));
+        verify(suspensions).releaseRobot(robot.getRobotId(),"RESTRICTED_ALERT",id);
+    }
+    @Test void restrictedEventRetryReturnsReceiptAfterPatrolHasAlreadySuspended(){
+        var service=mock(com.mediassistrover.backend.ai.RestrictedZoneEventService.class,CALLS_REAL_METHODS);
+        var scope=mock(com.mediassistrover.backend.validation.DeviceResourceScopePolicy.class);
+        var robots=mock(RobotRepository.class);var receipts=mock(com.mediassistrover.backend.ai.MonitoringReceiptService.class);
+        var wire=new com.mediassistrover.backend.mqtt.MqttWire();
+        Map.of("scope",scope,"jobs",jobs,"robots",robots,"receipts",receipts,"wire",wire)
+                .forEach((k,v)->org.springframework.test.util.ReflectionTestUtils.setField(service,k,v));
+        var device=new com.mediassistrover.backend.security.DevicePrincipal(robot.getRobotId(),"MAR",1,"id",Instant.now().plusSeconds(60));
+        when(scope.requireCurrentDevice(device)).thenReturn(robot);
+        when(robots.findByIdForUpdate(robot.getRobotId())).thenReturn(Optional.of(robot));
+        UUID event=UUID.randomUUID(),alert=UUID.randomUUID();
+        when(receipts.duplicateRestrictedZone(eq(event),eq(robot),any())).thenReturn(Optional.of(wire.object()
+                .put("detection_event_id",event.toString()).put("alert_id",alert.toString())));
+        var point=new com.mediassistrover.backend.ai.PatrolFallEventService.PatientLocation(
+                java.math.BigDecimal.ONE,java.math.BigDecimal.ONE,java.math.BigDecimal.ONE,Instant.now(),null,null,null,null,null);
+        var request=new com.mediassistrover.backend.ai.RestrictedZoneEventService.Request(event,job.getJobId(),UUID.randomUUID(),
+                Instant.now(),"shared",java.math.BigDecimal.ONE,UUID.randomUUID(),1L,point);
+        var result=service.record(request,device);
+        assertTrue(result.duplicate());assertEquals(alert,result.alertId());
+        verify(receipts,never()).recordRestrictedZone(any(),any(),any(),any());
+    }
 
     @Test void rebuildsAllActiveSourcesAfterMissedCallbacksAndKeepsIndependentHolds(){
         UUID voiceId=UUID.randomUUID(),incidentId=UUID.randomUUID(),mediaId=UUID.randomUUID();

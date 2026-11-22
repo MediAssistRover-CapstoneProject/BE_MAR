@@ -19,8 +19,8 @@ class PatrolHandoffIntegrationTest {
         var f=new JobSuspensionServiceTest();
         var events=mock(JobEventRepository.class);var updates=mock(ApplicationEventPublisher.class);
         var suspension=new JobSuspensionService(f.jobs,f.robots,f.holds,events,f.commands,f.sessions,f.registry,f.navigation,
-            f.localization,f.wakeups,updates,f.json,Clock.fixed(f.now,ZoneOffset.UTC),f.voices,f.incidents,f.media);
-        var arbiter=new RobotTaskArbitrationService(f.jobs,f.holds,suspension,f.voices,f.incidents,f.media,f.wakeups,f.robots,f.localization);
+            f.localization,f.wakeups,updates,f.json,Clock.fixed(f.now,ZoneOffset.UTC),f.voices,f.incidents,f.media,mock(com.mediassistrover.backend.repository.AlertRepository.class));
+        var arbiter=new RobotTaskArbitrationService(f.jobs,f.holds,suspension,f.voices,f.incidents,f.media,f.wakeups,f.robots,f.localization,mock(com.mediassistrover.backend.repository.AlertRepository.class));
         var foreground=Job.builder().jobId(UUID.randomUUID()).workflow(Workflow.builder().serviceType("NAVIGATION").build())
             .robot(f.robot).map(f.map).status(JobStatus.QUEUED).priority(50).queuedAt(f.now).build();
         f.job.setPriority(1);f.job.setQueuedAt(f.now.minusSeconds(10));

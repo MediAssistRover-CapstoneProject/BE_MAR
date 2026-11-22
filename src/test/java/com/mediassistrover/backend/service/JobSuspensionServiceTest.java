@@ -30,6 +30,7 @@ class JobSuspensionServiceTest {
     final VoiceInteractionRepository voices=mock(VoiceInteractionRepository.class);
     final EmergencyIncidentRepository incidents=mock(EmergencyIncidentRepository.class);
     final MediaSessionRepository media=mock(MediaSessionRepository.class);
+    final AlertRepository alerts=mock(AlertRepository.class);
     final OrchestrationWorkService wakeups=mock(OrchestrationWorkService.class);
     final JobSuspensionService service=mock(JobSuspensionService.class,CALLS_REAL_METHODS);
     final Map<String,JobSuspensionHold> store=new HashMap<>();
@@ -46,7 +47,7 @@ class JobSuspensionServiceTest {
         job.setSelectedJobStep(move);
         Map.ofEntries(Map.entry("jobs",jobs),Map.entry("robots",robots),Map.entry("holds",holds),Map.entry("commands",commands),
             Map.entry("sessions",sessions),Map.entry("registry",registry),Map.entry("navigation",navigation),Map.entry("navigationSessions",localization),
-            Map.entry("voices",voices),Map.entry("incidents",incidents),Map.entry("media",media),Map.entry("events",mock(JobEventRepository.class)),
+            Map.entry("voices",voices),Map.entry("incidents",incidents),Map.entry("media",media),Map.entry("alerts",alerts),Map.entry("events",mock(JobEventRepository.class)),
             Map.entry("updates",mock(ApplicationEventPublisher.class)),Map.entry("wakeups",wakeups),Map.entry("json",json),
             Map.entry("clock",Clock.fixed(now,ZoneOffset.UTC))).forEach((key,value)->ReflectionTestUtils.setField(service,key,value));
         when(holds.findByJobJobIdAndSourceAndSourceId(any(),anyString(),any())).thenAnswer(i->Optional.ofNullable(store.get(i.getArgument(1)+":"+i.getArgument(2))));

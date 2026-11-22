@@ -71,4 +71,23 @@ class StaffDeliveryRoutingTest {
  @Test void unavailableFaceDoesNotCreateAnImportantQrFallback(){doThrow(new BusinessRuleException("FACE_DISABLED")).when(faceAuth).requireDelivery(DeliveryAuthenticationMethod.FACE_VERIFICATION,sender.getAccountId(),receiver.getAccountId());assertThrows(BusinessRuleException.class,()->service.create(importantInput(null),"unavailable",actor,null));verify(requests,never()).saveAndFlush(any());}
  @Test void persistedSensitiveItemCannotUseAnOldQrPolicy(){var d=DeliveryRequest.builder().serviceRequestId(UUID.randomUUID()).authenticationMethod(DeliveryAuthenticationMethod.QR_CODE).build();when(items.findByDeliveryRequestServiceRequestIdOrderByItemCodeAsc(d.getServiceRequestId())).thenReturn(List.of(DeliveryItem.builder().sensitive(true).build()));var policy=new DeliveryAuthenticationPolicy(items);assertThrows(BusinessRuleException.class,()->policy.require(d));d.setAuthenticationMethod(DeliveryAuthenticationMethod.FACE_VERIFICATION);assertEquals(DeliveryAuthenticationMethod.FACE_VERIFICATION,policy.require(d));assertEquals(DeliveryAuthenticationMethod.QR_CODE,policy.methodFor(d,AuthVerificationPurpose.DELIVERY_SENDER));assertEquals(DeliveryAuthenticationMethod.FACE_VERIFICATION,policy.methodFor(d,AuthVerificationPurpose.DELIVERY_RECEIVER));}
  @Test void importantWorkflowUsesQrAtPickupAndFaceAtDropoff(){var graph=new StaffQrDeliveryWorkflowFactory(json).build(DeliveryAuthenticationMethod.FACE_VERIFICATION).graph();var auth=graph.steps().stream().filter(s->s.stepType()==StepType.AUTHENTICATE).toList();assertEquals(2,auth.size());assertEquals("QR_CODE",auth.get(0).paramsJson().path("method").asText());assertEquals("DELIVERY_SENDER",auth.get(0).paramsJson().path("purpose").asText());assertEquals("FACE_VERIFICATION",auth.get(1).paramsJson().path("method").asText());assertEquals("DELIVERY_RECEIVER",auth.get(1).paramsJson().path("purpose").asText());}
+ @Test void arrivalAudioCannotReplayMoveOrBypassStaffVerification(){
+  for(var method:DeliveryAuthenticationMethod.values()){
+   var definition=new StaffQrDeliveryWorkflowFactory(json).build(method);var graph=definition.graph();
+   assertTrue(definition.workflow().defaultInputsJson().path("pickup_arrival_text").asText().contains("QR"));
+   assertEquals(method==DeliveryAuthenticationMethod.QR_CODE,
+       definition.workflow().defaultInputsJson().path("delivery_arrival_text").asText().contains("QR"));
+   for(String stage:List.of("SENDER","RECEIVER")){
+    var moved=graph.transitions().stream().filter(t->t.fromStepCode().equals("MOVE_"+stage)&&t.outcome()==TransitionOutcome.SUCCESS).findFirst().orElseThrow();
+    assertEquals("ARRIVAL_"+stage,moved.toStepCode());
+    var arrival=graph.steps().stream().filter(s->s.stepCode().equals("ARRIVAL_"+stage)).findFirst().orElseThrow();
+    assertEquals("SPEAK",arrival.paramsJson().path("action").asText());
+    assertEquals("/inputs/"+(stage.equals("SENDER")?"pickup_arrival_text":"delivery_arrival_text"),arrival.inputMappingJson().at("/data/text/$ref").asText());
+    var routes=graph.transitions().stream().filter(t->t.fromStepCode().equals("ARRIVAL_"+stage)).toList();
+    assertEquals(3,routes.size());assertTrue(routes.stream().allMatch(t->("AUTH_"+stage).equals(t.toStepCode())&&t.terminalStatus()==null));
+   }
+   assertEquals("ANNOUNCE_RECEIVER",graph.transitions().stream().filter(t->t.fromStepCode().equals("VERIFY_RECEIVER")&&!t.defaultTransition()).findFirst().orElseThrow().toStepCode());
+   assertTrue(graph.transitions().stream().filter(t->t.fromStepCode().equals("ANNOUNCE_RECEIVER")).allMatch(t->t.toStepCode()==null&&t.terminalStatus()==TerminalStatus.SUCCEEDED));
+  }
+ }
 }

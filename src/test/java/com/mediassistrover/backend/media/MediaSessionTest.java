@@ -96,6 +96,60 @@ class MediaSessionTest {
         verify(sessions, never()).saveAndFlush(any());
     }
 
+    @Test void manualMonitorSharesOnePublicationWithoutReassigningOwner() {
+        var s=session();s.setMode(MediaSession.Mode.MONITOR);s.setDeviceSeenAt(instant);
+        var owner=s.getStaff();
+        var second=actor(Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).build());
+        var browser=UUID.randomUUID();
+        var result=service.observerToken(s.getSessionId(),browser,second);
+        assertEquals("viewer-"+second.accountId()+"-"+browser,result.identity());
+        assertEquals(owner,s.getStaff());
+        assertEquals(s.getSessionId(),result.session().sessionId());
+        verify(gateway).join(s,result.identity(),false);
+        verify(interruptions,never()).hold(any(),any(),any());
+    }
+
+    @Test void monitorBrowsersHaveIndependentIdentitiesAndAssistRemainsExclusive() {
+        var s=session();s.setMode(MediaSession.Mode.MONITOR);s.setDeviceSeenAt(instant);var principal=actor(s.getStaff());
+        var first=service.observerToken(s.getSessionId(),UUID.randomUUID(),principal);
+        var second=service.observerToken(s.getSessionId(),UUID.randomUUID(),principal);
+        assertNotEquals(first.identity(),second.identity());
+        s.setMode(MediaSession.Mode.ASSIST);
+        var error=assertThrows(BusinessRuleException.class,
+                ()->service.observerToken(s.getSessionId(),UUID.randomUUID(),principal));
+        assertEquals("MEDIA_OBSERVERS_REQUIRE_MONITOR",error.getMessage());
+    }
+
+    @Test void monitorObserversKeepDesignatedSosScope() {
+        var s=session();s.setMode(MediaSession.Mode.MONITOR);s.setDeviceSeenAt(instant);
+        var incident=EmergencyIncident.builder().incidentType("AI_SUSPECTED_FALL")
+                .status(EmergencyIncidentStatus.OPEN).sosResponder(s.getStaff())
+                .sosRoutingStatus(EmergencyIncident.SosRoutingStatus.ASSIGNED).build();
+        s.setIncident(incident);
+        var other=actor(Account.builder().accountId(UUID.randomUUID()).role(Role.STAFF).build());
+        assertThrows(AccessDeniedException.class,
+                ()->service.observerToken(s.getSessionId(),UUID.randomUUID(),other));
+        assertNotNull(service.observerToken(s.getSessionId(),UUID.randomUUID(),actor(s.getStaff())));
+    }
+
+    @Test void monitorObserversWaitForFreshActiveRobotBeforeReceivingTokens() {
+        var s=session();s.setMode(MediaSession.Mode.MONITOR);var principal=actor(s.getStaff());
+        for(var state:List.of(MediaSession.State.CONNECTING,MediaSession.State.RECONNECTING)) {
+            s.setState(state);s.setDeviceSeenAt(instant);
+            assertEquals("MEDIA_CAMERA_CONNECTING",assertThrows(BusinessRuleException.class,
+                    ()->service.observerToken(s.getSessionId(),UUID.randomUUID(),principal)).getMessage());
+        }
+        s.setState(MediaSession.State.ACTIVE);
+        for(var seen:Arrays.asList(null,instant.minusSeconds(properties.getDeviceTimeoutSec()+1L))) {
+            s.setDeviceSeenAt(seen);
+            assertEquals("MEDIA_CAMERA_CONNECTING",assertThrows(BusinessRuleException.class,
+                    ()->service.observerToken(s.getSessionId(),UUID.randomUUID(),principal)).getMessage());
+        }
+        verify(gateway,never()).join(any(),any(),anyBoolean());
+        s.setDeviceSeenAt(instant);
+        assertNotNull(service.observerToken(s.getSessionId(),UUID.randomUUID(),principal));
+    }
+
     @Test void anotherDeviceCannotGetRoomCredentials() {
         var s=session();var robot=Robot.builder().robotId(UUID.randomUUID()).build();var principal=device(robot);
         assertThrows(AccessDeniedException.class,()->service.deviceToken(s.getSessionId(),principal));
@@ -175,7 +229,7 @@ class MediaSessionTest {
         var accounts = mock(AccountRepository.class);
         var json = new ObjectMapper();
         var service = new AlertServiceImpl(alerts, recipients, accounts, mock(AuditService.class), json, clock,
-                mock(RuntimeStepCompletionService.class), jobs, mock(WorkflowEventService.class), staff);
+                mock(RuntimeStepCompletionService.class), jobs, mock(WorkflowEventService.class), staff,mock(com.mediassistrover.backend.service.PatrolInterruptionEvents.class));
         ReflectionTestUtils.setField(service, "em", mock(EntityManager.class));
         when(alerts.saveAndFlush(any())).thenAnswer(call -> {
             var alert = call.<Alert>getArgument(0);
@@ -404,6 +458,16 @@ class MediaSessionTest {
         var robot=grant(g.join(s,"robot",true));assertEquals(List.of("camera"),robot.get("canPublishSources"));
         assertEquals(true,robot.get("canPublishData"));
         var staff=grant(g.join(s,"staff",false));assertEquals(false,staff.get("canPublish"));assertEquals(false,staff.get("canPublishData"));
+    }
+    @Test void monitoringCapacityCountsRobotAndKeepsAssistAtTwoParticipants() {
+        var g=signer();var s=session();s.setMode(MediaSession.Mode.MONITOR);
+        assertEquals(5,g.roomOptions(s).get("max_participants"));
+        properties.setMonitorMaxViewers(3);
+        assertEquals(4,g.roomOptions(s).get("max_participants"));
+        s.setMode(MediaSession.Mode.ASSIST);
+        assertEquals(2,g.roomOptions(s).get("max_participants"));
+        properties.setMonitorMaxViewers(0);
+        assertThrows(BusinessRuleException.class,g::ready);
     }
     @Test void assistOnlyGrantsStaffMicrophoneAndScopedRoom() {
         var g=signer();var s=session();var staff=grant(g.join(s,"staff",false));

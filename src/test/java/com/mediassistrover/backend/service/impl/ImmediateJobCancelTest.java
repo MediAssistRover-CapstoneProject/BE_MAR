@@ -272,10 +272,8 @@ class ImmediateJobCancelTest {
     @Test void terminalMoveSettlementRetiresCancelledAndExplicitlyReconciledFailedOperations() {
         for(var outcome:List.of(JobStatus.CANCELLED,JobStatus.FAILED)) {
             var f=settlement(outcome,outcome==JobStatus.FAILED);
-            if(outcome==JobStatus.FAILED) {
-                f.step.setStatus(JobStepStatus.RECOVERY_REQUIRED);
-                f.command.setState("RECOVERY_REQUIRED");
-            }
+            f.step.setStatus(JobStepStatus.RECOVERY_REQUIRED);
+            f.command.setState("RECOVERY_REQUIRED");
             var receipt=f.service.settleCancelledMove(f.job.getJobId(),f.step.getJobStepId(),f.request,f.device);
             assertEquals(outcome.name(),receipt.path("status").asText());
             assertTrue(receipt.path("physicalStopConfirmed").asBoolean());
@@ -285,6 +283,24 @@ class ImmediateJobCancelTest {
             assertEquals("STEP_ERROR",f.command.getResultEnvelopeJson().path("messageType").asText());
             if(outcome==JobStatus.FAILED)assertEquals("CONFIRM_FAILED",receipt.path("reconciliationOutcome").asText());
         }
+    }
+
+    @Test void cancelledRecoverySettlementRequiresSelectedStepAndCommittedStop() {
+        var f=settlement(JobStatus.CANCELLED,false);
+        f.step.setStatus(JobStepStatus.RECOVERY_REQUIRED);
+        f.command.setState("RECOVERY_REQUIRED");
+        f.job.setSelectedJobStep(null);
+        assertThrows(com.mediassistrover.backend.exception.BusinessRuleException.class,()->f.service
+                .settleCancelledMove(f.job.getJobId(),f.step.getJobStepId(),f.request,f.device));
+        f.job.setSelectedJobStep(f.step);f.command.setPhysicalStopConfirmed(false);
+        assertThrows(com.mediassistrover.backend.exception.BusinessRuleException.class,()->f.service
+                .settleCancelledMove(f.job.getJobId(),f.step.getJobStepId(),f.request,f.device));
+        f.command.setPhysicalStopConfirmed(true);f.stopReceipt.setAccepted(false);
+        assertThrows(com.mediassistrover.backend.exception.BusinessRuleException.class,()->f.service
+                .settleCancelledMove(f.job.getJobId(),f.step.getJobStepId(),f.request,f.device));
+        assertEquals(JobStepStatus.RECOVERY_REQUIRED,f.step.getStatus());
+        assertEquals("RECOVERY_REQUIRED",f.command.getState());
+        verify(events,never()).save(any());
     }
 
     @Test void failedSettlementRejectsUnreconciledOrUnconfirmedPhysicalStop() {

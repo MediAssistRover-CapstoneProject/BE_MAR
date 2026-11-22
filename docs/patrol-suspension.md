@@ -258,3 +258,15 @@ Các thay đổi này đang ở source workspace; chưa deploy BE hoặc cài ba
 production Pi trong lượt audit này. Ca trực, polygon và lịch chưa được tạo
 vì cần chọn hình học vùng cấm cùng lịch trực thực tế. Không tự kích hoạt
 lịch hoặc phát lệnh di chuyển để kiểm tra phần cứng.
+
+
+### Cập nhật cài Pi lúc 12:11 ngày 22/11/2026 (UTC+7)
+
+Đã cài và đọc kiểm tra SHA-256 ba file production `patrol_fall.py`,
+`restricted_monitor.py`, `media_bridge.py` trên Pi `192.168.1.148`.
+Import module và validator cấu hình đạt; cấu hình worker giữ nguyên.
+Stack MAR vẫn dừng, không cài file test và chưa chạy thử bánh.
+Sao lưu: `/home/ubuntu/mediassist-mqtt-2026-10-08/pi/state/patch-backups/patrol-shared-multiview-20261122T051106Z`.
+BE/UI observer-token chưa deploy: camera vẫn dùng hợp đồng staff hiện có
+cho đến khi cập nhật BE. Các dữ liệu map/zone/ca trực/lịch còn thiếu ở snapshot
+bên trên chưa được tự tạo hoặc kích hoạt.

@@ -20,7 +20,7 @@ class RobotTaskArbitrationTest {
     final OrchestrationWorkService wakeups=mock(OrchestrationWorkService.class);
     final RobotRepository robots=mock(RobotRepository.class);
     final NavigationSessionService navigation=mock(NavigationSessionService.class);
-    final RobotTaskArbitrationService arbitration=new RobotTaskArbitrationService(jobs,holds,suspension,voices,incidents,media,wakeups,robots,navigation);
+    final RobotTaskArbitrationService arbitration=new RobotTaskArbitrationService(jobs,holds,suspension,voices,incidents,media,wakeups,robots,navigation,mock(com.mediassistrover.backend.repository.AlertRepository.class));
     final Robot robot=Robot.builder().robotId(UUID.randomUUID()).status(RobotStatus.IDLE).build();
 
     RobotTaskArbitrationTest(){
