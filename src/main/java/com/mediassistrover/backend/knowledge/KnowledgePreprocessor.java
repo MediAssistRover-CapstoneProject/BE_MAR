@@ -12,7 +12,9 @@ import java.util.concurrent.TimeUnit;
 /** Runs untrusted document parsers outside the request/JVM with a hard deadline. */
 @Component
 public class KnowledgePreprocessor {
-    public record Chunk(String text, String sha256) { }
+    public record Chunk(String text, String sha256, String topicKey) {
+        public Chunk(String text, String sha256) { this(text, sha256, null); }
+    }
     public static class Failure extends RuntimeException {
         public Failure(String code) { super(code); }
     }
@@ -51,7 +53,7 @@ public class KnowledgePreprocessor {
                 throw new Failure(code.matches("KNOWLEDGE_[A-Z_]{1,80}") ? code : "KNOWLEDGE_EXTRACTION_FAILED");
             }
             var nodes = result.path("chunks");
-            if (result.path("version").asInt() != 2 || !nodes.isArray() || nodes.isEmpty() || nodes.size() > 1000)
+            if (result.path("version").asInt() != 3 || !nodes.isArray() || nodes.isEmpty() || nodes.size() > 1000)
                 throw new Failure("KNOWLEDGE_PROCESSOR_INVALID");
             List<Chunk> chunks = new ArrayList<>();
             int chars = 0;
@@ -61,7 +63,9 @@ public class KnowledgePreprocessor {
                 chars += text.length();
                 if (text.isBlank() || text.length() > 20000 || chars > 3_000_000 || !hash.equals(node.path("sha256").asText()))
                     throw new Failure("KNOWLEDGE_PROCESSOR_INVALID");
-                chunks.add(new Chunk(text, hash));
+                String topicKey = node.path("topicKey").asText();
+                if (!topicKey.matches("[0-9a-f]{64}")) throw new Failure("KNOWLEDGE_PROCESSOR_INVALID");
+                chunks.add(new Chunk(text, hash, topicKey));
             }
             return chunks;
         } catch (Failure failure) { throw failure; }

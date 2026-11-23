@@ -33,7 +33,8 @@ class KnowledgeChunkIntegrationTest {
         jdbc=new JdbcTemplate(ds); transactions=new DataSourceTransactionManager(ds);
         jdbc.execute("CREATE TABLE Account(account_id BINARY(16) PRIMARY KEY)");
         new ResourceDatabasePopulator(new FileSystemResource("src/main/resources/db/migration/V60__knowledge_documents.sql"),
-            new FileSystemResource("src/main/resources/db/migration/V65__knowledge_document_chunks.sql")).execute(ds);
+            new FileSystemResource("src/main/resources/db/migration/V65__knowledge_document_chunks.sql"),
+            new FileSystemResource("src/main/resources/db/migration/V66__knowledge_topic_publication.sql")).execute(ds);
         jdbc.update("INSERT INTO Account VALUES(UUID_TO_BIN(?))",actor.toString());
     }
     @BeforeEach void setup() {
@@ -50,7 +51,7 @@ class KnowledgeChunkIntegrationTest {
             if (!attached.contains(a.getArgument(1))) throw new OpenAiKnowledgeClient.Failure("OPENAI_HTTP_404",404,false);
             return "completed";
         });
-        doAnswer(a->{attached.add(a.getArgument(1));return null;}).when(client).attachChunk(anyString(),anyString(),anyString());
+        doAnswer(a->{attached.add(a.getArgument(1));return null;}).when(client).attachChunk(anyString(),anyString(),anyString(),anyInt());
     }
     MockMultipartFile file(String text) { return new MockMultipartFile("file","guide.txt","text/plain",text.getBytes(StandardCharsets.UTF_8)); }
     UUID upload() { return service.upload(file(UUID.randomUUID().toString()),actor).id(); }
@@ -58,7 +59,7 @@ class KnowledgeChunkIntegrationTest {
         jdbc.update("UPDATE KnowledgeDocument SET next_attempt_at=UTC_TIMESTAMP(6) WHERE document_id=?",id.toString());
         worker.process(id.toString());
     }
-    List<String> files(UUID id) { return jdbc.queryForList("SELECT openai_file_id FROM KnowledgeDocumentChunk WHERE document_id=? AND openai_file_id IS NOT NULL",String.class,id.toString()); }
+    List<String> files(UUID id) { return jdbc.queryForList("SELECT openai_file_id FROM KnowledgeDocumentChunk WHERE document_id=? AND openai_file_id IS NOT NULL ORDER BY ordinal_no",String.class,id.toString()); }
     void ready(UUID id) { for(int n=0;n<12 && !service.get(id).status().equals("COMPLETED");n++) step(id); assertEquals("COMPLETED",service.get(id).status()); }
 
     @Test void publishOnlyAfterAllChunksAndRetainOriginal() {
@@ -88,7 +89,7 @@ class KnowledgeChunkIntegrationTest {
         assertTrue(service.resolve(store,List.of("file-late")).isEmpty());
         worker.cleanup();
         verify(client).detach(store,"file-late");
-        verify(client,never()).attachChunk(eq(store),eq("file-late"),anyString());
+        verify(client,never()).attachChunk(eq(store),eq("file-late"),anyString(),anyInt());
     }
 
     @Test void replacementPublishesAtomicallyAndOldFileIsDetached() {
@@ -102,6 +103,55 @@ class KnowledgeChunkIntegrationTest {
         assertEquals(2,service.resolve(store,files(replacement)).size());
         worker.cleanup();
         for(String file:oldFiles) verify(client).detach(store,file);
+    }
+
+    @Test void newerTopicWinsWithoutDeletingUnrelatedOldTopic() {
+        String hours="1".repeat(64), wheelchair="2".repeat(64);
+        when(processor.extract(anyString(),any())).thenAnswer(a->{
+            String body=new String(a.getArgument(1),StandardCharsets.UTF_8);
+            if (body.equals("first")) return List.of(
+                new KnowledgePreprocessor.Chunk("Giờ khám: 07:00", "a".repeat(64),hours),
+                new KnowledgePreprocessor.Chunk("Xe lăn: lễ tân", "b".repeat(64),wheelchair));
+            return List.of(new KnowledgePreprocessor.Chunk("Giờ khám: 08:00", "c".repeat(64),hours));
+        });
+        UUID old=service.upload(file("first"),actor).id();ready(old);
+        List<String> before=files(old);
+        UUID newer=service.upload(file("second"),actor).id();ready(newer);
+        assertEquals(1,service.resolve(store,before).size());
+        assertEquals(before.get(1),service.resolve(store,before).getFirst().fileId());
+        assertEquals(1,service.resolve(store,files(newer)).size());
+        assertFalse(service.chunks(old).getFirst().active());
+        assertTrue(service.chunks(old).get(1).active());
+        worker.cleanup();
+        verify(client).detach(store,before.getFirst());
+        verify(client,never()).detach(store,before.get(1));
+    }
+
+    @Test void olderUploadFinishingLateCannotReinstateItsTopic() {
+        String hours="3".repeat(64);
+        when(processor.extract(anyString(),any())).thenAnswer(a->List.of(
+            new KnowledgePreprocessor.Chunk(new String(a.getArgument(1),StandardCharsets.UTF_8),
+                "d".repeat(64),hours)));
+        UUID old=service.upload(file("old time"),actor).id();
+        UUID newer=service.upload(file("new time"),actor).id();
+        ready(newer);
+        ready(old);
+        assertTrue(service.resolve(store,files(old)).isEmpty());
+        assertEquals(1,service.resolve(store,files(newer)).size());
+    }
+
+    @Test void uploadingIdenticalBytesAgainCreatesNewDocumentAndRestoresItsTopic() {
+        String hours="4".repeat(64);
+        when(processor.extract(anyString(),any())).thenAnswer(a->List.of(
+            new KnowledgePreprocessor.Chunk(new String(a.getArgument(1),StandardCharsets.UTF_8),
+                "e".repeat(64),hours)));
+        UUID first=service.upload(file("07:00"),actor).id();ready(first);
+        UUID second=service.upload(file("08:00"),actor).id();ready(second);
+        UUID third=service.upload(file("07:00"),actor).id();ready(third);
+        assertNotEquals(first,third);
+        assertTrue(service.resolve(store,files(first)).isEmpty());
+        assertTrue(service.resolve(store,files(second)).isEmpty());
+        assertEquals(1,service.resolve(store,files(third)).size());
     }
 
     @Test void cancelledExtractionAndFailedExtractionNeverPublish() {

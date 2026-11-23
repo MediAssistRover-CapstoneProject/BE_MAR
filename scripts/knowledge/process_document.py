@@ -161,51 +161,208 @@ def extract_docx(path, folder):
     return blocks
 
 
+def topic_id(kind, text, scope=''):
+    """Conservative identity: same question/field/table row, never vector proximity."""
+    def normalized(value):
+        value = unicodedata.normalize('NFD', value.casefold().replace('đ', 'd'))
+        value = ''.join(c for c in value if unicodedata.category(c) != 'Mn')
+        return re.sub(r'[^a-z0-9]+', ' ', value).strip()
+
+    def catalog_identity(subject):
+        category, separator, item = subject.strip().partition(' - ')
+        if not separator:
+            item = category
+        if item.endswith('?'):
+            subject = normalized(item)
+            if re.search(r'\b(phong nay|o day|tai day|cho nay)\b', subject):
+                subject = normalized(category) + ' ' + subject
+            return 'question:' + subject
+        if normalized(item) == 'chuc nang' and separator:
+            return 'room-purpose:' + normalized(category)
+        return 'field::' + normalized(item)
+
+    question = re.match(r'^Hỏi\s*:\s*(.+?)(?:\n|$)', text, re.I)
+    if question and re.search(r'\nĐáp\s*:', text, re.I):
+        subject = normalized(question.group(1))
+        if re.search(r'\b(phong nay|o day|tai day|cho nay)\b', subject):
+            subject = normalized(scope) + ' ' + subject
+        identity = 'question:' + subject
+    elif kind == 'catalog':
+        match = re.search(r'Mục\s*/\s*câu hỏi\s*:\s*(.*?)\s*Thông tin\s*/\s*trả lời\s*:',
+                          text, re.I | re.S)
+        if match:
+            identity = catalog_identity(match.group(1))
+        else:
+            identity = 'exact:' + hashlib.sha256(text.encode('utf-8')).hexdigest()
+    elif kind == 'table-row':
+        header, row = text.split('\n', 1)
+        cells = row.split('|')
+        first = cells[0].strip()
+        # The demo catalog has an ordinal in column one; its actual subject is
+        # the "Mục / câu hỏi" field in column two.
+        if first.isdecimal() and len(cells) > 1:
+            match = re.search(r'Mục\s*/\s*câu hỏi\s*:\s*(.*?)\s*Thông tin\s*/\s*trả lời\s*:',
+                              cells[1], re.I | re.S)
+            identity = catalog_identity(match.group(1)) if match else 'exact:' + hashlib.sha256(text.encode('utf-8')).hexdigest()
+        else:
+            identity = ('table:' + normalized(header) + ':' + normalized(first)) if first else 'exact:' + hashlib.sha256(text.encode('utf-8')).hexdigest()
+    elif kind == 'field':
+        label = text.split(':', 1)[0]
+        # A room-specific label needs room scope; hospital-wide headings can
+        # change wording between documents without changing the fact identity.
+        room_scope = normalized(scope) if re.search(r'\b(phong|khoa)\b', normalized(scope)) else ''
+        if normalized(label) in {'dap', 'noi dung', 'ghi chu', 'thong tin tra loi', 'muc cau hoi'}:
+            identity = 'exact:' + hashlib.sha256(text.encode('utf-8')).hexdigest()
+        else:
+            identity = 'field:' + room_scope + ':' + normalized(label)
+    else:
+        # Exact repeated prose can be removed; similar prose is never guessed equal.
+        identity = 'exact:' + hashlib.sha256(text.encode('utf-8')).hexdigest()
+    return hashlib.sha256(identity.encode('utf-8')).hexdigest()
+
+
+def atomic_blocks(blocks):
+    """Keep every FAQ answer and table row in one independently replaceable item."""
+    units, question, catalog, plain, scope = [], [], [], [], ''
+
+    def flush_plain():
+        nonlocal plain
+        if plain:
+            text = clean('\n'.join(plain))
+            if text:
+                units.append(('text', text, scope))
+        plain = []
+
+    def flush_question():
+        nonlocal question
+        if question:
+            text = clean('\n'.join(question))
+            if text:
+                units.append(('faq' if re.search(r'\nĐáp\s*:', text, re.I) else 'text', text, scope))
+        question = []
+
+    def flush_catalog():
+        nonlocal catalog
+        if catalog:
+            text = clean('\n'.join(catalog))
+            if text:
+                units.append(('catalog', text, scope))
+        catalog = []
+
+    for kind, raw in blocks:
+        text = clean(raw)
+        if not text:
+            flush_question()
+            flush_catalog()
+            flush_plain()
+            continue
+        if kind == 'heading':
+            flush_question()
+            flush_catalog()
+            flush_plain()
+            scope = text
+            units.append((kind, text, scope))
+            continue
+        if kind == 'table':
+            flush_question()
+            flush_catalog()
+            flush_plain()
+            rows = text.splitlines()
+            if len(rows) > 1:
+                header = rows[0]
+                logical_rows = []
+                for row in rows[1:]:
+                    if re.fullmatch(r'[\s|:\-]+', row):
+                        continue
+                    if '|' not in row and logical_rows:
+                        logical_rows[-1] += ' ' + row
+                    else:
+                        logical_rows.append(row)
+                for row in logical_rows:
+                    units.append(('table-row', header + '\n' + row, scope))
+            else:
+                units.append(('text', text, scope))
+            continue
+        for line in text.splitlines():
+            if re.match(r'^STT\s+Mục\s*/\s*câu hỏi\s+và\s+thông tin\s*/\s*câu trả lời', line, re.I):
+                flush_question()
+                flush_catalog()
+                flush_plain()
+                continue
+            if re.match(r'^(?:MediAssist Rover|MediAssistRover)\s*\|.*\bTrang\s+\d+\s*$', line, re.I):
+                flush_question()
+                flush_catalog()
+                flush_plain()
+                continue
+            if re.match(r'^\d+\s+Mục\s*/\s*câu hỏi\s*:', line, re.I):
+                flush_question()
+                flush_catalog()
+                flush_plain()
+                catalog = [line]
+            elif catalog and (re.match(r'^STT\s+Mục\s*/\s*câu hỏi', line, re.I) or
+                              re.match(r'^(?:MediAssist Rover|MediAssistRover)\b', line, re.I)):
+                flush_catalog()
+            elif catalog:
+                catalog.append(line)
+            elif re.match(r'^Hỏi\s*:', line, re.I):
+                flush_question()
+                flush_plain()
+                question = [line]
+            elif question and (re.match(r'^\d+\.\s+\S', line) or
+                               re.match(r'^(?:MediAssist Rover|MediAssistRover|HẾT TÀI LIỆU)\b', line, re.I)):
+                flush_question()
+                plain.append(line)
+            elif question:
+                question.append(line)
+            elif re.match(r'^.{2,80}:\s*\S', line) and not line.startswith('Đáp:'):
+                flush_plain()
+                units.append(('field', line, scope))
+            else:
+                plain.append(line)
+        # A normal paragraph boundary is an independent exact-match unit.
+        if not question:
+            flush_plain()
+    flush_question()
+    flush_catalog()
+    flush_plain()
+    return units
+
+
 def split_blocks(blocks):
     import tiktoken
     encoding = tiktoken.get_encoding('cl100k_base')
     size = lambda s: len(encoding.encode(s, disallowed_special=()))
-    chunks, pending = [], ''
-    def emit():
-        nonlocal pending
-        if pending.strip():
-            chunks.append(pending.strip())
-        pending = ''
-    for kind, raw in blocks:
-        text = clean(raw)
-        if not text:
-            continue
-        if kind in ('heading', 'table'):
-            emit()
-        if kind == 'table' and size(text) > MAX_TOKENS:
-            rows = text.splitlines()
-            header = rows[0]
-            current = header
-            for row in rows[1:]:
-                if size(header + '\n' + row) > MAX_TOKENS:
-                    raise ValueError('KNOWLEDGE_TABLE_ROW_TOO_LONG')
-                if size(current + '\n' + row) > MAX_TOKENS:
-                    chunks.append(current)
-                    current = header
-                current += '\n' + row
-            chunks.append(current)
-            continue
-        # Keep whole paragraphs/steps together when possible. An oversized single
-        # sentence is rejected instead of cutting a word, number or condition.
-        units = [text] if size(text) <= MAX_TOKENS else re.split(r'(?<=[.!?])\s+|\n\s*\n', text)
-        for unit in units:
-            if size(unit) > MAX_TOKENS:
+    chunks = []
+    for kind, text, scope in atomic_blocks(blocks):
+        if size(text) > MAX_TOKENS:
+            if kind == 'table-row':
+                raise ValueError('KNOWLEDGE_TABLE_ROW_TOO_LONG')
+            if kind in ('faq', 'field', 'catalog'):
                 raise ValueError('KNOWLEDGE_BLOCK_TOO_LONG')
-            candidate = pending + ('\n' if pending else '') + unit
-            if size(candidate) > MAX_TOKENS:
-                emit()
-            pending += ('\n' if pending else '') + unit
-        if kind == 'table':
-            emit()
-    emit()
+            # Only free prose may be split; never break an answer or table row.
+            sentences = re.split(r'(?<=[.!?])\s+|\n\s*\n', text)
+            current = ''
+            for sentence in sentences:
+                if size(sentence) > MAX_TOKENS:
+                    raise ValueError('KNOWLEDGE_BLOCK_TOO_LONG')
+                candidate = current + (' ' if current else '') + sentence
+                if size(candidate) > MAX_TOKENS:
+                    chunks.append(current)
+                    current = sentence
+                else:
+                    current = candidate
+            if current:
+                chunks.append(current)
+        else:
+            chunks.append((kind, text, scope))
     if not chunks or len(chunks) > MAX_CHUNKS:
         raise ValueError('KNOWLEDGE_CHUNK_LIMIT_OR_EMPTY')
-    return [dict(text=text, sha256=hashlib.sha256(text.encode('utf-8')).hexdigest()) for text in chunks]
+    result = []
+    for item in chunks:
+        kind, text, scope = item if isinstance(item, tuple) else ('text', item, '')
+        result.append(dict(text=text, sha256=hashlib.sha256(text.encode('utf-8')).hexdigest(),
+                           topicKey=topic_id(kind, text, scope)))
+    return result
 
 
 def process(path, folder):
@@ -245,7 +402,7 @@ def process(path, folder):
         raise ValueError('KNOWLEDGE_FILE_TYPE_UNSUPPORTED')
     if sum(len(text) for _, text in blocks) > MAX_CHARS:
         raise ValueError('KNOWLEDGE_TEXT_LIMIT')
-    return dict(version=2, chunks=split_blocks(blocks))
+    return dict(version=3, chunks=split_blocks(blocks))
 
 
 if __name__ == '__main__':

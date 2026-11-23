@@ -1,4 +1,4 @@
-# Document preprocessing (pipeline v2)
+# Document preprocessing and topic replacement (pipeline v3)
 
 The existing ADMIN upload API is unchanged. FE and navigation/map/endpoint logic
 are not changed. There is no content approval step. Each newly uploaded document
@@ -12,14 +12,18 @@ is extracted and split before indexing in the existing OpenAI vector store.
    with macro security set to very high. Scan/mixed PDF pages use Tesseract
    `vie+eng`; DOCX text pictures use OCR at their position in the body.
 3. Normalize whitespace/Unicode without paraphrasing or changing numbers. Split
-   at existing headings, paragraphs and table rows, maximum 700 cl100k tokens
-   per chunk. Existing table headers repeat when a large table is split. No
-   generated title, filename or source prefix is added to chunk text.
+   FAQ question/answer pairs, labelled fields and table rows into independently
+   replaceable items (maximum 700 cl100k tokens each). Free prose is split at
+   existing boundaries. No generated title, filename or source prefix is added.
 4. Persist chunks and checksums. Upload each as UTF-8 text to the same store.
    A lease and durable per-chunk state avoid repeating an upload after a known
    success. Unknown upload outcomes become `RECONCILIATION_REQUIRED`, not an
    automatic second upload.
 5. Only after **every** chunk is indexed does the parent become `COMPLETED`.
+   In the same database transaction, a newer item with the same topic key
+   becomes published and the older item becomes unpublished. Completion order
+   does not override upload order. The cleanup outbox detaches superseded files
+   from the vector store; it does not delete the original source document.
    AI Voice searches up to 20 candidates, then asks BE which files are currently
    published and obtains complete chunk text. It uses at most 5 whole chunks.
    BE failure means no document answer, not a fallback to unverified text.
@@ -28,8 +32,33 @@ is extracted and split before indexing in the existing OpenAI vector store.
    routes continue to use their existing paths.
 
 Existing API statuses remain compatible with FE. `processing_stage` internally
-tracks EXTRACTING, INDEXING and READY. A v2 parent has no single `openaiFileId`;
+tracks EXTRACTING, INDEXING and READY. A v3 parent has no single `openaiFileId`;
 remote IDs belong to its children. Metadata is stored separately from chunk text.
+
+## Latest upload wins for matching items
+
+The stable topic key comes from a normalized FAQ question, a labelled field,
+the subject of a catalog row, or a table row identifier. The combined demo PDF
+is handled both when PDF table detection succeeds and when the PDF renders as
+ordinary lines with `Mục / câu hỏi` and `Thông tin / trả lời`. Exact repeated
+prose also shares a key. Room-specific generic labels include the room heading
+so two rooms do not overwrite each other.
+
+This is deliberately conservative. Paraphrases with different questions and
+unstructured prose that only *seems* similar are not silently merged. A vector
+similarity score alone cannot prove that two facts have the same scope. Each
+labelled item or answer must contain the complete authoritative value; updating
+only half of a compound item replaces the whole old item. Use `GET /{id}/chunks`
+to inspect the extracted items and their `active` flag.
+
+Retained active v2 originals are automatically queued for one-time v3 reindex.
+Until they have been withdrawn, a plain new upload returns
+`KNOWLEDGE_REINDEX_PENDING` so old grouped chunks cannot conflict with new
+items. The explicit replacement API remains available. Legacy v1 documents
+or v2 documents without retained originals cannot be reprocessed automatically;
+plain upload returns `KNOWLEDGE_LEGACY_REPLACE_REQUIRED` until they are replaced
+or deleted. A failed v3 reindex leaves the old document published, and the
+failed v3 record can be retried after fixing the cause.
 
 ## APIs (Swagger)
 
@@ -37,15 +66,17 @@ All `/api/v1/knowledge/documents` endpoints require ADMIN:
 
 | Method/path | Purpose |
 |---|---|
-| `POST /api/v1/knowledge/documents` | Upload; identical bytes return the existing v2 record |
+| `POST /api/v1/knowledge/documents` | Upload; every call creates a new publication attempt, including identical bytes |
 | `GET /api/v1/knowledge/documents/{id}` | Status and sanitized error |
 | `GET /api/v1/knowledge/documents/{id}/chunks` | Ordered extracted content and chunk states |
 | `POST /api/v1/knowledge/documents/{id}/replace` | Multipart replacement of an active COMPLETED document |
-| `POST /api/v1/knowledge/documents/{id}/retry` | Reprocess a FAILED v2 document after fixing its cause |
+| `POST /api/v1/knowledge/documents/{id}/retry` | Reprocess a FAILED v2/v3 document after fixing its cause |
 | `DELETE /api/v1/knowledge/documents/{id}` | Immediately withdraw it and pending replacements |
 
-Replacement is explicit: uploading another file with the same name does not
-silently remove the old file. During replacement the old document stays active;
+Whole-document replacement is explicit: uploading another file with the same
+name does not silently remove every item in the old file. Matching item keys
+are superseded automatically after the new document finishes indexing. During
+explicit replacement the old document stays active;
 publication of the replacement and withdrawal of the predecessor share one DB
 transaction. Failed replacements leave the old document usable. Retry does not
 accept CANCELLED or RECONCILIATION_REQUIRED documents.
@@ -65,7 +96,7 @@ operator decision. An unknown upload ID needs operator reconciliation in OpenAI.
 ## Deploy together
 
 Pause document uploads/knowledge Q&A during the coordinated rollout. Do not run
-the old AI Voice against a partially indexed v2 document: it lacks the BE gate.
+the old AI Voice against a v3 document: it does not accept pipeline version 3.
 
 1. Set the **same** `OPENAI_VECTOR_STORE_ID` in BE and AI Voice. Their OpenAI keys
    must have access to that store. Configure the same random
@@ -73,7 +104,7 @@ the old AI Voice against a partially indexed v2 document: it lacks the BE gate.
 2. Configure AI Voice `BACKEND_URL` as the HTTPS BE origin (HTTP is allowed only
    for localhost development). AI Voice needs the internal resolve route through
    the reverse proxy. Do not use the robot/device credential for this route.
-3. Deploy BE including Flyway V65 and the processor runtime; deploy updated
+3. Deploy BE including Flyway V66 and the processor runtime; deploy updated
    AI Voice. The Dockerfile includes Python, Tesseract Vietnamese/English and
    LibreOffice, and preloads the tokenizer so extraction needs no tokenizer
    download at runtime. Resume after a real upload/chat smoke test.
@@ -127,7 +158,7 @@ python -m pytest scripts/knowledge -q
 mvn -Pknowledge-tests '-Dtest=Knowledge*Test' test
 ```
 
-The integration test applies V60 and V65 to a **fresh disposable MySQL database**.
+The integration test applies V60, V65 and V66 to a **fresh disposable MySQL database**.
 Set `KNOWLEDGE_TEST_JDBC_URL` pointing to a database named `mar_knowledge_test`,
 root password `knowledge-local-test`. Never point this at application data.
 Set `KNOWLEDGE_TEST_PYTHON` to test the actual Java → Python subprocess contract.

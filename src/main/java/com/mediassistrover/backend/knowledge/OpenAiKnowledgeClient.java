@@ -77,8 +77,8 @@ public class OpenAiKnowledgeClient {
         attach(store, file, Map.of("title", title), false);
     }
 
-    public void attachChunk(String store, String file, String documentId) {
-        attach(store, file, Map.of("knowledge_document_id", documentId, "pipeline_version", 2), true);
+    public void attachChunk(String store, String file, String documentId, int pipelineVersion) {
+        attach(store, file, Map.of("knowledge_document_id", documentId, "pipeline_version", pipelineVersion), true);
     }
 
     private void attach(String store, String file, Map<String, Object> attributes, boolean chunk) {
