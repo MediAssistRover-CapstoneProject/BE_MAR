@@ -29,7 +29,7 @@ public class KnowledgeDocumentController {
     @ResponseStatus(HttpStatus.ACCEPTED)
     @Operation(summary = "Upload PDF, DOCX, DOC, UTF-8 TXT or MD (20 MB maximum)",
         description = "Returns a durable document ID. Poll GET /{id} until COMPLETED before asking voice questions. "
-            + "Identical bytes in the same vector store return the existing document, including its failure status.")
+            + "A new upload is a new publication attempt, even when its bytes match an older upload.")
     public KnowledgeDocumentService.Document upload(
             @Parameter(required = true, schema = @Schema(type = "string", format = "binary"))
             @RequestPart("file") MultipartFile file, @AuthenticationPrincipal AccountPrincipal actor) {
@@ -53,7 +53,7 @@ public class KnowledgeDocumentController {
 
     @PostMapping("/{id}/retry")
     @ResponseStatus(HttpStatus.ACCEPTED)
-    @Operation(summary="Retry a failed extraction/indexing job after fixing the cause (not unknown upload outcomes)")
+    @Operation(summary="Retry a failed v2/v3 extraction/indexing job after fixing the cause (not unknown upload outcomes)")
     public KnowledgeDocumentService.Document retry(@PathVariable UUID id) { return service.retry(id); }
 
     @DeleteMapping("/{id}")

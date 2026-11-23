@@ -1,7 +1,6 @@
 package com.mediassistrover.backend.knowledge;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.mock.web.MockMultipartFile;
@@ -70,14 +69,14 @@ class KnowledgeDocumentWorkerTest {
         verifyNoInteractions(client);
     }
 
-    @Test @SuppressWarnings("unchecked") void concurrentDuplicateReturnsExistingDocument() {
-        var existing = new KnowledgeDocumentService.Document(UUID.randomUUID(), "vs_test", "knowledge.txt", "text/plain",
-            9, "a".repeat(64), UUID.randomUUID(), "file-test", "PROCESSING", null, Instant.now(), Instant.now());
-        doThrow(new DuplicateKeyException("duplicate hash")).when(jdbc).update(anyString(), any(Object[].class));
-        when(jdbc.queryForObject(anyString(), any(RowMapper.class), any(Object[].class))).thenReturn(existing);
+    @Test @SuppressWarnings("unchecked") void newUploadCreatesNewPublicationAttempt() {
+        var created = new KnowledgeDocumentService.Document(UUID.randomUUID(), "vs_test", "knowledge.txt", "text/plain",
+            9, "a".repeat(64), UUID.randomUUID(), null, "QUEUED", null, Instant.now(), Instant.now());
+        when(jdbc.query(anyString(), any(RowMapper.class), any(Object[].class))).thenReturn(java.util.List.of(created));
         var service = new KnowledgeDocumentService(jdbc, client, "vs_test");
         var actual = service.upload(new MockMultipartFile("file", "knowledge.txt", "text/plain", "Knowledge".getBytes()), UUID.randomUUID());
-        assertEquals(existing, actual);
+        assertEquals(created, actual);
+        verify(jdbc).update(contains("INSERT INTO KnowledgeDocument"), any(Object[].class));
         verify(client, never()).upload(anyString(), anyString(), any());
     }
 }

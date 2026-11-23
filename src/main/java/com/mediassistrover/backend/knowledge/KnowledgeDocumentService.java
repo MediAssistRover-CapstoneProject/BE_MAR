@@ -4,7 +4,6 @@ import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.exception.FileTooLargeException;
 import com.mediassistrover.backend.exception.ResourceNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Service;
@@ -58,26 +57,31 @@ public class KnowledgeDocumentService {
 
     public Document upload(MultipartFile file, UUID actor) {
         Upload upload = validate(file);
+        Long unreindexable = jdbc.queryForObject("""
+            SELECT COUNT(*) FROM KnowledgeDocument
+            WHERE vector_store_id=? AND active=TRUE AND pipeline_version<3
+              AND (pipeline_version=1 OR payload IS NULL)
+            """,Long.class,vectorStoreId);
+        if (unreindexable != null && unreindexable > 0)
+            throw new BusinessRuleException("KNOWLEDGE_LEGACY_REPLACE_REQUIRED");
+        Long legacy = jdbc.queryForObject("""
+            SELECT COUNT(*) FROM KnowledgeDocument
+            WHERE vector_store_id=? AND active=TRUE AND pipeline_version=2
+            """,Long.class,vectorStoreId);
+        if (legacy != null && legacy > 0) throw new BusinessRuleException("KNOWLEDGE_REINDEX_PENDING");
         return create(upload, actor, null);
     }
 
     private Document create(Upload upload, UUID actor, UUID replaces) {
         client.requireConfigured();
         UUID id = UUID.randomUUID();
-        try {
-            jdbc.update("""
-                INSERT INTO KnowledgeDocument
-                (document_id,vector_store_id,filename,content_type,size_bytes,sha256,uploaded_by,status,payload,
-                 pipeline_version,replaces_document_id,next_attempt_at,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,UUID_TO_BIN(?),'QUEUED',?,2,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))
-                """, id.toString(), vectorStoreId, upload.filename(), upload.contentType(), upload.bytes().length,
-                upload.sha256(), actor.toString(), upload.bytes(), replaces == null ? null : replaces.toString());
-        } catch (DuplicateKeyException duplicate) {
-            // The database unique constraint also handles concurrent uploads of identical bytes.
-            if (replaces != null) throw new BusinessRuleException("KNOWLEDGE_REPLACEMENT_CONTENT_ALREADY_EXISTS");
-            return jdbc.queryForObject("SELECT " + COLUMNS
-                + " FROM KnowledgeDocument WHERE vector_store_id=? AND sha256=? AND pipeline_version=2", MAPPER, vectorStoreId, upload.sha256());
-        }
+        jdbc.update("""
+            INSERT INTO KnowledgeDocument
+            (document_id,vector_store_id,filename,content_type,size_bytes,sha256,uploaded_by,status,payload,
+             pipeline_version,replaces_document_id,next_attempt_at,created_at,updated_at)
+            VALUES (?,?,?,?,?,?,UUID_TO_BIN(?),'QUEUED',?,3,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))
+            """, id.toString(), vectorStoreId, upload.filename(), upload.contentType(), upload.bytes().length,
+            upload.sha256(), actor.toString(), upload.bytes(), replaces == null ? null : replaces.toString());
         return get(id);
     }
 
@@ -95,17 +99,19 @@ public class KnowledgeDocumentService {
     @Transactional
     public void delete(UUID id) {
         get(id);
+        jdbc.queryForList("SELECT document_id FROM KnowledgeDocument WHERE document_id=? FOR UPDATE",String.class,id.toString());
         // Logical removal is immediate; external detach is retried by the worker.
         // Keep any outstanding lease so cleanup cannot race an in-flight attach.
         jdbc.update("UPDATE KnowledgeDocument SET active=FALSE,status='CANCELLED',updated_at=UTC_TIMESTAMP(6) WHERE document_id=? OR (replaces_document_id=? AND status IN ('QUEUED','ATTACHING','PROCESSING'))",
             id.toString(),id.toString());
+        jdbc.update("DELETE FROM KnowledgeTopicOwner WHERE document_id=?",id.toString());
     }
 
-    public record ChunkView(String id, int ordinal, String content, String status, String errorCode) { }
+    public record ChunkView(String id, int ordinal, String content, String status, String errorCode, boolean active) { }
 
     @Transactional
     public Document retry(UUID id) {
-        var found=jdbc.queryForList("SELECT document_id FROM KnowledgeDocument WHERE document_id=? AND pipeline_version=2 AND active=TRUE AND status='FAILED' AND payload IS NOT NULL AND (lease_until IS NULL OR lease_until<UTC_TIMESTAMP(6)) FOR UPDATE",String.class,id.toString());
+        var found=jdbc.queryForList("SELECT document_id FROM KnowledgeDocument WHERE document_id=? AND pipeline_version IN (2,3) AND active=TRUE AND status='FAILED' AND payload IS NOT NULL AND (lease_until IS NULL OR lease_until<UTC_TIMESTAMP(6)) FOR UPDATE",String.class,id.toString());
         if (found.isEmpty()) throw new BusinessRuleException("KNOWLEDGE_RETRY_REQUIRES_FAILED_DOCUMENT");
         jdbc.update("""
             INSERT IGNORE INTO KnowledgeRemoteCleanup(vector_store_id,openai_file_id)
@@ -119,8 +125,8 @@ public class KnowledgeDocumentService {
 
     public List<ChunkView> chunks(UUID id) {
         get(id);
-        return jdbc.query("SELECT chunk_id,ordinal_no,content,status,error_code FROM KnowledgeDocumentChunk WHERE document_id=? ORDER BY ordinal_no",
-            (rs,n)->new ChunkView(rs.getString(1),rs.getInt(2),rs.getString(3),rs.getString(4),rs.getString(5)),id.toString());
+        return jdbc.query("SELECT chunk_id,ordinal_no,content,status,error_code,active FROM KnowledgeDocumentChunk WHERE document_id=? ORDER BY ordinal_no",
+            (rs,n)->new ChunkView(rs.getString(1),rs.getInt(2),rs.getString(3),rs.getString(4),rs.getString(5),rs.getBoolean(6)),id.toString());
     }
 
     public record ResolvedFile(String fileId, String documentId, String title, String text, int pipelineVersion) { }
@@ -133,7 +139,7 @@ public class KnowledgeDocumentService {
         var resolved=new java.util.ArrayList<>(jdbc.query("""
             SELECT c.openai_file_id,d.document_id,d.filename,c.content,d.pipeline_version
             FROM KnowledgeDocumentChunk c JOIN KnowledgeDocument d ON d.document_id=c.document_id
-            WHERE d.vector_store_id=? AND d.active=TRUE AND d.status='COMPLETED' AND c.status='COMPLETED'
+            WHERE d.vector_store_id=? AND d.active=TRUE AND d.status='COMPLETED' AND c.status='COMPLETED' AND c.active=TRUE
               AND c.openai_file_id IN (
             """+placeholders+")",(rs,n)->new ResolvedFile(rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getInt(5)),args.toArray()));
         resolved.addAll(jdbc.query("SELECT openai_file_id,document_id,filename FROM KnowledgeDocument WHERE vector_store_id=? AND active=TRUE AND status='COMPLETED' AND pipeline_version=1 AND openai_file_id IN ("+placeholders+")",

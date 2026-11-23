@@ -13,10 +13,43 @@ spec.loader.exec_module(p)
 def test_clean_preserves_numbers_conditions_and_does_not_add_metadata():
     source = 'Giờ khám: 07:00–17:00.\n\n  Phí: 150.000 đồng; miễn phí trẻ dưới 6 tuổi. '
     chunks = p.split_blocks([('text', source)])
-    assert len(chunks) == 1
-    assert '150.000' in chunks[0]['text'] and 'dưới 6 tuổi' in chunks[0]['text']
-    assert 'Nguồn:' not in chunks[0]['text'] and 'Tài liệu:' not in chunks[0]['text']
-    assert len(chunks[0]['sha256']) == 64
+    assert len(chunks) == 2
+    assert '150.000' in chunks[1]['text'] and 'dưới 6 tuổi' in chunks[1]['text']
+    assert all('Nguồn:' not in c['text'] and 'Tài liệu:' not in c['text'] for c in chunks)
+    assert all(len(c['sha256']) == 64 and len(c['topicKey']) == 64 for c in chunks)
+
+
+def test_newer_value_has_same_topic_but_different_scope_does_not():
+    old = p.split_blocks([('text', 'Hỏi: Xe lăn ở đâu?\nĐáp: Ở Phòng lễ tân.')])[0]
+    new = p.split_blocks([('text', 'Hỏi: Xe lăn ở đâu?\nĐáp: Ở Phòng điều dưỡng.')])[0]
+    unrelated = p.split_blocks([('text', 'Hỏi: Nhà vệ sinh ở đâu?\nĐáp: Ở cuối hành lang.')])[0]
+    assert old['topicKey'] == new['topicKey']
+    assert old['sha256'] != new['sha256']
+    assert old['topicKey'] != unrelated['topicKey']
+
+    morning = p.split_blocks([('text', 'Giờ khám: 07:00–17:00')])[0]
+    revised = p.split_blocks([('text', 'Giờ khám: 08:00–18:00')])[0]
+    assert morning['topicKey'] == revised['topicKey']
+
+    rooms = p.split_blocks([('heading', 'Phòng X-quang'), ('text', 'Giờ mở cửa: 07:00'),
+                            ('heading', 'Phòng siêu âm'), ('text', 'Giờ mở cửa: 08:00')])
+    assert rooms[1]['topicKey'] != rooms[3]['topicKey']
+
+
+def test_catalog_table_uses_subject_instead_of_row_number():
+    old = p.split_blocks([('table', 'STT | Mục / câu hỏi và thông tin / câu trả lời thống nhất\n'
+                              '1 | Mục / câu hỏi: Thông tin chung - Wi-Fi khách\n'
+                              'Thông tin / trả lời: Mật khẩu A')])[0]
+    new = p.split_blocks([('table', 'STT | Mục / câu hỏi và thông tin / câu trả lời thống nhất\n'
+                              '8 | Mục / câu hỏi: Thông tin chung - Wi-Fi khách\n'
+                              'Thông tin / trả lời: Mật khẩu B')])[0]
+    assert old['topicKey'] == new['topicKey']
+    assert old['sha256'] != new['sha256']
+
+    # Some PDFs render the table as plain text lines instead of a detected table.
+    rendered = p.split_blocks([('text', '1 Mục / câu hỏi: Thông tin chung - Wi-Fi khách'),
+                               ('text', 'Thông tin / trả lời: Mật khẩu B')])[0]
+    assert rendered['topicKey'] == new['topicKey']
 
 
 def test_heading_boundary_and_long_table_preserve_each_row():
