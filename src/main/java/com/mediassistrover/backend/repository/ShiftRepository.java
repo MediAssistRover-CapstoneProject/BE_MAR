@@ -72,7 +72,8 @@ public interface ShiftRepository extends JpaRepository<Shift, UUID> {
     List<Account> findOnDutySosResponders(@Param("roomId") UUID roomId, @Param("now") Instant now, Pageable pageable);
 
     @Query("select count(s) > 0 from Shift s where s.staffProfile.staffProfileId = :staffId " +
-            "and s.status <> com.mediassistrover.backend.enums.ShiftStatus.CANCELLED " +
+            "and (s.status = com.mediassistrover.backend.enums.ShiftStatus.PLANNED or " +
+            "(s.status = com.mediassistrover.backend.enums.ShiftStatus.ACTIVE and s.checkedOutAt is null)) " +
             "and (:excludeId is null or s.shiftId <> :excludeId) and s.startsAt < :endsAt and s.endsAt > :startsAt")
     boolean overlaps(@Param("staffId") UUID staffId, @Param("startsAt") Instant startsAt,
                      @Param("endsAt") Instant endsAt, @Param("excludeId") UUID excludeId);
