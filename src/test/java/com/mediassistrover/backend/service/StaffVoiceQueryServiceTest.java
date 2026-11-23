@@ -94,6 +94,43 @@ class StaffVoiceQueryServiceTest {
         assertTrue(onDuty.answer().contains("Phòng lễ tân"));
     }
 
+    @Test void existenceQuestionsUseTheStaffDirectoryBeforeCheckingDuty() {
+        StaffProfile staff = doctor("Trung", AccountStatus.ACTIVE);
+        staff.setJobTitle("Điều dưỡng");
+        when(profiles.findVoiceDirectory()).thenReturn(List.of(staff));
+        when(duty.list(null, null)).thenReturn(List.of());
+
+        for (String question : List.of(
+                "Có nhân viên nào tên Trung không?",
+                "Có nhân viên Trung trong bệnh viện không?",
+                "Ở bệnh viện có nhân viên tên Trung hay không?",
+                "Nhân viên tên Trung đang trực không?")) {
+            var answer = service.answer(question, null);
+            assertEquals("STAFF_OFF_DUTY", answer.code(), question);
+            assertTrue(answer.answer().contains("có nhân viên Trung"), question);
+            assertTrue(answer.answer().contains("không trong ca trực"), question);
+        }
+    }
+
+    @Test void anUnmatchedSpokenNameDoesNotAssertThatNoEmployeeExists() {
+        when(profiles.findVoiceDirectory()).thenReturn(List.of());
+        var answer = service.answer("Ở bệnh viện có nhân viên tên Thành hay không?", null);
+        assertEquals("STAFF_NOT_FOUND", answer.code());
+        assertTrue(answer.answer().contains("đọc lại họ tên"));
+        assertFalse(answer.answer().contains("không có trong bệnh viện"));
+    }
+
+    @Test void spokenAccentVariantStillFindsTheEmployee() {
+        StaffProfile staff = doctor("Thanh", AccountStatus.ACTIVE);
+        staff.setJobTitle("Nhân viên");
+        when(profiles.findVoiceDirectory()).thenReturn(List.of(staff));
+        when(duty.list(null, null)).thenReturn(List.of());
+
+        var answer = service.answer("Ở bệnh viện có nhân viên tên Thành hay không?", null);
+        assertEquals("STAFF_OFF_DUTY", answer.code());
+        assertTrue(answer.answer().contains("có nhân viên Thanh"));
+    }
+
     @Test void roomQueryListsOnlyCheckedInDoctorsOnActiveMap() {
         UUID mapId = UUID.randomUUID(), roomId = UUID.randomUUID();
         FacilityMap map = mock(FacilityMap.class);
