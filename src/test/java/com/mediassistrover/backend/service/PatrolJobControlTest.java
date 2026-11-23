@@ -51,6 +51,13 @@ class PatrolJobControlTest {
         assertThrows(BusinessRuleException.class,()->control.resume(job.getJobId(),"Continue",actor,null));
         verify(suspension,never()).release(any(),any(),any());
     }
+    @Test void resumeCanReleaseManualHoldOnAnUnstartedQueuedPatrol(){
+        var job=job(JobStatus.QUEUED);job.setSchemaVersion(3);job.setBeOrchestrated(true);
+        job.setWorkflow(Workflow.builder().serviceType("PATROL").build());
+        control.resume(job.getJobId(),"Continue waiting",actor,null);
+        verify(suspension).release(job,"MANUAL",job.getJobId());
+        assertEquals(JobStatus.QUEUED,job.getStatus());verify(suspension,never()).tryResume(any());
+    }
     @Test void callerMustHaveAccessToThisJob(){
         var job=job(JobStatus.RUNNING);
         doThrow(new AccessDeniedException("denied")).when(scope).requireJobAccess(job,actor);

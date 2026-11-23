@@ -51,7 +51,8 @@ class PatrolContinuationTest {
             Map.entry("mapping",mock(MappingLifecycleService.class)),Map.entry("executionPolicy",mock(StepExecutionPolicy.class)),
             Map.entry("arbitration",mock(RobotTaskArbitrationService.class)),Map.entry("events",mock(JobEventRepository.class)),
             Map.entry("wakeups",mock(OrchestrationWorkService.class)),Map.entry("updates",mock(ApplicationEventPublisher.class)),
-            Map.entry("json",json),Map.entry("clock",Clock.fixed(now,ZoneOffset.UTC))).forEach((key,value)->ReflectionTestUtils.setField(orchestrator,key,value));
+            Map.entry("json",json),Map.entry("deliveryRelease",mock(DeliveryReleasePolicy.class)),
+            Map.entry("clock",Clock.fixed(now,ZoneOffset.UTC))).forEach((key,value)->ReflectionTestUtils.setField(orchestrator,key,value));
         when(jobs.lockById(job.getJobId())).thenReturn(Optional.of(job));when(work.findForUpdate(job.getJobId())).thenReturn(Optional.of(pending));
         when(steps.findByJobId(job.getJobId())).thenReturn(visits);when(tasks.findByJobJobIdOrderBySequenceNoAsc(job.getJobId())).thenReturn(List.of(runtimeTask));
         when(resolver.resolve(any())).thenReturn(json.createObjectNode().put("endpoint_id",UUID.randomUUID().toString()));

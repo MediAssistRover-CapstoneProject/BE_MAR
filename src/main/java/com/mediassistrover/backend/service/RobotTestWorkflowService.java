@@ -14,6 +14,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.*;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -57,6 +58,13 @@ public class RobotTestWorkflowService {
     private final MqttProperties mqtt;
     private final RobotTestSubmissionRepository submissions;
     private final Clock clock;
+    @Value("${app.speech.default-volume:100}") private int defaultVolume=100;
+
+    private int volume(Integer requested){
+        int selected=requested==null?defaultVolume:requested;
+        if(selected<0||selected>100)throw new BusinessRuleException("Speech volume must be 0..100");
+        return selected;
+    }
 
     private double speed(Create r){return r.maxSpeedMps()==null?.35:r.maxSpeedMps();}
     private String compartment(Create r){return r.compartmentId()==null?"CART_MAIN":r.compartmentId();}
@@ -121,16 +129,16 @@ public class RobotTestWorkflowService {
                 case WAIT -> {s.put("stepType","WAIT");p.put("wait_type","DURATION").put("duration_sec",item.durationSec());timeout=(int)Math.ceil(item.durationSec())+10;}
                 case SPEAK -> {s.put("stepType","INTERACT");p.put("action","SPEAK").put("prompt_key","TEST_SPEAK_"+(i+1));
                         p.putObject("data").put("text",item.text()).put("language_code",item.languageCode()==null?"vi":item.languageCode())
-                            .put("volume",item.volume()==null?70:item.volume()).put("speed_wpm",150);timeout=120;}
+                            .put("volume",volume(item.volume())).put("speed_wpm",150);timeout=120;}
                 case AUDIO_LOOPBACK -> {s.put("stepType","EXECUTE_SENSING");p.put("sensing_type","AUDIO_LOOPBACK")
-                        .put("duration_sec",item.durationSec().intValue()).put("volume",item.volume()==null?70:item.volume());timeout=45;}
+                        .put("duration_sec",item.durationSec().intValue()).put("volume",volume(item.volume()));timeout=45;}
                 case VOICE_CAPTURE -> {s.put("stepType","EXECUTE_SENSING");p.put("sensing_type","VOICE_CAPTURE")
                         .put("duration_sec",item.durationSec().intValue()).put("language_code",item.languageCode()==null?"vi":item.languageCode());timeout=85;}
                 case SPEAK_LAST_TRANSCRIPT -> {s.put("stepType","INTERACT");p.put("action","SPEAK").put("prompt_key","TEST_ECHO_"+(i+1));
                         int source=i-1;while(r.steps().get(source).kind()!=Kind.VOICE_CAPTURE)source--;
                         String pointer="/outputs/"+String.format(Locale.ROOT,"TEST_%02d",source+1)+"/metrics/playback_text";
                         var data=p.putObject("data").put("language_code",item.languageCode()==null?"vi":item.languageCode())
-                            .put("volume",item.volume()==null?70:item.volume()).put("speed_wpm",150);
+                            .put("volume",volume(item.volume())).put("speed_wpm",150);
                         data.set("text",json.createObjectNode().put("$ref",pointer));timeout=120;}
                 case WAIT_CONFIRM -> {s.put("stepType","WAIT");p.put("wait_type","EVENT").put("event_type","TEST_OPERATOR_CONFIRMED");
                         // Scope to this job's operation, never a reusable workflow-wide key.

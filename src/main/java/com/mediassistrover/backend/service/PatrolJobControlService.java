@@ -36,7 +36,8 @@ public class PatrolJobControlService {
     public JobDetailResponse resume(UUID id,String reason,AccountPrincipal actor,RequestMetadata metadata) {
         var job=jobs.lockById(id).orElseThrow(()->new ResourceNotFoundException("Job not found"));
         scope.requireJobAccess(job,actor);
-        if(!suspension.isPatrol(job) || job.getCancelRequestedAt()!=null || !Set.of(JobStatus.SUSPENDING,JobStatus.SUSPENDED,JobStatus.RUNNING).contains(job.getStatus()))
+        if(!suspension.isPatrol(job) || job.getCancelRequestedAt()!=null || !(JobOccupancyPolicy.unstartedPatrolIntent(job)
+                || Set.of(JobStatus.SUSPENDING,JobStatus.SUSPENDED,JobStatus.RUNNING).contains(job.getStatus())))
             throw new BusinessRuleException("This patrol cannot be resumed in its current state");
         suspension.release(job,"MANUAL",id);
         job.setResumeRequested(true);

@@ -2,6 +2,14 @@
 
 Use `/mapping.html#robotTestWorkflow` with an ADMIN token. No command is sent on page load or preview.
 
+Generated `SPEAK`, transcript playback and `AUDIO_LOOPBACK` steps use
+`app.speech.default-volume=${SPEECH_DEFAULT_VOLUME:100}` when `volume` is omitted.
+The HTML starts at 100%; an explicit `volume` from 0 to 100 still takes precedence.
+This is PCM playback level, separate from Pi's ALSA mixer. It does not amplify
+samples above unity gain or change TTS speed. Existing published workflows and
+their explicit volumes are immutable: use the workflow speech editing API to
+clone/publish a revised version rather than editing live step JSON.
+
 Supported items, executed in order in one schema 3 workflow/job:
 
 - `MOVE`: `endpointId` on the selected map; uses the existing READY navigation session and Nav2 path.

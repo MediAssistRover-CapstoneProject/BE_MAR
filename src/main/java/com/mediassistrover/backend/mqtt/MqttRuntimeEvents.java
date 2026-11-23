@@ -31,6 +31,7 @@ public class MqttRuntimeEvents {
     private final com.mediassistrover.backend.ai.AiSensingService ai;
     private final com.mediassistrover.backend.validation.StepExecutionPolicy executionPolicy;
     private final com.mediassistrover.backend.service.OperationAuthorizationService operationAuthorization;
+    private final com.mediassistrover.backend.service.DeliveryReleasePolicy deliveryRelease;
 
     public void apply(Job job,MqttWire.Envelope e) {
         if (job==null || !job.isBeOrchestrated() || job.getSchemaVersion()!=3 || job.getRobot()==null || !job.getRobot().getRobotId().equals(e.robotId()))
@@ -225,6 +226,7 @@ public class MqttRuntimeEvents {
         else if(job.getStatus()==JobStatus.RECOVERY_REQUIRED && !mapping.open(job.getJobId()))safety.failSettledRecovery(job);
         else if(step.getInterruptionReason()!=null)finishInterrupted(job,step,command,p);
         else if (next==JobStepStatus.CANCELLED && job.getStatus()==JobStatus.RUNNING) {
+            if(deliveryRelease.requiresReconciliation(job)) {deliveryRelease.retain(job);wakeups.request(job);return;}
             if(mapping.open(job.getJobId())) {job.setCancelRequestedAt(Instant.now(clock));wakeups.request(job);return;}
             Instant now=Instant.now(clock);job.setStatus(JobStatus.CANCELLED);job.setEndedAt(now);
             if (job.getServiceRequest()!=null) {job.getServiceRequest().setStatus(ServiceRequestStatus.CANCELLED);job.getServiceRequest().setCompletedAt(now);}
@@ -283,7 +285,10 @@ public class MqttRuntimeEvents {
         Job job=step.getJobTask().getJob();
         com.fasterxml.jackson.databind.node.ObjectNode context=job.getContextJson()!=null && job.getContextJson().isObject()
                 ?((com.fasterxml.jackson.databind.node.ObjectNode)job.getContextJson()).deepCopy():wire.object();
-        result.path("updated").fields().forEachRemaining(entry->context.set(entry.getKey(),entry.getValue().deepCopy()));
+        result.path("updated").fields().forEachRemaining(entry->{
+            if("delivery_recovery".equals(entry.getKey()))throw new BusinessRuleException("Delivery recovery evidence is allocated only by BE staff reconciliation");
+            context.set(entry.getKey(),entry.getValue().deepCopy());
+        });
         job.setContextJson(context);
     }
     private boolean physical(JobStep step) {return Set.of("MOVE","CONTROL_HARDWARE").contains(step.getStepTypeSnapshot()) || com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(step);}

@@ -21,10 +21,12 @@ public class MqttJobSafety {
     private final MqttWire wire;
     private final Clock clock;
     private final org.springframework.context.ApplicationEventPublisher updates;
+    private final com.mediassistrover.backend.service.DeliveryReleasePolicy deliveryRelease;
 
     /** The caller holds the Job lock and has verified that no mapping session is open. */
     public void failSettledRecovery(Job job) {
         if (!job.isBeOrchestrated() || job.getStatus()!=JobStatus.RECOVERY_REQUIRED) return;
+        if(deliveryRelease.requiresReconciliation(job)) {deliveryRelease.retain(job);return;}
         var history=commands.findByJobIdOrderByCreatedAt(job.getJobId());
         if (!history.stream().allMatch(command -> settledForDisconnect(command,job.getCancelRequestedAt()))) return;
         JobStep selected=job.getSelectedJobStep();

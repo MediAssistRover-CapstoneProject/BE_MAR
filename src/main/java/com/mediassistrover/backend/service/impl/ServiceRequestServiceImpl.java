@@ -36,6 +36,7 @@ public class ServiceRequestServiceImpl implements ServiceRequestService {
     private final EndpointGroupMemberRepository memberRepository;
     private final WorkflowRepository workflowRepository;
     private final JobExecutionService jobExecutionService; private final RequestJobMapper mapper;
+    private final JobCancellationService cancellation;
     private final JobRepository jobRepository;
     private final RobotRepository robotRepository;
     private final ObjectMapper objectMapper; private final AuditService auditService; private final Clock clock;
@@ -105,7 +106,39 @@ public class ServiceRequestServiceImpl implements ServiceRequestService {
     }
     @Override public Page<ServiceRequestResponse> list(ServiceRequestStatus status,ServiceRequestType requestType,UUID robotId,Instant from,Instant to,boolean includeDeleted,AccountPrincipal actor,Pageable p){validateWindow(from,to);staffScope.requireCurrentStaffOrAdmin(actor);if(includeDeleted&&actor.role()!=Role.ADMIN)throw new org.springframework.security.access.AccessDeniedException("includeDeleted requires ADMIN");var query=includeDeleted?requestRepository.search(status,requestType,robotId,from,to,p):requestRepository.searchActive(status,requestType,robotId,from,to,p);if(actor.role()==Role.ADMIN)return query.map(mapper::toResponse);List<ServiceRequest> scoped=query.getContent().stream().filter(r->staffScope.canAccessServiceRequest(r,actor)).toList();return page(scoped,p).map(mapper::toResponse);}
     @Override @Transactional public ServiceRequestResponse submit(UUID id,AccountPrincipal actor,RequestMetadata md){ServiceRequest r=request(id);staffScope.requireServiceRequestAccess(r,actor);if(r.getStatus()!=ServiceRequestStatus.DRAFT)throw new BusinessRuleException("Only DRAFT request can be submitted");validateSubtype(r);r.setStatus(ServiceRequestStatus.SUBMITTED);jobExecutionService.createForRequest(r);r.setStatus(ServiceRequestStatus.QUEUED);audit(new RequestActor(actor.accountId(),null),"SERVICE_REQUEST_SUBMITTED",r,md);return mapper.toResponse(r);}
-    @Override @Transactional public ServiceRequestResponse cancel(UUID id,String reason,AccountPrincipal actor,RequestMetadata md){ServiceRequest r=request(id);staffScope.requireServiceRequestAccess(r,actor);if(r.getStatus()==ServiceRequestStatus.CANCELLED||r.getStatus()==ServiceRequestStatus.RECOVERY_REQUIRED)return mapper.toResponse(r);if(Set.of(ServiceRequestStatus.COMPLETED,ServiceRequestStatus.FAILED).contains(r.getStatus()))throw new BusinessRuleException("Request is already terminal");Instant now=Instant.now(clock);DeliveryRequest delivery=r.getRequestType()==ServiceRequestType.DELIVERY?deliveryRepository.findById(id).orElse(null):null;boolean physical=delivery!=null&&(delivery.getPickedUpAt()!=null||delivery.getPickupCompartmentConfirmedAt()!=null||delivery.getPickupPayloadConfirmedAt()!=null);for(Job candidate:jobRepository.findByServiceRequestServiceRequestId(id)){Job job=jobRepository.lockById(candidate.getJobId()).orElseThrow();if(physical&&!Set.of(JobStatus.SUCCEEDED,JobStatus.FAILED,JobStatus.CANCELLED).contains(job.getStatus())){job.setStatus(JobStatus.RECOVERY_REQUIRED);job.setErrorCode("DELIVERY_CANCEL_AFTER_PHYSICAL_ACTION");job.setFailureReason(reason);if(job.getRobot()!=null)job.getRobot().setStatus(RobotStatus.ERROR);}else if(!Set.of(JobStatus.SUCCEEDED,JobStatus.FAILED,JobStatus.CANCELLED,JobStatus.RECOVERY_REQUIRED).contains(job.getStatus())&&job.getCancelCommandId()==null){job.setCancelCommandId(UUID.randomUUID());job.setCancelRequestedAt(now);job.setCancelRequestedByAccount(account(actor.accountId()));}wakeups.request(job);}r.setStatus(physical?ServiceRequestStatus.RECOVERY_REQUIRED:ServiceRequestStatus.CANCELLED);if(!physical)r.setCancelledAt(now);auditService.record(account(actor.accountId()),physical?"DELIVERY_RECOVERY_REQUIRED":"SERVICE_REQUEST_CANCELLED","ServiceRequest",id,null,Map.of("reason",reason),md);return mapper.toResponse(r);}
+    @Override @Transactional public ServiceRequestResponse cancel(UUID id,String reason,AccountPrincipal actor,RequestMetadata md) {
+        ServiceRequest r=request(id);staffScope.requireServiceRequestAccess(r,actor);
+        if(Set.of(ServiceRequestStatus.COMPLETED,ServiceRequestStatus.FAILED).contains(r.getStatus()))throw new BusinessRuleException("Request is already terminal");
+        List<Job> runtime=jobRepository.findByServiceRequestServiceRequestId(id);
+        if(r.getRequestType()==ServiceRequestType.DELIVERY && !runtime.isEmpty()
+                && runtime.stream().allMatch(job->job.isBeOrchestrated() && job.getSchemaVersion()==3)) {
+            // The Job is the serialization point: cancellation must send/settle the active Pi stop even after pickup.
+            for(UUID jobId:runtime.stream().map(Job::getJobId).sorted().toList()) {
+                Job job=jobRepository.lockById(jobId).orElseThrow();
+                if(!Set.of(JobStatus.SUCCEEDED,JobStatus.FAILED).contains(job.getStatus()))
+                    cancellation.cancel(job,account(actor.accountId()),reason,md);
+            }
+            auditService.record(account(actor.accountId()),r.getStatus()==ServiceRequestStatus.RECOVERY_REQUIRED?"DELIVERY_RECOVERY_REQUIRED":"SERVICE_REQUEST_CANCELLED",
+                    "ServiceRequest",id,null,Map.of("reason",reason),md);
+            return mapper.toResponse(r);
+        }
+        if(r.getStatus()==ServiceRequestStatus.CANCELLED||r.getStatus()==ServiceRequestStatus.RECOVERY_REQUIRED)return mapper.toResponse(r);
+        Instant now=Instant.now(clock);DeliveryRequest delivery=r.getRequestType()==ServiceRequestType.DELIVERY?deliveryRepository.findById(id).orElse(null):null;
+        boolean physical=delivery!=null&&(delivery.getPickedUpAt()!=null||delivery.getPickupCompartmentConfirmedAt()!=null||delivery.getPickupPayloadConfirmedAt()!=null);
+        for(Job candidate:runtime) {
+            Job job=jobRepository.lockById(candidate.getJobId()).orElseThrow();
+            if(physical&&!Set.of(JobStatus.SUCCEEDED,JobStatus.FAILED,JobStatus.CANCELLED).contains(job.getStatus())) {
+                job.setStatus(JobStatus.RECOVERY_REQUIRED);job.setErrorCode("DELIVERY_CANCEL_AFTER_PHYSICAL_ACTION");job.setFailureReason(reason);
+                if(job.getRobot()!=null)job.getRobot().setStatus(RobotStatus.ERROR);
+            } else if(!Set.of(JobStatus.SUCCEEDED,JobStatus.FAILED,JobStatus.CANCELLED,JobStatus.RECOVERY_REQUIRED).contains(job.getStatus())&&job.getCancelCommandId()==null) {
+                job.setCancelCommandId(UUID.randomUUID());job.setCancelRequestedAt(now);job.setCancelRequestedByAccount(account(actor.accountId()));
+            }
+            wakeups.request(job);
+        }
+        r.setStatus(physical?ServiceRequestStatus.RECOVERY_REQUIRED:ServiceRequestStatus.CANCELLED);if(!physical)r.setCancelledAt(now);
+        auditService.record(account(actor.accountId()),physical?"DELIVERY_RECOVERY_REQUIRED":"SERVICE_REQUEST_CANCELLED","ServiceRequest",id,null,Map.of("reason",reason),md);
+        return mapper.toResponse(r);
+    }
     @Override @Transactional public ServiceRequestResponse archive(UUID id,String reason,AccountPrincipal actor,RequestMetadata md){ServiceRequest r=request(id);staffScope.requireServiceRequestAccess(r,actor);if(!Set.of(ServiceRequestStatus.COMPLETED,ServiceRequestStatus.FAILED,ServiceRequestStatus.CANCELLED).contains(r.getStatus()))throw new BusinessRuleException("Only terminal ServiceRequest can be archived");r.setArchivedAt(Instant.now(clock));auditService.record(account(actor.accountId()),"SERVICE_REQUEST_ARCHIVED","ServiceRequest",id,null,Map.of("reason",reason),md);return mapper.toResponse(r);}
     @Override public com.mediassistrover.backend.dto.common.DeletionContracts.DeletionImpactResponse deletionImpact(UUID id,AccountPrincipal actor){ServiceRequest r=request(id);staffScope.requireServiceRequestAccess(r,actor);return hardDelete.impact(id);}
     @Override @Transactional public com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDelete(UUID id,String reason,AccountPrincipal actor,RequestMetadata md){ServiceRequest r=request(id);staffScope.requireServiceRequestAccess(r,actor);if(actor.role()!=Role.ADMIN)throw new org.springframework.security.access.AccessDeniedException("Only ADMIN can hard-delete ServiceRequest");var result=hardDelete.delete(id);auditService.record(account(actor.accountId()),"SERVICE_REQUEST_FORCE_DELETED","ServiceRequest",id,null,Map.of("reason",reason,"deleted",result.deleted()),md);return result;}

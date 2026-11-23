@@ -70,7 +70,7 @@
               "$ref": "/inputs/language_code"
             },
             "speed_wpm": 150,
-            "volume": 70
+            "volume": 100
           }
         },
         "timeoutSec": 90,

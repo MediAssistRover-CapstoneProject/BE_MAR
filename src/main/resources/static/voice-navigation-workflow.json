@@ -85,7 +85,7 @@
             "text": "Mời bạn đi theo tôi.",
             "language_code": "vi",
             "speed_wpm": 150,
-            "volume": 70
+            "volume": 100
           }
         },
         "inputMappingJson": {},
@@ -142,7 +142,7 @@
             },
             "language_code": "vi",
             "speed_wpm": 150,
-            "volume": 70
+            "volume": 100
           }
         },
         "timeoutSec": 90,

@@ -8,6 +8,11 @@ public record MqttOperationRecoveryRequest(
         @NotNull Evidence evidence,
         @NotNull @AssertTrue Boolean confirmedStopped,
         @NotNull JobRequests.ReconcileOutcome outcome,
-        @NotBlank @Size(max=2000) String note) {
+        @NotBlank @Size(max=2000) String note,
+        @jakarta.validation.Valid JobRequests.DeliveryRecoveryConfirmation deliveryRecovery) {
+    public MqttOperationRecoveryRequest(UUID commandId,String operationKey,UUID transportSessionId,Evidence evidence,
+            Boolean confirmedStopped,JobRequests.ReconcileOutcome outcome,String note) {
+        this(commandId,operationKey,transportSessionId,evidence,confirmedStopped,outcome,note,null);
+    }
     public enum Evidence { PI_STOP_CONFIRMED, STAFF_INSPECTED_STOP, COMMAND_NOT_ACCEPTED }
 }

@@ -57,6 +57,30 @@ Không gửi email khi tài khoản không có email hợp lệ, bị khóa/vô 
 
 ## Kiểm chứng
 
+### Hàng còn trong robot khi lỗi hoặc hủy
+
+Job giao hàng schema 3 đã gửi lệnh mở khoang hoặc xác nhận xếp hàng nhưng chưa hoàn tất lấy hàng, đóng cửa và kiểm tra khóa ở người nhận sẽ giữ robot để xử lý thủ công. Robot dừng bánh không chứng minh khoang trống. Lỗi chuyển sang `RECOVERY_REQUIRED`; hủy Job vẫn trả `CANCELLED` nhưng giữ `stopStatus=RECOVERY_REQUIRED`. Yêu cầu dịch vụ giữ `RECOVERY_REQUIRED`. Các yêu cầu giao hàng tiếp theo và patrol chờ robot này xử lý xong.
+
+`POST /api/v1/service-requests/{requestId}/cancel` dùng cùng bộ xử lý dừng MQTT như `/api/v1/jobs/{jobId}/cancel`, kể cả khi đã lấy hàng; không chỉ đổi trạng thái trên giao diện.
+
+Staff/Admin có quyền truy cập Job phải lấy hàng ra, đóng cửa và kiểm tra khóa thực tế. Khi mọi lệnh Pi đã có bằng chứng dừng hoặc đã được đối soát, gửi `POST /api/v1/jobs/{jobId}/reconcile`:
+
+```json
+{
+  "note": "Đã lấy hàng ra và kiểm tra khoang đóng, khóa an toàn",
+  "outcome": "RESUME_AS_FAILED",
+  "deliveryRecovery": {
+    "cargoRemoved": true,
+    "compartmentClosed": true,
+    "compartmentLocked": true
+  }
+}
+```
+
+Nếu Job đã hủy, dùng `outcome: CONFIRM_CANCELLED`. Nếu lệnh Pi còn cần đối soát, dùng API `/api/v1/jobs/{jobId}/operations/{jobStepId}/reconcile` với các trường bằng chứng hiện có và thêm cùng đối tượng `deliveryRecovery`; giữ `Idempotency-Key` cho lần thử lại giống hệt. BE còn kiểm tra HELLO hiện tại, heartbeat IDLE mới không có thao tác/mapping đang chạy, odometry đứng yên còn mới và journal đã kết thúc. `note` hoặc cờ xác nhận riêng lẻ không đủ để mở robot cho Job tiếp theo.
+
+BE ghi audit `DELIVERY_CARGO_RECOVERY_CONFIRMED`, giữ Job `FAILED` hoặc `CANCELLED` và yêu cầu HELLO mới trước khi chạy tiếp. Đối soát không tự đánh dấu giao hàng thành công hay tạo các mốc xác nhận giao hàng. Không cần migration mới.
+
 `mvn '-Dmaven.test.skip=false' test` chạy cả test cũ và test staff/delivery mới. Test bao gồm hiệu lực ca, idempotent check-in/out, chủ ca, endpoint mơ hồ, ghi đè đích giả mạo, kiểm tra lại ca lúc submit, profile/avatar, ngưỡng 5 cm, cảnh báo đúng người, retry email và email hết hạn.
 
 Browser smoke test dùng API giả lập trên localhost để kiểm tra form, check-in/out, sửa profile, chọn B và payload receiverShiftId, hiển thị thông báo và mở job. Đây không phải kiểm thử E2E với database/robot thật.

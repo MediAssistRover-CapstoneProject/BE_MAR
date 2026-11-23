@@ -199,28 +199,32 @@ public class JobExecutionServiceImpl implements JobExecutionService {
         JsonNode input=inputSnapshots.forRequest(workflow,request);Job job=create(workflow,request,null,robot,map,request.getPriority(),input,null,null);job.setRecoveryOfJob(recoverySource(request));return job;}
     @Override public Job createForSchedule(Schedule schedule, Instant fireAt, JsonNode input) {
         var policy = rollout.lockForRuntimeCreation();
-        if (jobRepository.existsByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(schedule.getScheduleId(), fireAt, "DEFAULT")) {
-            return jobRepository.findAll().stream().filter(job -> job.getSchedule() != null
-                    && job.getSchedule().getScheduleId().equals(schedule.getScheduleId())
-                    && fireAt.equals(job.getScheduleFireAt())).findFirst().orElseThrow();
-        }
+        var existing = jobRepository.findByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(
+                schedule.getScheduleId(), fireAt, "DEFAULT");
+        if (existing.isPresent()) return existing.get();
         Workflow workflow = schedule.getWorkflow();
         rollout.requireSchema(policy, workflow.getSchemaVersion());
+        if ("PATROL".equalsIgnoreCase(workflow.getServiceType()) && !PatrolWorkflowService.isPatrol(workflow)) {
+            throw new BusinessRuleException("Use a patrol definition created with the patrol workflow API");
+        }
         if (PatrolWorkflowService.isPatrol(workflow)) {
             if (policy.dispatchHalted() || workflow.getStatus() != WorkflowStatus.PUBLISHED
                     || !workflow.isAcceptsNewJobs() || schedule.getRobot() == null) return null;
             Robot robot = robotRepository.findByIdForUpdate(schedule.getRobot().getRobotId()).orElse(null);
             FacilityMap map;
             try {
-                patrol.validateSchedule(workflow, robot, schedule.getPriority(), schedule.getIntervalSec(), input);
-                map = patrol.readyMap(workflow, robot, schedule.getPriority());
+                map = patrol.queuedMap(workflow, robot, schedule.getPriority(), schedule.getIntervalSec(), input);
             } catch (BusinessRuleException | ResourceNotFoundException error) {
-                log.warn("Patrol schedule {} skipped: {}", schedule.getScheduleId(), error.getMessage());
+                log.warn("Patrol schedule {} unavailable: {}", schedule.getScheduleId(), error.getMessage());
                 return null;
             }
-            if (map == null) return null;
-            return create(workflow, null, schedule, robot, map, schedule.getPriority(),
+            // Serialize on the robot: recurring schedules coalesce into its existing patrol intent.
+            if (jobRepository.existsNonterminalPatrol(robot.getRobotId())) return null;
+            Job job = create(workflow, null, schedule, robot, map, schedule.getPriority(),
                     inputSnapshots.forWorkflow(workflow, input), fireAt, "DEFAULT");
+            ((ObjectNode) job.getContextJson()).put("patrol_map_asset_hash", map.getAssetHash())
+                    .put("patrol_map_frame_id", map.getFrameId());
+            return job;
         }
         if (workflow.getStatus() != WorkflowStatus.PUBLISHED || !workflow.isAcceptsNewJobs()) {
             throw new BusinessRuleException("Schedule workflow does not accept new jobs");

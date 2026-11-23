@@ -73,6 +73,22 @@ class JobSuspensionServiceTest {
         assertEquals(now.plusSeconds(650),service.deadline(job));
     }
 
+    @Test void waitingPatrolKeepsItsQueueIdentityUntilForegroundAndManualHoldsClear(){
+        job.setStatus(JobStatus.QUEUED);job.setStartedAt(null);job.setSelectedJobStep(null);
+        UUID foreground=UUID.randomUUID();
+        service.request(job,"JOB",foreground);service.request(job,"MANUAL",job.getJobId());
+        assertEquals(JobStatus.QUEUED,job.getStatus());assertTrue(service.hasHolds(job));
+        assertTrue(JobOccupancyPolicy.unstartedPatrolIntent(job));assertNull(job.getSuspendRequestedAt());
+        assertEquals(RobotStatus.BUSY,robot.getStatus(),"The current foreground owner remains busy");
+        when(jobs.findRobotJobIds(eq(robot.getRobotId()),argThat(states->states.contains(JobStatus.QUEUED))))
+                .thenReturn(List.of(job.getJobId()));
+        when(jobs.lockById(job.getJobId())).thenReturn(Optional.of(job));
+        service.releaseRobot(robot.getRobotId(),"JOB",foreground);
+        assertTrue(service.hasHolds(job),"Manual pause survives foreground completion");
+        service.release(job,"MANUAL",job.getJobId());
+        assertFalse(service.hasHolds(job));assertEquals(JobStatus.QUEUED,job.getStatus());
+    }
+
     @Test void publishedMoveRequiresStopEvidenceBeforeOwnershipCanTransfer(){
         service.request(job,"MANUAL",job.getJobId());
         var command=RobotCommandOutbox.builder().sendAttempts(1).physicalStopConfirmed(false).build();

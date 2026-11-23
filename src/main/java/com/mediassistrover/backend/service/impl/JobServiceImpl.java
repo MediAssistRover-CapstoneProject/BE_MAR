@@ -36,6 +36,7 @@ public class JobServiceImpl implements JobService {
     private final JobHardDeleteService hardDelete;
     private final PatrolJobStateService patrolStates;
     private final JobCancellationService cancellation;
+    private final DeliveryReleasePolicy deliveryRelease;
 
     private void reconcileStoppedMappingWait(Job job,JobStatus terminal) {
         if(!mapping.open(job.getJobId()))return;
@@ -81,7 +82,24 @@ public class JobServiceImpl implements JobService {
         cancellation.cancel(job,account(actor.accountId()),request.reason(),metadata);
         return mapper.toResponse(job);
     }
-    @Override @Transactional public JobResponse reconcile(UUID id,ReconcileJobRequest r,AccountPrincipal a,RequestMetadata md){Job j=jobRepository.lockById(id).orElseThrow(()->new ResourceNotFoundException("Job not found"));scope(j,a);if(j.getStatus()!=JobStatus.RECOVERY_REQUIRED)throw new BusinessRuleException("Only RECOVERY_REQUIRED job can be reconciled");if(j.isBeOrchestrated() && mqttCommands.existsUnreconciledByJobId(id))throw new BusinessRuleException("MQTT recovery requires operation/stop reconciliation via the operation recovery API; generic Job reconciliation cannot release this robot");JobStatus next=r.outcome()==ReconcileOutcome.CONFIRM_CANCELLED?JobStatus.CANCELLED:JobStatus.FAILED;reconcileStoppedMappingWait(j,next);j.setStatus(next);j.setReconciledByAccount(account(a.accountId()));j.setReconciledAt(Instant.now(clock));j.setReconciliationNote(r.note());j.setEndedAt(Instant.now(clock));if(j.getServiceRequest()!=null){j.getServiceRequest().setStatus(next==JobStatus.CANCELLED?ServiceRequestStatus.CANCELLED:ServiceRequestStatus.FAILED);j.getServiceRequest().setCompletedAt(Instant.now(clock));}if(j.getRobot()!=null&&Set.of(RobotStatus.BUSY,RobotStatus.ERROR).contains(j.getRobot().getStatus()))j.getRobot().setStatus(RobotStatus.STARTING);requireNewMqttHello(j);event(j,a,"JOB_RECONCILED",JobStatus.RECOVERY_REQUIRED.name(),next.name(),objectMapper.createObjectNode().put("note",r.note()));audit(a,"JOB_RECONCILED",j,md);return mapper.toResponse(j);}
+    @Override @Transactional
+    public JobResponse reconcile(UUID id,ReconcileJobRequest r,AccountPrincipal a,RequestMetadata md) {
+        Job j=jobRepository.lockById(id).orElseThrow(()->new ResourceNotFoundException("Job not found"));scope(j,a);
+        boolean cancelledCargo=j.getStatus()==JobStatus.CANCELLED && j.stopOutstanding() && deliveryRelease.requiresReconciliation(j);
+        if(j.getStatus()!=JobStatus.RECOVERY_REQUIRED && !cancelledCargo)throw new BusinessRuleException("Only a recovery Job or cancelled delivery with unresolved cargo can be reconciled");
+        if(j.isBeOrchestrated() && mqttCommands.existsUnreconciledByJobId(id))throw new BusinessRuleException("MQTT recovery requires operation/stop reconciliation via the operation recovery API; generic Job reconciliation cannot release this robot");
+        JobStatus next=j.getCancelRequestedAt()!=null || r.outcome()==ReconcileOutcome.CONFIRM_CANCELLED?JobStatus.CANCELLED:JobStatus.FAILED;
+        reconcileStoppedMappingWait(j,next);
+        deliveryRelease.confirmCleared(j,r.deliveryRecovery(),account(a.accountId()),md);
+        j.setStatus(next);j.setReconciledByAccount(account(a.accountId()));j.setReconciledAt(Instant.now(clock));
+        j.setReconciliationNote(r.note());j.setEndedAt(Instant.now(clock));
+        if(cancelledCargo){j.setStopStatus(JobStopStatus.CONFIRMED);j.setStopConfirmedAt(Instant.now(clock));}
+        if(j.getServiceRequest()!=null){j.getServiceRequest().setStatus(next==JobStatus.CANCELLED?ServiceRequestStatus.CANCELLED:ServiceRequestStatus.FAILED);j.getServiceRequest().setCompletedAt(Instant.now(clock));}
+        if(j.getRobot()!=null&&Set.of(RobotStatus.BUSY,RobotStatus.ERROR).contains(j.getRobot().getStatus()))j.getRobot().setStatus(RobotStatus.STARTING);
+        requireNewMqttHello(j);
+        event(j,a,"JOB_RECONCILED",JobStatus.RECOVERY_REQUIRED.name(),next.name(),objectMapper.createObjectNode().put("note",r.note()));
+        audit(a,"JOB_RECONCILED",j,md);return mapper.toResponse(j);
+    }
 
     private void requireNewMqttHello(Job job) {
         if(!job.isBeOrchestrated() || job.getRobot()==null)return;

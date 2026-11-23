@@ -275,7 +275,7 @@ public class NavigationSessionService {
     }
     private RobotNavigationSession required(UUID robotId,UUID id){var row=current(robotId);if(row==null||!row.getSessionId().equals(id))throw new BusinessRuleException("NAVIGATION_SESSION_CLOSED_OR_CHANGED");return row;}
     private Robot robot(UUID id){return robots.findByIdForUpdate(id).orElseThrow(()->new ResourceNotFoundException("Robot not found"));}
-    private void idle(UUID id){if(!jobs.lockRobotJobs(id,HELD).isEmpty())throw new BusinessRuleException("End/cancel the robot's current Job before changing navigation context or initial pose");
+    private void idle(UUID id){if(jobs.lockRobotJobs(id,HELD).stream().anyMatch(j->!JobOccupancyPolicy.unstartedPatrolIntent(j)))throw new BusinessRuleException("End/cancel the robot's current Job before changing navigation context or initial pose");
         var robot=robot(id);if(robot.getStatus()==RobotStatus.BUSY)throw new BusinessRuleException("Stop manual movement first");}
     private void requireDevice(DevicePrincipal p){if(p==null)throw new org.springframework.security.access.AccessDeniedException("DEVICE identity required");var r=robots.findById(p.robotId()).orElseThrow();if(r.getDeviceTokenVersion()!=p.tokenVersion()||!r.getRobotCode().equals(p.robotCode())||p.expiresAt()==null||!p.expiresAt().isAfter(Instant.now(clock)))throw new org.springframework.security.access.AccessDeniedException("Current DEVICE token required");}
 }

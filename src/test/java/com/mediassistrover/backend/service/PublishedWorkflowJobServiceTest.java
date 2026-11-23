@@ -188,12 +188,49 @@ class PublishedWorkflowJobServiceTest {
         }
     }
 
+    @Test void scheduledPatrolQueuesBehindBusyOrOfflineRobotAndCoalescesExistingIntent() {
+        var fixture=new ExecutionFixture("PATROL","WF_PATROL_SCHEDULE");
+        var map=FacilityMap.builder().mapId(UUID.randomUUID()).assetHash("a".repeat(64)).frameId("map").build();
+        var schedule=Schedule.builder().scheduleId(UUID.randomUUID()).workflow(fixture.definition)
+                .robot(fixture.robot).priority(5).inputTemplateJson(wire.object()).build();
+        when(rollout.lockForRuntimeCreation()).thenReturn(new MqttRolloutService.State(
+                MqttRolloutService.Mode.MQTT_ONLY,false,1,clock.instant(),"test"));
+        when(fixture.patrol.queuedMap(fixture.definition,fixture.robot,5,null,schedule.getInputTemplateJson())).thenReturn(map);
+        for(var state:List.of(RobotStatus.BUSY,RobotStatus.OFFLINE)) {
+            fixture.robot.setStatus(state);
+            var job=fixture.executor.createForSchedule(schedule,clock.instant(),schedule.getInputTemplateJson());
+            assertEquals(JobStatus.QUEUED,job.getStatus());assertSame(fixture.robot,job.getRobot());
+            assertSame(map,job.getMap());assertEquals(state,fixture.robot.getStatus());
+            assertEquals(clock.instant(),job.getScheduleFireAt());
+            assertEquals(map.getAssetHash(),job.getContextJson().path("patrol_map_asset_hash").asText());
+            assertFalse(job.getInputJson().has("navigation_session_id"));
+        }
+        clearInvocations(fixture.jobRows,fixture.wakeups);
+        when(fixture.jobRows.existsNonterminalPatrol(robotId)).thenReturn(true);
+        assertNull(fixture.executor.createForSchedule(schedule,clock.instant().plusSeconds(60),schedule.getInputTemplateJson()));
+        verify(fixture.jobRows,never()).saveAndFlush(any());verifyNoInteractions(fixture.wakeups);
+        verify(fixture.patrol,never()).readyMap(any(),any(),anyInt());
+    }
+
+    @Test void scheduledOccurrenceReplayUsesExactIndexedLookupWithoutCreatingAnotherJob() {
+        var fixture=new ExecutionFixture("PATROL","WF_PATROL_REPLAY");
+        var schedule=Schedule.builder().scheduleId(UUID.randomUUID()).workflow(fixture.definition).build();
+        var existing=Job.builder().jobId(UUID.randomUUID()).status(JobStatus.QUEUED).build();
+        when(fixture.jobRows.findByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(
+                schedule.getScheduleId(),clock.instant(),"DEFAULT")).thenReturn(Optional.of(existing));
+        assertSame(existing,fixture.executor.createForSchedule(schedule,clock.instant(),wire.object()));
+        verify(fixture.jobRows,never()).saveAndFlush(any());verify(fixture.jobRows,never()).findAll();
+        verifyNoInteractions(fixture.patrol,fixture.wakeups);
+    }
+
     private class ExecutionFixture {
         final com.mediassistrover.backend.service.impl.JobExecutionServiceImpl executor=
                 mock(com.mediassistrover.backend.service.impl.JobExecutionServiceImpl.class,CALLS_REAL_METHODS);
         final JobRepository jobRows=mock(JobRepository.class);
         final JobStepRepository steps=mock(JobStepRepository.class);
         final OrchestrationWorkService wakeups=mock(OrchestrationWorkService.class);
+        final PatrolWorkflowService patrol=mock(PatrolWorkflowService.class);
+        final Workflow definition;
         final Robot robot=Robot.builder().robotId(robotId).status(RobotStatus.BUSY).build();
         ExecutionFixture(String type,String code) {
             var definitions=mock(WorkflowRepository.class);var actions=mock(StepRepository.class);
@@ -203,7 +240,7 @@ class PublishedWorkflowJobServiceTest {
                     new com.fasterxml.jackson.databind.ObjectMapper(),mock(DeliveryRequestRepository.class),
                     mock(DeliveryItemRepository.class),mock(NavigationRequestRepository.class),mock(EscortRequestRepository.class));
             var readiness=mock(com.mediassistrover.backend.validation.WorkflowExecutionReadiness.class);
-            var definition=Workflow.builder().workflowId(workflowId).workflowCode(code).serviceType(type)
+            definition=Workflow.builder().workflowId(workflowId).workflowCode(code).serviceType(type)
                     .schemaVersion(3).graphVersion(3).status(WorkflowStatus.PUBLISHED).acceptsNewJobs(true)
                     .definitionHash("published").defaultInputsJson(wire.object()).inputSchemaJson(wire.parse(
                             "{\"type\":\"object\",\"additionalProperties\":false}".getBytes(StandardCharsets.UTF_8))).build();
@@ -226,6 +263,7 @@ class PublishedWorkflowJobServiceTest {
             fields.put("jobRepository",jobRows);fields.put("taskRepository",tasks);fields.put("jobTaskRepository",runtimeTasks);
             fields.put("jobStepRepository",steps);fields.put("clock",clock);fields.put("objectMapper",new com.fasterxml.jackson.databind.ObjectMapper());
             fields.put("eventRepository",mock(JobEventRepository.class));fields.put("wakeups",wakeups);
+            fields.put("patrol",patrol);
             fields.put("deliveryEvents",mock(org.springframework.context.ApplicationEventPublisher.class));
             fields.forEach((name,value)->ReflectionTestUtils.setField(executor,name,value));
         }

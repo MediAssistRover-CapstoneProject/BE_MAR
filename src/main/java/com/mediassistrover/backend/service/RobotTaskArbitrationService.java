@@ -24,6 +24,7 @@ public class RobotTaskArbitrationService {
     private final RobotRepository robots;
     private final NavigationSessionService navigation;
     private final AlertRepository alerts;
+    private final PatrolWorkflowService patrol;
 
     /** Caller already owns the selected job row and robot lock; this method is read-only. */
     public boolean canStart(Job candidate) {
@@ -48,7 +49,19 @@ public class RobotTaskArbitrationService {
         if (!emergency && !voices.findByRobotRobotIdAndStatus(robotId, VoiceInteractionStatus.ACTIVE).isEmpty()) return false;
         if (!emergency && !incidents.findByRobotRobotIdAndStatusInAndArchivedAtIsNull(robotId, OPEN_INCIDENTS).isEmpty()) return false;
         if (!emergency && alerts.existsActiveRestrictedByRobotId(robotId)) return false;
-        return !JobOccupancyPolicy.patrol(candidate) || !suspension.hasHolds(candidate);
+        if (!JobOccupancyPolicy.patrol(candidate)) return true;
+        if (suspension.hasHolds(candidate)) return false;
+        try {
+            var map = patrol.readyMap(candidate.getWorkflow(), robot, candidate.getPriority(), candidate.getJobId());
+            if (map == null || candidate.getMap() == null || !map.getMapId().equals(candidate.getMap().getMapId())) return false;
+            var context = candidate.getContextJson();
+            return context == null || !context.hasNonNull("patrol_map_asset_hash")
+                    || map.getAssetHash().equalsIgnoreCase(context.path("patrol_map_asset_hash").asText())
+                    && map.getFrameId().equals(context.path("patrol_map_frame_id").asText());
+        } catch (com.mediassistrover.backend.exception.BusinessRuleException
+                 | com.mediassistrover.backend.exception.ResourceNotFoundException unavailable) {
+            return false;
+        }
     }
 
     public boolean yieldingPatrol(Robot robot, int priority) {

@@ -26,7 +26,7 @@ public class RequestJobInputSnapshotFactory {
     private static final Set<String> UNTRUSTED_AUTHORITY = Set.of("authorization", "verification_id",
             "actor_account_id", "actor_user_id", "verified", "valid_until", "verified_at", "permissions",
             "required_role", "actor", "purpose", "sender_account_id", "receiver_account_id",
-            "job_id", "job_step_id", "operation_key", "command_id", "context", "vars", "outputs");
+            "job_id", "job_step_id", "operation_key", "command_id", "context", "vars", "outputs", "delivery_recovery");
 
     public ObjectNode forRequest(Workflow workflow, ServiceRequest request) {
         ObjectNode result = merged(workflow.getDefaultInputsJson(), request.getRequestDataJson());

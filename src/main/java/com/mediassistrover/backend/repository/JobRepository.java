@@ -66,13 +66,19 @@ public interface JobRepository extends JpaRepository<Job,UUID> {
     List<Job> findByRobotRobotIdAndStatusIn(@Param("robotId") UUID robotId,@Param("statuses") Collection<JobStatus> statuses);
     @Query("select j.jobId from Job j where j.status='CANCELLED' and j.stopStatus in ('PENDING','RECOVERY_REQUIRED') order by j.jobId")
     List<UUID> findOutstandingCancellationIds(Pageable page);
-    @Query("select j.jobId from Job j where j.status='QUEUED' and j.robot is null order by j.priority desc,j.queuedAt,j.jobId")
+    @Query("select j.jobId from Job j where j.status='QUEUED' and j.robot is null and j.cancelRequestedAt is null order by j.priority desc,j.queuedAt,j.jobId")
     List<UUID> findUnassignedQueuedJobIds(Pageable pageable);
+    @Query("select j.jobId from Job j where j.status='QUEUED' and j.robot is null and j.cancelRequestedAt is null " +
+           "and (j.priority<:priority or (j.priority=:priority and (j.queuedAt>:queuedAt " +
+           "or (j.queuedAt=:queuedAt and j.jobId>:afterId)))) order by j.priority desc,j.queuedAt,j.jobId")
+    List<UUID> findUnassignedQueuedJobIdsAfter(@Param("priority") int priority,@Param("queuedAt") Instant queuedAt,
+                                              @Param("afterId") UUID afterId,Pageable pageable);
     @Query("select count(j)>0 from Job j left join j.map m where j.status='QUEUED' and j.robot is null " +
            "and j.cancelRequestedAt is null and j.priority>:priority and (m is null or m.mapId=:mapId)")
     boolean existsHigherPriorityQueuedForMap(@Param("mapId") UUID mapId, @Param("priority") int priority);
     Optional<Job> findFirstByRobotRobotIdAndStatusOrderByQueuedAtAsc(UUID robotId,JobStatus status);
     boolean existsByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(UUID scheduleId,Instant fireAt,String itemKey);
+    Optional<Job> findByScheduleScheduleIdAndScheduleFireAtAndScheduleItemKey(UUID scheduleId,Instant fireAt,String itemKey);
     @Query("select j.jobId from Job j where j.robot.robotId=:robotId and (j.status in :statuses or j.stopStatus in ('PENDING','RECOVERY_REQUIRED')) order by j.jobId")
     List<UUID> findRobotJobIds(@Param("robotId") UUID robotId,@Param("statuses") Collection<JobStatus> statuses);
     /** Lock by PRIMARY, like the orchestrator. Locking through ix_job_robot_status

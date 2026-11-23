@@ -28,10 +28,11 @@ class ImmediateJobCancelTest {
     final OrchestrationWorkService wakeups = mock(OrchestrationWorkService.class);
     final RobotCommandOutboxRepository commands=mock(RobotCommandOutboxRepository.class);
     final AuditService audit=mock(AuditService.class);
+    final DeliveryReleasePolicy deliveryRelease=mock(DeliveryReleasePolicy.class);
     final com.mediassistrover.backend.mqtt.MqttOperationControlService control=mock(com.mediassistrover.backend.mqtt.MqttOperationControlService.class);
     final JobCancellationService cancellation=new JobCancellationService(jobs,steps,tasks,robots,commands,
         mock(RobotOperationAuthorizationRepository.class),control,mock(com.mediassistrover.backend.mapping.MappingLifecycleService.class),
-        audit,mock(org.springframework.context.ApplicationEventPublisher.class),Clock.systemUTC());
+        audit,mock(org.springframework.context.ApplicationEventPublisher.class),Clock.systemUTC(),deliveryRelease);
     final JobServiceImpl service = mock(JobServiceImpl.class, CALLS_REAL_METHODS);
     final Account account = Account.builder().accountId(UUID.randomUUID()).role(Role.ADMIN).build();
     final AccountPrincipal actor = AccountPrincipal.fromAccount(account);
@@ -192,6 +193,53 @@ class ImmediateJobCancelTest {
         service.cancel(job.getJobId(),new CancelJobRequest("end patrol permanently"),actor,null);
         assertEquals(JobStatus.CANCELLED,job.getStatus());assertFalse(job.isResumeRequested());
         assertEquals(RobotStatus.BUSY,job.getRobot().getStatus());
+    }
+
+    @Test void physicalStopDoesNotReleaseCancelledDeliveryWithUnresolvedCargo() {
+        var job=job(JobStatus.RUNNING);
+        var request=ServiceRequest.builder().serviceRequestId(UUID.randomUUID()).requestType(ServiceRequestType.DELIVERY)
+                .status(ServiceRequestStatus.IN_PROGRESS).build();job.setServiceRequest(request);
+        var move=JobStep.builder().jobStepId(UUID.randomUUID()).status(JobStepStatus.RUNNING).build();job.setSelectedJobStep(move);
+        var command=RobotCommandOutbox.builder().commandId(UUID.randomUUID()).jobId(job.getJobId()).jobStepId(move.getJobStepId())
+                .commandType("EXECUTE_STEP").state("STARTED").sendAttempts(1).build();
+        when(commands.findByJobIdOrderByCreatedAt(job.getJobId())).thenReturn(List.of(command));
+        when(commands.findByJobStepId(move.getJobStepId())).thenReturn(Optional.of(command));
+        when(steps.findById(move.getJobStepId())).thenReturn(Optional.of(move));
+        when(steps.findByJobId(job.getJobId())).thenReturn(List.of(move));
+        when(deliveryRelease.requiresReconciliation(job)).thenReturn(true);
+        doAnswer(i->{job.setStopStatus(JobStopStatus.RECOVERY_REQUIRED);job.getRobot().setStatus(RobotStatus.ERROR);
+            request.setStatus(ServiceRequestStatus.RECOVERY_REQUIRED);return null;}).when(deliveryRelease).retain(job);
+        service.cancel(job.getJobId(),new CancelJobRequest("recover goods"),actor,null);
+        verify(control).handle(job,move);
+        command.setState("COMPLETED");command.setPhysicalStopConfirmed(true);cancellation.advance(job.getJobId());
+        assertEquals(JobStatus.CANCELLED,job.getStatus());assertEquals(JobStopStatus.RECOVERY_REQUIRED,job.getStopStatus());
+        assertEquals(RobotStatus.ERROR,job.getRobot().getStatus());assertEquals(ServiceRequestStatus.RECOVERY_REQUIRED,request.getStatus());
+        cancellation.advance(job.getJobId());assertTrue(job.stopOutstanding());
+    }
+
+    @Test void deliveryRequestCancellationUsesTheStopReconcilerAfterPickup() {
+        var job=job(JobStatus.RUNNING);
+        var request=ServiceRequest.builder().serviceRequestId(UUID.randomUUID()).requestType(ServiceRequestType.DELIVERY)
+                .status(ServiceRequestStatus.IN_PROGRESS).build();job.setServiceRequest(request);
+        var requests=mock(ServiceRequestRepository.class);var requestService=mock(ServiceRequestServiceImpl.class,CALLS_REAL_METHODS);
+        ReflectionTestUtils.setField(requestService,"requestRepository",requests);ReflectionTestUtils.setField(requestService,"jobRepository",jobs);
+        ReflectionTestUtils.setField(requestService,"staffScope",scope);ReflectionTestUtils.setField(requestService,"cancellation",cancellation);
+        ReflectionTestUtils.setField(requestService,"accountRepository",accounts);ReflectionTestUtils.setField(requestService,"auditService",audit);
+        ReflectionTestUtils.setField(requestService,"mapper",mock(RequestJobMapper.class));
+        when(requests.findById(request.getServiceRequestId())).thenReturn(Optional.of(request));
+        when(jobs.findByServiceRequestServiceRequestId(request.getServiceRequestId())).thenReturn(List.of(job));
+        var move=JobStep.builder().jobStepId(UUID.randomUUID()).status(JobStepStatus.RUNNING).build();job.setSelectedJobStep(move);
+        var command=RobotCommandOutbox.builder().commandId(UUID.randomUUID()).jobId(job.getJobId()).jobStepId(move.getJobStepId())
+                .commandType("EXECUTE_STEP").state("STARTED").sendAttempts(1).build();
+        when(commands.findByJobIdOrderByCreatedAt(job.getJobId())).thenReturn(List.of(command));
+        when(commands.findByJobStepId(move.getJobStepId())).thenReturn(Optional.of(command));
+        when(steps.findById(move.getJobStepId())).thenReturn(Optional.of(move));when(steps.findByJobId(job.getJobId())).thenReturn(List.of(move));
+        when(deliveryRelease.requiresReconciliation(job)).thenReturn(true);
+        doAnswer(i->{job.setStopStatus(JobStopStatus.RECOVERY_REQUIRED);job.getRobot().setStatus(RobotStatus.ERROR);
+            request.setStatus(ServiceRequestStatus.RECOVERY_REQUIRED);return null;}).when(deliveryRelease).retain(job);
+        requestService.cancel(request.getServiceRequestId(),"goods remain onboard",actor,null);
+        assertNotNull(job.getCancelRequestedAt());verify(control).handle(job,move);
+        assertTrue(job.stopOutstanding());assertEquals(ServiceRequestStatus.RECOVERY_REQUIRED,request.getStatus());
     }
 
     @Test void recoveryCancelWithEarlierRequestKeepsRobotUntilStopIsConfirmed() {

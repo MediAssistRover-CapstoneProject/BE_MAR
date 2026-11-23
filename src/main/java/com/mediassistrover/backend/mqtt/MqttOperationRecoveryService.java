@@ -39,6 +39,7 @@ public class MqttOperationRecoveryService {
     private final org.springframework.context.ApplicationEventPublisher updates;
     private final Clock clock;
     private final com.mediassistrover.backend.mapping.MappingLifecycleService mapping;
+    private final DeliveryReleasePolicy deliveryRelease;
     @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager em;
 
     public record CancelledMoveSettlement(@jakarta.validation.constraints.NotNull UUID commandId,
@@ -223,6 +224,7 @@ public class MqttOperationRecoveryService {
         if(job.getServiceRequest()!=null){job.getServiceRequest().setStatus(ServiceRequestStatus.valueOf(status.name()));if(status==JobStatus.CANCELLED)job.getServiceRequest().setCancelledAt(now);else job.getServiceRequest().setCompletedAt(now);}
         for(JobTask task:tasks.findByJobJobIdOrderBySequenceNoAsc(jobId))if(task.getStartedAt()!=null && task.getEndedAt()==null){task.setStatus(status==JobStatus.CANCELLED?JobTaskStatus.CANCELLED:JobTaskStatus.FAILED);task.setEndedAt(now);}
         for(var command:commands.findByJobIdOrderByCreatedAt(jobId))if(command.getJobStepId().equals(stepId))command.setState("RESOLVED_BY_STAFF");
+        deliveryRelease.confirmCleared(job,request.deliveryRecovery(),actor,metadata);
         if(job.getStopStatus()!=null) {
             boolean outstanding=commands.findByJobIdOrderByCreatedAt(jobId).stream().anyMatch(command ->
                 "EXECUTE_STEP".equals(command.getCommandType()) && command.getSendAttempts()>0

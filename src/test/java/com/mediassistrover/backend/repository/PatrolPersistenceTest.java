@@ -30,9 +30,10 @@ class PatrolPersistenceTest {
     @Autowired EntityManager em;
     @Autowired JobRepository jobs;
     @Autowired JobSuspensionHoldRepository holds;
+    @Autowired ScheduleRepository schedules;
 
     @Test void suspendedJobAndIndependentHoldsPersistAndRoundQueriesCompile(){
-        var json=new ObjectMapper();var now=Instant.now();
+        var json=new ObjectMapper();var now=Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
         var workflow=Workflow.builder().workflowCode("WF_TEST_PATROL").versionNo(1).workflowName("Patrol")
             .serviceType("PATROL").status(WorkflowStatus.PUBLISHED).acceptsNewJobs(true)
             .schemaVersion(3).graphVersion(3).maxDurationSec(600).maxTotalVisits(10)
@@ -61,5 +62,30 @@ class PatrolPersistenceTest {
         assertNotNull(deadline.getPatrolRoundStartedAt());
         assertDoesNotThrow(()->jobs.findYieldablePatrolCandidates(org.springframework.data.domain.PageRequest.of(0,10)));
         assertDoesNotThrow(()->jobs.findPatrolArbitrationRobotIds(org.springframework.data.domain.PageRequest.of(0,10)));
+        for(int i=0;i<3;i++)em.persist(Schedule.builder().workflow(workflow).scheduleCode("SCHEDULE_"+i)
+                .scheduleName("Patrol "+i).scheduleType(ScheduleType.ONCE).timezone("Asia/Ho_Chi_Minh")
+                .startsAt(now.minusSeconds(60)).nextRunAt(now).status(ScheduleStatus.ACTIVE)
+                .misfirePolicy(MisfirePolicy.FIRE_ONCE).inputTemplateJson(json.createObjectNode()).createdAt(now).updatedAt(now).build());
+        em.flush();var page=org.springframework.data.domain.PageRequest.of(0,1);
+        var first=schedules.lockDue(now,page).getFirst();
+        var second=schedules.lockDueAfter(now,first.getNextRunAt(),first.getScheduleId(),page).getFirst();
+        var third=schedules.lockDueAfter(now,second.getNextRunAt(),second.getScheduleId(),page).getFirst();
+        assertEquals(3,Set.of(first.getScheduleId(),second.getScheduleId(),third.getScheduleId()).size());
+        assertTrue(schedules.lockDueAfter(now,third.getNextRunAt(),third.getScheduleId(),page).isEmpty());
+        for(int i=0;i<3;i++)em.persist(Job.builder().workflow(workflow).jobCode("JOB_QUEUE_"+i)
+                .status(JobStatus.QUEUED).priority(i==0?90:80).queuedAt(now)
+                .schemaVersion(3).graphVersion(3).protocolVersion(1).beOrchestrated(true)
+                .workflowHash("a".repeat(64)).inputJson(json.createObjectNode()).contextJson(json.createObjectNode()).build());
+        em.flush();
+        var head=jobs.findById(jobs.findUnassignedQueuedJobIds(page).getFirst()).orElseThrow();
+        var tail=jobs.findById(jobs.findUnassignedQueuedJobIdsAfter(head.getPriority(),head.getQueuedAt(),head.getJobId(),page)
+                .getFirst()).orElseThrow();
+        var last=jobs.findById(jobs.findUnassignedQueuedJobIdsAfter(tail.getPriority(),tail.getQueuedAt(),tail.getJobId(),page)
+                .getFirst()).orElseThrow();
+        assertEquals(90,head.getPriority());assertEquals(80,tail.getPriority());
+        assertEquals(3,Set.of(head.getJobId(),tail.getJobId(),last.getJobId()).size());
+        assertTrue(jobs.findUnassignedQueuedJobIdsAfter(last.getPriority(),last.getQueuedAt(),last.getJobId(),page).isEmpty());
+        tail.setCancelRequestedAt(now);em.flush();
+        assertEquals(List.of(last.getJobId()),jobs.findUnassignedQueuedJobIdsAfter(head.getPriority(),head.getQueuedAt(),head.getJobId(),page));
     }
 }

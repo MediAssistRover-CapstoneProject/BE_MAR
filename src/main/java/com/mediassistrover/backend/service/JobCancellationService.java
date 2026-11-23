@@ -25,6 +25,7 @@ public class JobCancellationService {
     private final AuditService audit;
     private final org.springframework.context.ApplicationEventPublisher events;
     private final Clock clock;
+    private final DeliveryReleasePolicy deliveryRelease;
     @org.springframework.beans.factory.annotation.Autowired private com.mediassistrover.backend.mqtt.MqttStepDispatchService dispatch;
 
     @Transactional
@@ -112,6 +113,9 @@ public class JobCancellationService {
         // Legacy transports and open mapping cannot be declared stopped without their recovery evidence.
         if(!job.isBeOrchestrated() && (job.getStartedAt()!=null || job.getStopStatus()==JobStopStatus.RECOVERY_REQUIRED)) {
             pending=true;job.setStopStatus(JobStopStatus.RECOVERY_REQUIRED);
+        }
+        if(deliveryRelease.requiresReconciliation(job)) {
+            deliveryRelease.retain(job);pending=true;
         }
         if(pending) {
             if(job.getRobot()!=null)job.getRobot().setStatus(job.getStopStatus()==JobStopStatus.RECOVERY_REQUIRED?RobotStatus.ERROR:RobotStatus.BUSY);

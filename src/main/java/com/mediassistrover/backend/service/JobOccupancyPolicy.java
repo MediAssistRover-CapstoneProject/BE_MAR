@@ -17,6 +17,11 @@ public final class JobOccupancyPolicy {
         return job != null && job.isBeOrchestrated() && job.getSchemaVersion() == 3
                 && job.getWorkflow() != null && "PATROL".equalsIgnoreCase(job.getWorkflow().getServiceType());
     }
+    /** A future patrol has no physical ownership until admission selects its first step. */
+    public static boolean unstartedPatrolIntent(Job job) {
+        return patrol(job) && job.getStatus() == JobStatus.QUEUED && job.getAcceptedAt() == null
+                && job.getStartedAt() == null && job.getSelectedJobStep() == null && !job.stopOutstanding();
+    }
     public static boolean yieldable(Job job, int incomingPriority) {
         return patrol(job) && job.getCancelRequestedAt() == null && incomingPriority > job.getPriority()
                 && Set.of(JobStatus.QUEUED, JobStatus.ACCEPTED, JobStatus.RUNNING,

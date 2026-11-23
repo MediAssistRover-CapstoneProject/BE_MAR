@@ -32,6 +32,7 @@ public class MqttOperationControlService {
     private final StepExecutionPolicy executionPolicy;
     private final JobSuspensionService suspension;
     private final JobRepository jobs;
+    private final DeliveryReleasePolicy deliveryRelease;
     private static final Set<JobStepStatus> TERMINAL=EnumSet.of(JobStepStatus.SUCCEEDED,JobStepStatus.FAILED,JobStepStatus.TIMED_OUT,JobStepStatus.CANCELLED);
     public boolean hasUnresolvedPiWork(List<JobStep> visits) {
         for(JobStep step:visits)if(!executionPolicy.isServer(step,step.getResolvedInputsJson())) {
@@ -135,6 +136,9 @@ public class MqttOperationControlService {
             return;
         }
         if("JOB_CANCEL".equals(reason) || "WORKFLOW_TIMEOUT".equals(reason)) {
+            if(deliveryRelease.requiresReconciliation(job)) {
+                deliveryRelease.retain(job);wakeups.request(job);updates.publishEvent(new RuntimeChanged(job.getJobId()));return;
+            }
             if(mapping.open(job.getJobId())) {mapping.deferTerminal(job,"JOB_CANCEL".equals(reason)?TerminalStatus.CANCELLED:TerminalStatus.FAILED);updates.publishEvent(new RuntimeChanged(job.getJobId()));return;}
             Instant now=Instant.now(clock);JobStatus status="JOB_CANCEL".equals(reason)?JobStatus.CANCELLED:JobStatus.FAILED;
             job.setStatus(status);job.setEndedAt(now);job.setErrorCode("JOB_CANCEL".equals(reason)?null:"WORKFLOW_DURATION_EXCEEDED");

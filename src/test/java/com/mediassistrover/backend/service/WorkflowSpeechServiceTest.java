@@ -150,4 +150,23 @@ class WorkflowSpeechServiceTest {
         verify(workflowRepository, never()).flush();
         verify(workflows, never()).get(any());
     }
+
+    @Test void generatedSpeechUsesConfiguredFullVolumeUnlessAnExplicitLevelWasChosen() {
+        var previews=mock(RobotTestWorkflowService.class,CALLS_REAL_METHODS);
+        org.springframework.test.util.ReflectionTestUtils.setField(previews,"json",json);
+        org.springframework.test.util.ReflectionTestUtils.setField(previews,"defaultVolume",100);
+        var request=new RobotTestWorkflowService.Create(UUID.randomUUID(),null,null,null,null,List.of(
+                new RobotTestWorkflowService.TestStep(RobotTestWorkflowService.Kind.SPEAK,null,null,"Xin chào",null,null),
+                new RobotTestWorkflowService.TestStep(RobotTestWorkflowService.Kind.AUDIO_LOOPBACK,null,2.,null,null,null),
+                new RobotTestWorkflowService.TestStep(RobotTestWorkflowService.Kind.VOICE_CAPTURE,null,2.,null,"vi",null),
+                new RobotTestWorkflowService.TestStep(RobotTestWorkflowService.Kind.SPEAK_LAST_TRANSCRIPT,null,null,null,"vi",35)));
+        var generated=previews.preview(request).graph().steps();
+        assertEquals(100,generated.get(0).paramsJson().at("/data/volume").asInt());
+        assertEquals(100,generated.get(1).paramsJson().path("volume").asInt());
+        assertEquals(35,generated.get(3).paramsJson().at("/data/volume").asInt());
+        org.springframework.test.util.ReflectionTestUtils.setField(previews,"defaultVolume",85);
+        assertEquals(85,previews.preview(request).graph().steps().getFirst().paramsJson().at("/data/volume").asInt());
+        org.springframework.test.util.ReflectionTestUtils.setField(previews,"defaultVolume",101);
+        assertThrows(BusinessRuleException.class,()->previews.preview(request));
+    }
 }

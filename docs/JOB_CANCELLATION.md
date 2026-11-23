@@ -82,6 +82,12 @@ Pending/recovery jobs retain robot ownership. Do not treat `CANCELLED` alone as
 permission to assign another job. A disconnected robot cannot be guaranteed to stop
 at the instant an HTTP request returns.
 
+Schema 3 deliveries also retain `stopStatus: RECOVERY_REQUIRED` after physical stop
+when the compartment was opened or cargo was loaded and receiver handover is incomplete.
+An authorized Staff/Admin must remove the cargo and confirm the closed, locked compartment
+with structured `deliveryRecovery` evidence; see [staff delivery recovery](STAFF_DELIVERY.md).
+The next delivery and patrol cannot use this robot until that recovery and a new HELLO finish.
+
 The cancellation transaction revokes job operation grants, cancels pending work and
 creates durable `CANCEL_STEP` commands for published operations. The existing outbox
 publishes with QoS 1, without retained commands. The cancellation scheduler retries

@@ -40,6 +40,7 @@ public class WorkflowOrchestratorService {
     private final StaffDutyService staffDuty;
     private final JobSuspensionService suspension;
     private final RobotTaskArbitrationService arbitration;
+    private final DeliveryReleasePolicy deliveryRelease;
 
     @Transactional
     public void advance(UUID jobId) {
@@ -231,6 +232,9 @@ public class WorkflowOrchestratorService {
                 && !executionPolicy.isServer(s,s.getResolvedInputsJson()));
     }
     private void finish(Job job,TerminalStatus terminal) {
+        if(terminal!=TerminalStatus.RECOVERY_REQUIRED && deliveryRelease.requiresReconciliation(job)) {
+            deliveryRelease.retain(job);terminal=TerminalStatus.RECOVERY_REQUIRED;
+        }
         JobStep finishingStep=job.getSelectedJobStep();
         if(com.mediassistrover.backend.mapping.MappingLifecycleService.mapping(finishingStep) && "STOP".equals(finishingStep.getResolvedInputsJson().path("action").asText())
                 && finishingStep.getStatus()!=JobStepStatus.SUCCEEDED && mapping.open(job.getJobId()))terminal=TerminalStatus.RECOVERY_REQUIRED;

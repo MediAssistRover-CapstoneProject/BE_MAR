@@ -27,6 +27,7 @@ public class NavigationGuidanceService {
     @Value("${app.navigation.guidance.turn-angle-deg:35}") private double turnAngle;
     @Value("${app.navigation.guidance.max-path-offset-cm:25}") private double maxOffsetCm;
     @Value("${app.navigation.guidance.max-pose-age-ms:2000}") private long maxPoseAgeMs;
+    @Value("${app.speech.default-volume:100}") private int defaultVolume=100;
 
     private record Point(double x,double y,double distance) { }
     private record Projection(int segment,double fraction,double x,double y,double distance,double offset) { }
@@ -138,7 +139,7 @@ public class NavigationGuidanceService {
                 .put("parentJobStepId",step.toString()).put("cueId",cue).put("direction",direction);
         command.putObject("anchor").put("xM",anchor.x).put("yM",anchor.y);
         ObjectNode params=command.putObject("params").put("action","SPEAK").put("prompt_key","NAVIGATION_"+direction);
-        params.putObject("data").put("text",text).put("language_code","vi").put("speed_wpm",150).put("volume",70);
+        params.putObject("data").put("text",text).put("language_code","vi").put("speed_wpm",150).put("volume",defaultVolume);
     }
 
     private Projection project(List<Point> points,double x,double y,double yaw){

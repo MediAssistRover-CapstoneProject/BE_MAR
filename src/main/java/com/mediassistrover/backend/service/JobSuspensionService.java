@@ -47,7 +47,7 @@ public class JobSuspensionService {
         }
     }
     @Transactional public void releaseRobot(UUID robotId,String source,UUID sourceId) {
-        for(UUID id:jobs.findRobotJobIds(robotId,List.of(JobStatus.SUSPENDING,JobStatus.SUSPENDED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED))) {
+        for(UUID id:jobs.findRobotJobIds(robotId,List.of(JobStatus.QUEUED,JobStatus.SUSPENDING,JobStatus.SUSPENDED,JobStatus.RUNNING,JobStatus.RECOVERY_REQUIRED))) {
             Job job=jobs.lockById(id).orElse(null);
             if(isPatrol(job))release(job,source,sourceId);
         }
@@ -62,6 +62,13 @@ public class JobSuspensionService {
         if(existing==null)holds.save(JobSuspensionHold.builder().job(job).source(source).sourceId(sourceId).createdAt(clock.instant()).build());
         else if(existing.getReleasedAt()!=null){existing.setCreatedAt(clock.instant());existing.setReleasedAt(null);}
         job.setResumeRequested(true);
+        // A future patrol holds no motor operation to cancel or settle. Keep its queue identity
+        // while recording the same scoped holds that admission checks before starting it.
+        if(JobOccupancyPolicy.unstartedPatrolIntent(job)) {
+            if(existing==null || "MANUAL".equals(source))event(job,"JOB_SUSPENSION_HOLD_ADDED",source,sourceId);
+            wakeups.request(job);
+            return;
+        }
         if(job.getStatus()!=JobStatus.SUSPENDING && job.getStatus()!=JobStatus.SUSPENDED) {
             job.setSuspendRequestedAt(clock.instant());
             job.setSuspendedMapAssetHash(job.getMap()==null?null:job.getMap().getAssetHash());

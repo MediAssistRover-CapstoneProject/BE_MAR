@@ -90,4 +90,124 @@ class StaffDeliveryRoutingTest {
    assertTrue(graph.transitions().stream().filter(t->t.fromStepCode().equals("ANNOUNCE_RECEIVER")).allMatch(t->t.toStepCode()==null&&t.terminalStatus()==TerminalStatus.SUCCEEDED));
   }
  }
+
+ private final class CargoFixture {
+  final RobotCommandOutboxRepository commands=mock(RobotCommandOutboxRepository.class);
+  final RobotRepository robots=mock(RobotRepository.class);
+  final RobotMqttSessionRepository sessions=mock(RobotMqttSessionRepository.class);
+  final com.mediassistrover.backend.mqtt.MqttConnectionState connection=new com.mediassistrover.backend.mqtt.MqttConnectionState();
+  final Robot robot=Robot.builder().robotId(UUID.randomUUID()).status(RobotStatus.BUSY).build();
+  final ServiceRequest request=ServiceRequest.builder().serviceRequestId(UUID.randomUUID()).requestType(ServiceRequestType.DELIVERY)
+          .status(ServiceRequestStatus.IN_PROGRESS).build();
+  final Job job=Job.builder().jobId(UUID.randomUUID()).serviceRequest(request).robot(robot).beOrchestrated(true).schemaVersion(3)
+          .status(JobStatus.RUNNING).contextJson(json.createObjectNode()).build();
+  final DeliveryRequest delivery=DeliveryRequest.builder().serviceRequestId(request.getServiceRequestId()).serviceRequest(request)
+          .pickupPayloadConfirmedAt(clock.instant()).build();
+  final RobotMqttSession session=new RobotMqttSession();
+  final DeliveryReleasePolicy policy=new DeliveryReleasePolicy(deliveries,commands,robots,sessions,connection,audit,json,clock);
+  CargoFixture(){
+   when(deliveries.findById(request.getServiceRequestId())).thenReturn(Optional.of(delivery));
+   when(robots.findByIdForUpdate(robot.getRobotId())).thenReturn(Optional.of(robot));
+   connection.connectedNow();session.setOwnerInstanceId(connection.instanceId());session.setConnectionId(connection.connectionId());
+   session.setHandshakeAccepted(true);session.setHandshakeAcked(true);session.setTransportSessionId(UUID.randomUUID());
+   session.setHelloReceivedAt(clock.instant().minusSeconds(2));session.setLastHeartbeatAt(clock.instant());
+   var hello=json.createObjectNode();hello.putArray("states");session.setHelloJson(hello);
+   var heartbeat=json.createObjectNode().put("status","IDLE").putNull("activeJobStepId");
+   heartbeat.putObject("telemetry").putObject("odom_speed").put("value",0).put("age_sec",0.1);session.setHeartbeatJson(heartbeat);
+   when(sessions.lock(robot.getRobotId())).thenReturn(Optional.of(session));
+  }
+ }
+
+ @Test void loadedOrOpenedDeliveryRetainsRobotUntilTheReceiverHandoverIsComplete(){
+  var f=new CargoFixture();assertTrue(f.policy.requiresReconciliation(f.job));
+  f.delivery.setDeliveredAt(clock.instant());assertTrue(f.policy.requiresReconciliation(f.job));
+  f.delivery.setDeliveryPayloadConfirmedAt(clock.instant());f.delivery.setDeliveryCompartmentConfirmedAt(clock.instant());
+  assertFalse(f.policy.requiresReconciliation(f.job));
+  f.delivery.setDeliveredAt(null);f.delivery.setDeliveryPayloadConfirmedAt(null);f.delivery.setDeliveryCompartmentConfirmedAt(null);
+  f.delivery.setPickupPayloadConfirmedAt(null);
+  var unlock=json.createObjectNode();unlock.putObject("step").put("stepType","CONTROL_HARDWARE").putObject("params").put("action","UNLOCK_COMPARTMENT");
+  var command=RobotCommandOutbox.builder().commandType("EXECUTE_STEP").sendAttempts(1).state("COMPLETED")
+          .physicalStopConfirmed(true).payloadJson(unlock).build();
+  when(f.commands.findByJobIdOrderByCreatedAt(f.job.getJobId())).thenReturn(List.of(command));
+  assertTrue(f.policy.requiresReconciliation(f.job),"A stopped UNLOCK does not prove the cart remained empty");
+  command.setSendAttempts(0);assertFalse(f.policy.requiresReconciliation(f.job));
+ }
+
+ @Test void cargoRecoveryRequiresExplicitConfirmationAndCommittedStopThenKeepsNormalMilestones(){
+  var f=new CargoFixture();
+  var yes=new com.mediassistrover.backend.dto.job.request.JobRequests.DeliveryRecoveryConfirmation(true,true,true);
+  assertThrows(BusinessRuleException.class,()->f.policy.confirmCleared(f.job,null,sender,null));
+  assertThrows(BusinessRuleException.class,()->f.policy.confirmCleared(f.job,
+          new com.mediassistrover.backend.dto.job.request.JobRequests.DeliveryRecoveryConfirmation(false,true,true),sender,null));
+  var command=RobotCommandOutbox.builder().commandType("EXECUTE_STEP").sendAttempts(1).state("STARTED").physicalStopConfirmed(false).build();
+  when(f.commands.findByJobIdOrderByCreatedAt(f.job.getJobId())).thenReturn(List.of(command));
+  assertThrows(BusinessRuleException.class,()->f.policy.confirmCleared(f.job,yes,sender,null));
+  command.setState("COMPLETED");command.setPhysicalStopConfirmed(true);
+  f.policy.confirmCleared(f.job,yes,sender,null);f.job.setReconciledByAccount(sender);f.job.setReconciledAt(clock.instant());
+  assertFalse(f.policy.requiresReconciliation(f.job));assertNull(f.delivery.getDeliveredAt());assertNull(f.delivery.getDeliveryPayloadConfirmedAt());
+  assertTrue(f.job.getContextJson().path("delivery_recovery").path("cargo_removed").asBoolean());
+  verify(audit).record(eq(sender),eq("DELIVERY_CARGO_RECOVERY_CONFIRMED"),eq("Job"),eq(f.job.getJobId()),isNull(),anyMap(),isNull());
+ }
+
+ @Test void staleMovingOrForeignPiCannotClearCargoWithAStaffFlag(){
+  var f=new CargoFixture();var yes=new com.mediassistrover.backend.dto.job.request.JobRequests.DeliveryRecoveryConfirmation(true,true,true);
+  f.session.setLastHeartbeatAt(clock.instant().minusSeconds(20));
+  assertThrows(BusinessRuleException.class,()->f.policy.confirmCleared(f.job,yes,sender,null));
+  f.session.setLastHeartbeatAt(clock.instant());
+  ((com.fasterxml.jackson.databind.node.ObjectNode)f.session.getHeartbeatJson().at("/telemetry/odom_speed")).put("value",0.1);
+  assertThrows(BusinessRuleException.class,()->f.policy.confirmCleared(f.job,yes,sender,null));
+  ((com.fasterxml.jackson.databind.node.ObjectNode)f.session.getHeartbeatJson().at("/telemetry/odom_speed")).put("value",0);
+  f.session.setConnectionId(UUID.randomUUID());
+  assertThrows(BusinessRuleException.class,()->f.policy.confirmCleared(f.job,yes,sender,null));
+  assertFalse(f.job.getContextJson().has("delivery_recovery"));
+ }
+
+ @Test void settledRecoveryCannotAutomaticallyFailAndReleaseLoadedDelivery(){
+  var f=new CargoFixture();f.job.setStatus(JobStatus.RECOVERY_REQUIRED);
+  var safety=mock(com.mediassistrover.backend.mqtt.MqttJobSafety.class,CALLS_REAL_METHODS);
+  org.springframework.test.util.ReflectionTestUtils.setField(safety,"deliveryRelease",f.policy);
+  safety.failSettledRecovery(f.job);
+  assertEquals(JobStatus.RECOVERY_REQUIRED,f.job.getStatus());assertEquals(RobotStatus.ERROR,f.robot.getStatus());
+  assertNull(f.job.getReconciledAt());assertEquals(ServiceRequestStatus.RECOVERY_REQUIRED,f.request.getStatus());
+ }
+
+ @Test void failedLoadedDeliveryBecomesRecoveryInsteadOfReturningRobotToTheQueue(){
+  var f=new CargoFixture();var orchestrator=mock(WorkflowOrchestratorService.class,CALLS_REAL_METHODS);
+  Map.ofEntries(Map.entry("deliveryRelease",f.policy),Map.entry("mapping",mock(com.mediassistrover.backend.mapping.MappingLifecycleService.class)),
+          Map.entry("steps",mock(JobStepRepository.class)),Map.entry("tasks",mock(JobTaskRepository.class)),
+          Map.entry("events",mock(JobEventRepository.class)),Map.entry("updates",mock(org.springframework.context.ApplicationEventPublisher.class)),
+          Map.entry("json",json),Map.entry("clock",clock))
+          .forEach((key,value)->org.springframework.test.util.ReflectionTestUtils.setField(orchestrator,key,value));
+  org.springframework.test.util.ReflectionTestUtils.invokeMethod(orchestrator,"finish",f.job,TerminalStatus.FAILED);
+  assertEquals(JobStatus.RECOVERY_REQUIRED,f.job.getStatus());assertEquals(RobotStatus.ERROR,f.robot.getStatus());assertNull(f.job.getEndedAt());
+ }
+
+ @Test void workflowCannotManufactureTheStaffCargoRecoveryRecord(){
+  var f=new CargoFixture();var step=JobStep.builder().jobTask(JobTask.builder().job(f.job).build()).build();
+  var inputs=json.createObjectNode();inputs.putArray("operations").addObject().put("path","/vars/delivery_recovery")
+          .put("operation","SET").putObject("value").put("cargo_removed",true);
+  assertThrows(BusinessRuleException.class,()->new SetContextStepHandler(json).execute(step,inputs));
+  assertTrue(f.policy.requiresReconciliation(f.job));
+ }
+
+ @Test void jobRecoveryRejectsNoteAloneAndReleasesCargoOnlyWithFreshStructuredEvidence(){
+  var f=new CargoFixture();f.job.setStatus(JobStatus.RECOVERY_REQUIRED);f.robot.setStatus(RobotStatus.ERROR);
+  var jobs=mock(JobRepository.class);var service=mock(JobServiceImpl.class,CALLS_REAL_METHODS);
+  when(jobs.lockById(f.job.getJobId())).thenReturn(Optional.of(f.job));
+  Map.ofEntries(Map.entry("jobRepository",jobs),Map.entry("deliveryRelease",f.policy),Map.entry("mqttCommands",f.commands),
+          Map.entry("robotRepository",f.robots),Map.entry("robotSessions",f.sessions),Map.entry("staffScope",scope),
+          Map.entry("accountRepository",accounts),Map.entry("mapping",mock(com.mediassistrover.backend.mapping.MappingLifecycleService.class)),
+          Map.entry("eventRepository",mock(JobEventRepository.class)),Map.entry("mapper",mock(RequestJobMapper.class)),
+          Map.entry("auditService",audit),Map.entry("objectMapper",json),Map.entry("clock",clock))
+          .forEach((key,value)->org.springframework.test.util.ReflectionTestUtils.setField(service,key,value));
+  var outcome=com.mediassistrover.backend.dto.job.request.JobRequests.ReconcileOutcome.RESUME_AS_FAILED;
+  assertThrows(BusinessRuleException.class,()->service.reconcile(f.job.getJobId(),
+          new com.mediassistrover.backend.dto.job.request.JobRequests.ReconcileJobRequest("handled",outcome),actor,null));
+  assertEquals(JobStatus.RECOVERY_REQUIRED,f.job.getStatus());assertEquals(RobotStatus.ERROR,f.robot.getStatus());
+  var confirmation=new com.mediassistrover.backend.dto.job.request.JobRequests.DeliveryRecoveryConfirmation(true,true,true);
+  service.reconcile(f.job.getJobId(),new com.mediassistrover.backend.dto.job.request.JobRequests.ReconcileJobRequest("goods removed and cart secured",outcome,confirmation),actor,null);
+  assertEquals(JobStatus.FAILED,f.job.getStatus());assertEquals(RobotStatus.STARTING,f.robot.getStatus());assertTrue(f.session.isClosed());
+  assertEquals(ServiceRequestStatus.FAILED,f.request.getStatus());assertFalse(f.policy.requiresReconciliation(f.job));
+  assertNull(f.delivery.getDeliveredAt());
+ }
 }

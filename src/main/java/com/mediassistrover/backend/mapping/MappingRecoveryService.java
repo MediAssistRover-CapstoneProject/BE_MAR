@@ -321,7 +321,7 @@ public class MappingRecoveryService {
                             JobStepStatus.RECOVERY_REQUIRED)
                         .contains(s.getStatus()))) blockers.add("OTHER_UNFINISHED_JOB_STEP");
     if (jobs.findByRobotRobotIdAndStatusIn(robotId, HELD).stream()
-        .anyMatch(j -> !j.getJobId().equals(job.getJobId()))) blockers.add("OTHER_HELD_ROBOT_JOB");
+        .anyMatch(j -> !j.getJobId().equals(job.getJobId()) && !JobOccupancyPolicy.unstartedPatrolIntent(j))) blockers.add("OTHER_HELD_ROBOT_JOB");
     if (commands.findByRobotIdAndStateIn(robotId, UNCERTAIN).stream()
         .anyMatch(c -> !c.getJobId().equals(job.getJobId())))
       blockers.add("OTHER_UNCERTAIN_ROBOT_COMMAND");

@@ -68,13 +68,64 @@ Body tạo lịch mẫu; thay UUID và `startsAt` bằng thời gian UTC mong mu
 }
 ```
 
-`intervalSec` tối thiểu 60 giây. Lịch và số vòng là hai khái niệm riêng: `repeatCount` điều khiển một job; interval điều khiển các lần đề nghị tạo job mới. Scheduler bỏ lượt nếu robot chưa sẵn sàng hoặc đã có patrol chưa kết thúc, không dồn hàng đợi sau thời gian mất kết nối. Với lịch ONCE, lượt không đủ điều kiện vẫn kết thúc lịch mà không tạo job; dùng INTERVAL nếu muốn thử ở lượt sau.
+`intervalSec` tối thiểu 60 giây. Lịch và số vòng là hai khái niệm riêng: `repeatCount` điều khiển một job; interval điều khiển các lần đề nghị tạo job mới. Bản source ngày 23/11/2026 tạo job patrol `QUEUED` trong DB khi đến hạn, kể cả robot đang delivery/navigation hoặc OFFLINE. Job giữ robot và map của workflow; chưa phát MOVE khi chỉ mới xếp hàng. Khi đã có một patrol chưa kết thúc trên robot, lịch lặp gộp lượt mới vào ý định hiện có, không tích lũy backlog. Lịch ONCE chưa tạo được job giữ `ACTIVE` và cùng `nextRunAt` để thử lại; chỉ kết thúc sau khi có job bền vững hoặc cửa sổ lịch hết hạn.
 
 Trước lượt chạy, BE kiểm tra map/hash, MQTT HELLO/heartbeat, localization, profile đã đồng bộ, không còn mapping/command cần recovery và không bị nhiệm vụ ưu tiên chiếm robot. `PATROL_FALL` cần Pi quảng bá capability `PATROL_FALL`. Crowd/restricted cần AI sensing bật và profile đúng robot, zone, loại sensing, map hash và frame; cấu hình profile qua `PUT /api/v1/admin/monitoring/robots/{robotId}/ai-profile`. Tạo profile không tự triển khai model hoặc producer AI.
+
+### Hẹn giờ sau công việc đang chạy
+
+Ví dụ dưới đây dùng workflow và robot đã đọc trong phiên kiểm tra, không tự tạo hoặc kích hoạt lịch production. Trước khi gửi, kiểm tra workflow vẫn published/acceptsNewJobs và thay `startsAt` bằng thời điểm tương lai thật. `startsAt`/`endsAt` nhận ISO-8601 có `Z` hoặc offset; `2026-11-24T08:00:00+07:00` cùng thời điểm với `2026-11-24T01:00:00Z`. Trường `timezone` dùng để tính CRON, không tự cộng thêm bảy giờ vào một timestamp đã có offset.
+
+`POST /api/v1/schedules`, Bearer token ADMIN:
+
+```json
+{
+  "workflowId": "f8232350-acbc-4d65-9210-a4153d388b54",
+  "robotId": "0e3f1083-2546-4f45-8004-5eda5cb75a6f",
+  "scheduleCode": "PATROL_ONCE_20261124_0800",
+  "scheduleName": "Tuần tra sau công việc hiện tại",
+  "scheduleType": "ONCE",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "startsAt": "2026-11-24T08:00:00+07:00",
+  "inputTemplateJson": {},
+  "priority": 5,
+  "misfirePolicy": "FIRE_ONCE"
+}
+```
+
+Create trả HTTP 201 với `scheduleId`, `status=PAUSED`, `nextRunAt=null`. Sau đó gọi `POST /api/v1/schedules/{scheduleId}/activate` không cần body; trả `ACTIVE` và `nextRunAt`. Scheduler mặc định quét mỗi 10 giây (`app.operations.schedule-scan-ms`), nên đây không phải bộ hẹn giờ chính xác từng giây. Tạo lịch hoặc activate trước giờ hẹn chưa tự tạo job.
+
+Khi đến hạn trong delivery/navigation, job mới giữ `QUEUED`, `startedAt=null`; robot vẫn giữ nhiệm vụ hiện tại. DB lưu `scheduleFireAt` bằng giờ hẹn, còn JobResponse hiện chưa trả trường này. Lịch ONCE chuyển `RETIRED` ngay khi job được lưu, không có nghĩa patrol đã chạy xong. Sau khi công việc foreground kết thúc và robot đủ điều kiện thật, cùng job chuyển `RUNNING`, rồi `SUCCEEDED`/`FAILED`/`CANCELLED` hoặc `RECOVERY_REQUIRED`. Khi có recovery/stop chưa xác nhận, chờ xử lý thay vì tự giành robot. Các nguồn VOICE/SOS/ASSIST/alert vẫn chặn theo chính sách hiện có.
+
+Job đã xếp hàng lưu hash/frame của map tại thời điểm tạo. Robot phải trở lại đúng map và đúng revision, MQTT/định vị/profile phải sẵn sàng trước khi bắt đầu. Không ghim `navigation_session_id` cũ vào job lịch: phiên hiện tại được kiểm tra lại khi bắt đầu. Thay map asset hoặc frame sẽ giữ job chờ; hủy ý định cũ và tạo lịch/job phù hợp sau khi kiểm tra lại tuyến. `endsAt` giới hạn thời điểm tạo lượt mới, không tự hủy một job `QUEUED` đã được tạo.
+
+- Xem lịch ONCE đã kết thúc: `GET /api/v1/schedules/{scheduleId}?includeDeleted=true` bằng ADMIN. Mặc định API ẩn `RETIRED`, kể cả lịch kết thúc tự nhiên.
+- Tìm job: `GET /api/v1/jobs?robotId=...&workflowId=...`; đối chiếu `scheduleId` trong từng job và `lastRunAt` của lịch. API danh sách job hiện không có query `scheduleId`; JobResponse chưa trả `scheduleFireAt`.
+- Dừng lượt tương lai: `POST /api/v1/schedules/{scheduleId}/pause`. Job đã được tạo cần hủy riêng bằng `POST /api/v1/jobs/{jobId}/cancel` với `{"reason":"..."}`.
+
+Biến thể INTERVAL: thay `scheduleType` bằng `INTERVAL`, thêm `intervalSec: 300`; không gửi `cronExpression`. Biến thể CRON chạy 08:00 mỗi ngày: `scheduleType=CRON`, `cronExpression="0 0 8 * * *"`, không gửi `intervalSec`. CRON Spring có sáu trường, bắt đầu bằng giây; `startsAt` là cận dưới, lượt đầu phải khớp CRON trong `timezone` đã chọn. ONCE không được gửi interval hoặc cron.
+
+`misfirePolicy` nhận đúng `SKIP` hoặc `FIRE_ONCE`. Khi activate sau `startsAt`, `FIRE_ONCE` thử một lượt ngay; `SKIP` chọn lượt kế tiếp, ONCE đã quá giờ chuyển `RETIRED`. Trong lượt scan trễ sau khi lịch đã ACTIVE, source hiện chưa áp dụng lại policy cho từng misfire: patrol gộp tối đa một lượt rồi tính kỳ sau từ thời điểm scan hiện tại. Vì vậy INTERVAL có thể trôi pha khi scan trễ; không diễn giải `SKIP` là cam kết bỏ mọi lượt trễ trong lúc BE ngừng chạy.
+
+Bản source còn dùng một transaction cho cả batch tối đa 50 lịch; lỗi chưa được xử lý riêng của một lịch/workflow có thể rollback batch và chờ scan sau. Chưa bổ sung lịch sử lỗi/skip riêng cho schedule. Các giới hạn này độc lập với việc lưu job `QUEUED`; cần theo dõi log nếu một lịch giữ due lâu mà chưa có job. Thay đổi này chưa được triển khai chỉ bằng việc cập nhật source.
+
+### Bằng chứng vận hành đã đọc
+
+Kiểm tra bổ sung ngày 23/11/2026 nâng tổng lên 120 kiểm tra trong 16 lớp hiện có, không lỗi/bỏ qua. Dispatcher luôn thử batch ưu tiên đầu tiên; nếu toàn bộ batch đầy chưa gán được robot, nó kiểm tra thêm một batch phía sau và luân phiên qua các lượt scan. Nhờ vậy nhiều job chờ robot/map khác không giữ mãi các job có thể chạy ở phía sau. Thay đổi dispatcher vẫn ở source BE, cần push/deploy.
+
+Sau job `FAILED` thông thường đã có bằng chứng dừng, robot trở về IDLE khi không còn chủ chuyển động khác; các job chờ được xét tiếp theo ưu tiên, cùng ưu tiên theo thời gian gửi. `RECOVERY_REQUIRED`, stop chưa chốt, cargo chưa xử lý hoặc incident đang mở tiếp tục giữ robot. Job chờ gắn phiên navigation đã hết hạn/đổi không tự chuyển sang phiên mới: cần hủy/đối soát job cũ và tạo yêu cầu trong phiên đúng. Không đóng phiên navigation sau mỗi job vì các job tiếp theo còn dùng phiên đó.
+
+Giới hạn Pi còn lại ngoài hàng đợi: pending cảnh báo giám sát té ngã liên tục hiện giữ trong RAM với cửa sổ retry khoảng 10 giây. Mất mạng dài có thể làm cảnh báo hết hạn trước khi BE nhận; độ bền của cảnh báo này khác SQLite outbox lưu receipt step. Muốn lưu bền sự kiện cần đồng bộ chính sách nhận sự kiện trễ/chống trùng của BE, chưa thuộc bản sửa hàng đợi này.
+
+Kiểm tra source ngày 23/11/2026: 110 kiểm tra trong 15 lớp hiện có đã qua, không lỗi/bỏ qua; gồm lưu ORM H2 và truy vấn phân trang lịch, lịch đến hạn khi bận, hold cho patrol chưa chạy, MQTT map scope, ba delivery nối tiếp, stop/recovery, nhường và tiếp tục cùng patrol. Đây là kiểm tra cô lập, không tạo lịch/job hoặc chạy bánh trên production. Không cần migration hoặc bản vá Pi mới cho các thay đổi hàng đợi này; source BE vẫn cần push/deploy. Hiện DB chưa có Schedule nào để tự kích hoạt theo giờ.
+
+Trong phiên kiểm tra ngày 23/11/2026 chưa có bản ghi Schedule production, nên chưa có bằng chứng phần cứng cho đường hẹn giờ mới. Nhật ký hiện có xác nhận một đường nhường voice riêng: patrol `3315625a…` bắt đầu 17:42:00 (UTC+7), nhận VOICE hold 17:42:44.845 và SUSPENDED 17:42:45.953; job voice `6b0c9c59…` chạy 17:43:20.771–17:43:53.386, hold giải phóng 17:43:53.785, cùng patrol tiếp tục 17:43:54.857 và hoàn tất 17:46:35.527. Đây là bằng chứng nhường/tiếp tục cùng job trong log, chưa chứng minh lịch đến hạn khi delivery đang chạy hoặc độ an toàn dừng vật lý.
 
 ## Nhường nhiệm vụ và tiếp tục
 
 Trạng thái đang thực thi là `RUNNING`, robot `BUSY`. Khi có tác vụ ưu tiên, voice, incident hoặc phiên media ASSIST, patrol chuyển `SUSPENDING`, yêu cầu dừng operation qua MQTT, rồi chuyển `SUSPENDED` sau bằng chứng dừng vật lý. `SUSPENDED` giữ tuyến và robot được gán nhưng không chiếm motor.
+
+Patrol chưa bắt đầu giữ `QUEUED` kể cả đang có hold voice/delivery/manual; chưa có operation để yêu cầu dừng. Khi nguồn ưu tiên kết thúc, BE bỏ đúng hold đó rồi xét admission. Manual resume cũng dùng được cho patrol `QUEUED` để bỏ manual hold. Job chờ này không ép map lên heartbeat hiện tại hoặc cản mở/đóng phiên navigation và recovery của nhiệm vụ khác. Các lượt scan lịch đi luân phiên qua các batch due để lịch ONCE bị chặn không giữ mãi đầu danh sách; `nextRunAt` gốc của lượt đó vẫn được giữ.
 
 Delivery có ưu tiên cao hơn patrol có thể vào hàng đợi; chỉ bắt đầu sau khi patrol xác nhận dừng. BE giữ các lý do độc lập `JOB`, `VOICE`, `MEDIA`, `INCIDENT`, `MANUAL`. Hoàn tất một lý do không xóa các lý do còn lại. MONITOR xem camera không tạo hold hội thoại; ASSIST có tạo hold.
 

@@ -15,9 +15,9 @@
       if(!Number.isFinite(seconds)||seconds<1||seconds>300)throw Error('WAIT phải từ 1 đến 300 giây.');
       return {kind:'WAIT',durationSec:seconds};
     }
-    if(step.kind==='AUDIO_LOOPBACK')return {kind:'AUDIO_LOOPBACK',...loopbackBody(step.durationSec,step.volume??70)};
+    if(step.kind==='AUDIO_LOOPBACK')return {kind:'AUDIO_LOOPBACK',...loopbackBody(step.durationSec,step.volume??100)};
     if(step.kind==='SPEAK'){
-      const text=String(step.text||'').trim(),languageCode=step.languageCode||'vi',volume=Number(step.volume??70);
+      const text=String(step.text||'').trim(),languageCode=step.languageCode||'vi',volume=Number(step.volume??100);
       if(!text||text.length>500)throw Error('SPEAK cần nội dung từ 1 đến 500 ký tự.');
       if(!['vi','en'].includes(languageCode)||!Number.isInteger(volume)||volume<0||volume>100)throw Error('Ngôn ngữ hoặc âm lượng SPEAK không hợp lệ.');
       return {kind:'SPEAK',text,languageCode,volume};
@@ -80,7 +80,7 @@
       <button id="testAddWait">Thêm WAIT</button><button id="testAddOpen">Thêm mở servo</button><button id="testAddClose">Thêm đóng servo</button>
       <label>Nội dung phát loa — giọng tổng hợp AI<textarea id="testSpeechText" maxlength="500" rows="2">Xin chào, tôi là robot hỗ trợ bệnh viện MediAssist.</textarea></label>
       <label>Ngôn ngữ<select id="testSpeechLanguage"><option value="vi">Tiếng Việt</option><option value="en">English</option></select></label>
-      <label>Âm lượng loa (%)<input id="testAudioVolume" type="number" min="0" max="100" step="1" value="70"></label>
+      <label>Âm lượng loa (%)<input id="testAudioVolume" type="number" min="0" max="100" step="1" value="100"></label>
       <button id="testAddSpeak">Thêm phát loa vào workflow (INTERACT/SPEAK)</button>
       <button id="testSpeakNow">Chạy một job phát nội dung trên</button>
       <fieldset><legend>Thử thu âm — WAV gốc hoặc STT → TTS</legend>

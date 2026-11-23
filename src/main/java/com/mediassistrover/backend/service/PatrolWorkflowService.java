@@ -169,11 +169,14 @@ public class PatrolWorkflowService {
     }
 
     public void validateSchedule(Workflow workflow, Robot robot, int priority, Integer intervalSec, JsonNode inputs) {
+        if (SERVICE.equalsIgnoreCase(workflow.getServiceType()) && !isPatrol(workflow)) {
+            throw new BusinessRuleException("Use a patrol definition created with the patrol workflow API");
+        }
         if (!isPatrol(workflow)) return;
         if (robot == null || !mqtt.manages(robot.getRobotId())) {
             throw new BusinessRuleException("Patrol requires an explicit MQTT robot");
         }
-        if (priority > 10 || (intervalSec != null && intervalSec < 60)) {
+        if (priority < 0 || priority > 10 || (intervalSec != null && intervalSec < 60)) {
             throw new BusinessRuleException("Patrol priority must be 0..10 and interval must be at least 60 seconds");
         }
         if (!inputs.isObject() || !inputs.isEmpty()) {
@@ -182,8 +185,31 @@ public class PatrolWorkflowService {
         requireMap(mapId(workflow));
     }
 
+    /** Validate durable intent without requiring a connected, idle robot. */
+    public FacilityMap queuedMap(Workflow workflow, Robot robot, int priority, Integer intervalSec, JsonNode inputs) {
+        validateSchedule(workflow, robot, priority, intervalSec, inputs);
+        if (!isPatrol(workflow) || workflow.getSchemaVersion() != 3) {
+            throw new BusinessRuleException("Patrol requires a schema 3 patrol definition");
+        }
+        FacilityMap map = requireMap(mapId(workflow));
+        var actions = checkpointSteps(workflow, map.getMapId());
+        for (int i = 0; i < actions.size(); i += 2) {
+            var move = actions.get(i).getParamsJson();
+            var sensing = actions.get(i + 1).getParamsJson();
+            requireCheckpoint(map.getMapId(), new Checkpoint(requiredUuid(move, "endpoint_id"),
+                    sensing.hasNonNull("zone_id") ? requiredUuid(sensing, "zone_id") : null,
+                    sensing.path("sensing_type").asText()));
+        }
+        return map;
+    }
+
     /** Caller holds the robot write lock before asking whether a scheduled run can use it. */
     public FacilityMap readyMap(Workflow workflow, Robot robot, int priority) {
+        return readyMap(workflow, robot, priority, null);
+    }
+
+    /** A queued candidate must exclude itself while rechecking every runtime guard. */
+    public FacilityMap readyMap(Workflow workflow, Robot robot, int priority, UUID candidateJobId) {
         if (robot == null || robot.getStatus() != RobotStatus.IDLE || !mqtt.dispatches(StepType.MOVE)
                 || !mqtt.dispatches(StepType.EXECUTE_SENSING) || !mqtt.manages(robot.getRobotId())) return null;
         UUID robotId = robot.getRobotId();
@@ -191,7 +217,13 @@ public class PatrolWorkflowService {
         FacilityMap map = robot.getCurrentMap();
         if (map == null || !mapId.equals(map.getMapId()) || map.getStatus() != MapStatus.ACTIVE
                 || map.getAssetHash() == null || !map.getAssetHash().equalsIgnoreCase(robot.getMapAssetHash())) return null;
-        if (jobs.existsNonterminalPatrol(robotId) || !jobs.findByRobotRobotIdAndStatusIn(robotId, OCCUPIED).isEmpty()
+        boolean occupied = candidateJobId == null
+                ? jobs.existsNonterminalPatrol(robotId) || !jobs.findByRobotRobotIdAndStatusIn(robotId, OCCUPIED).isEmpty()
+                : jobs.findByRobotRobotIdAndStatusIn(robotId, JobOccupancyPolicy.NON_TERMINAL).stream()
+                    // canStart already chooses the first queued job by priority/FIFO.
+                    .anyMatch(other -> !candidateJobId.equals(other.getJobId())
+                            && (other.getStatus() != JobStatus.QUEUED || other.stopOutstanding()));
+        if (occupied
                 || jobs.existsHigherPriorityQueuedForMap(mapId, priority)
                 || mediaSessions.findByActiveRobotId(robotId).filter(s -> s.getMode() == MediaSession.Mode.ASSIST).isPresent()
                 || incidents.existsByRobotRobotIdAndIncidentTypeAndStatusInAndArchivedAtIsNull(
@@ -204,19 +236,11 @@ public class PatrolWorkflowService {
                 || link.getHeartbeatJson() == null || !"IDLE".equals(link.getHeartbeatJson().path("status").asText())
                 || !link.getHeartbeatJson().path("activeJobStepId").isNull()
                 || (link.getHelloJson().path("simulation").asBoolean() && !mqtt.isAllowSimulation())) return null;
-        var actions = steps.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId());
-        if (actions.isEmpty() || actions.size() > 10 || actions.size() % 2 != 0) {
-            throw new BusinessRuleException("Patrol requires 1..5 MOVE/sensing checkpoint pairs");
-        }
+        var actions = checkpointSteps(workflow, mapId);
         if (navigation.ready(robot, link, actions.getFirst().getParamsJson()) == null) return null;
         for (int i = 0; i < actions.size(); i += 2) {
             var move = actions.get(i);
             var sensing = actions.get(i + 1);
-            if (move.getStepType() != StepType.MOVE || sensing.getStepType() != StepType.EXECUTE_SENSING
-                    || !SERVICE.equals(move.getParamsJson().path("mode").asText())
-                    || !mapId.toString().equals(move.getParamsJson().path("map_id").asText())) {
-                throw new BusinessRuleException("Patrol requires MOVE on its map followed by sensing");
-            }
             var config = sensing.getParamsJson();
             var checkpoint = new Checkpoint(requiredUuid(move.getParamsJson(), "endpoint_id"),
                     config.hasNonNull("zone_id") ? requiredUuid(config, "zone_id") : null, config.path("sensing_type").asText());
@@ -230,6 +254,24 @@ public class PatrolWorkflowService {
             if (!commissioned) return null;
         }
         return map;
+    }
+
+    private List<Step> checkpointSteps(Workflow workflow, UUID mapId) {
+        var actions = steps.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId());
+        if (actions.isEmpty() || actions.size() > 10 || actions.size() % 2 != 0) {
+            throw new BusinessRuleException("Patrol requires 1..5 MOVE/sensing checkpoint pairs");
+        }
+        for (int i = 0; i < actions.size(); i += 2) {
+            var move = actions.get(i);
+            var sensing = actions.get(i + 1);
+            if (!move.isEnabled() || !sensing.isEnabled() || move.getStepType() != StepType.MOVE
+                    || sensing.getStepType() != StepType.EXECUTE_SENSING
+                    || !SERVICE.equals(move.getParamsJson().path("mode").asText())
+                    || !mapId.toString().equals(move.getParamsJson().path("map_id").asText())) {
+                throw new BusinessRuleException("Patrol requires enabled MOVE on its map followed by sensing");
+            }
+        }
+        return actions;
     }
 
     public static boolean fallCapable(RobotMqttSession link) {

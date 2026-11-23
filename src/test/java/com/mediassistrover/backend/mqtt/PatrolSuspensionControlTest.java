@@ -37,6 +37,7 @@ class PatrolSuspensionControlTest {
             Map.entry("steps",steps),Map.entry("tasks",tasks),Map.entry("suspension",suspension),Map.entry("executionPolicy",mock(StepExecutionPolicy.class)),
             Map.entry("wire",wire),Map.entry("events",mock(JobEventRepository.class)),Map.entry("updates",mock(ApplicationEventPublisher.class)),
             Map.entry("wakeups",mock(OrchestrationWorkService.class)),Map.entry("mapping",mock(MappingLifecycleService.class)),
+            Map.entry("deliveryRelease",mock(DeliveryReleasePolicy.class)),
             Map.entry("clock",Clock.fixed(now,ZoneOffset.UTC))).forEach((key,value)->ReflectionTestUtils.setField(control,key,value));
         when(robots.findByIdForUpdate(robot.getRobotId())).thenReturn(Optional.of(robot));
         when(commands.findByJobStepId(step.getJobStepId())).thenReturn(Optional.of(execute));

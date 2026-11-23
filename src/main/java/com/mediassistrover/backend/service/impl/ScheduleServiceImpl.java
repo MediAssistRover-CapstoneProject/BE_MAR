@@ -21,6 +21,8 @@ import java.util.*;
 
 @Service @RequiredArgsConstructor @Transactional(readOnly=true)
 public class ScheduleServiceImpl implements ScheduleService {
+    private record DueCursor(Instant fireAt, UUID scheduleId) { }
+    private volatile DueCursor dueCursor;
     private static final Set<String> STAFF_SERVICE_TYPES=Set.of("INFORMATION","NAVIGATION","ESCORT","DELIVERY");
     private final ScheduleRepository repository; private final WorkflowRepository workflowRepository;
     private final RobotRepository robotRepository; private final AccountRepository accountRepository;
@@ -32,7 +34,7 @@ public class ScheduleServiceImpl implements ScheduleService {
     @Override @Transactional public ScheduleResponse create(ScheduleCreateRequest r,AccountPrincipal a,RequestMetadata md){staffScope.requireCurrentStaffOrAdmin(a);if(repository.existsByScheduleCodeIgnoreCase(r.scheduleCode()))throw new ConflictException("Schedule code already exists");validateShape(r);if(!r.inputTemplateJson().isObject())throw new BusinessRuleException("inputTemplateJson must be a JSON object");Workflow w=workflowRepository.findById(r.workflowId()).orElseThrow(()->new ResourceNotFoundException("Workflow not found: "+r.workflowId()));requireUsableWorkflow(w,a);if(a.role()==Role.STAFF&&r.robotId()!=null)throw new BusinessRuleException("Staff schedules use server-side robot selection");Robot robot=r.robotId()==null?null:robotRepository.findById(r.robotId()).orElseThrow(()->new ResourceNotFoundException("Robot not found: "+r.robotId()));patrol.validateSchedule(w,robot,r.priority(),r.intervalSec(),r.inputTemplateJson());Schedule s=repository.save(Schedule.builder().workflow(w).robot(robot).createdByAccount(account(a.accountId())).scheduleCode(r.scheduleCode()).scheduleName(r.scheduleName()).scheduleType(r.scheduleType()).timezone(r.timezone()).startsAt(r.startsAt()).endsAt(r.endsAt()).intervalSec(r.intervalSec()).cronExpression(r.cronExpression()).inputTemplateJson(r.inputTemplateJson()).priority(r.priority()).misfirePolicy(r.misfirePolicy()).status(ScheduleStatus.PAUSED).build());audit(a,"SCHEDULE_CREATED",s,md);return mapper.toResponse(s);}
     @Override public ScheduleResponse get(UUID id,boolean includeDeleted,AccountPrincipal a){Schedule s=schedule(id);scope(s,a);if(!includeDeleted&&s.getStatus()==ScheduleStatus.RETIRED)throw new ResourceNotFoundException("Schedule not found: "+id);return mapper.toResponse(s);}
     @Override public Page<ScheduleResponse> list(ScheduleStatus status,boolean includeDeleted,AccountPrincipal a,Pageable p){staffScope.requireCurrentStaffOrAdmin(a);if(includeDeleted&&a.role()!=Role.ADMIN)throw new AccessDeniedException("includeDeleted requires ADMIN");Page<Schedule> page;if(a.role()==Role.ADMIN)page=status==null?(includeDeleted?repository.findAll(p):repository.findByStatusNot(ScheduleStatus.RETIRED,p)):repository.findByStatus(status,p);else page=status==null?repository.findByCreatedByAccountAccountIdAndStatusNot(a.accountId(),ScheduleStatus.RETIRED,p):repository.findByCreatedByAccountAccountIdAndStatus(a.accountId(),status,p);return page.map(mapper::toResponse);}
-    @Override @Transactional public ScheduleResponse activate(UUID id,AccountPrincipal a,RequestMetadata md){Schedule s=schedule(id);scope(s,a);if(s.getStatus()==ScheduleStatus.ACTIVE)return mapper.toResponse(s);if(s.getStatus()==ScheduleStatus.RETIRED)throw new BusinessRuleException("RETIRED schedule cannot be activated");requireUsableWorkflow(s.getWorkflow(),a);readiness.requireReady(s.getWorkflow());patrol.validateSchedule(s.getWorkflow(),s.getRobot(),s.getPriority(),s.getIntervalSec(),s.getInputTemplateJson());Instant now=Instant.now(clock);if(s.getEndsAt()!=null&&!s.getEndsAt().isAfter(now))throw new BusinessRuleException("Schedule window has already ended");if(s.getRobot()!=null&&!PatrolWorkflowService.isPatrol(s.getWorkflow())&&repository.existsActiveRobotCollision(s.getRobot().getRobotId(),s.getStartsAt(),s.getEndsAt(),s.getScheduleId()))throw new ConflictException("Robot already has an overlapping ACTIVE schedule");s.setStatus(ScheduleStatus.ACTIVE);s.setNextRunAt(firstRun(s,now));audit(a,"SCHEDULE_ACTIVATED",s,md);return mapper.toResponse(s);}
+    @Override @Transactional public ScheduleResponse activate(UUID id,AccountPrincipal a,RequestMetadata md){Schedule s=schedule(id);scope(s,a);if(s.getStatus()==ScheduleStatus.ACTIVE)return mapper.toResponse(s);if(s.getStatus()==ScheduleStatus.RETIRED)throw new BusinessRuleException("RETIRED schedule cannot be activated");requireUsableWorkflow(s.getWorkflow(),a);readiness.requireReady(s.getWorkflow());patrol.validateSchedule(s.getWorkflow(),s.getRobot(),s.getPriority(),s.getIntervalSec(),s.getInputTemplateJson());Instant now=Instant.now(clock);if(s.getEndsAt()!=null&&!s.getEndsAt().isAfter(now))throw new BusinessRuleException("Schedule window has already ended");if(s.getRobot()!=null&&!PatrolWorkflowService.isPatrol(s.getWorkflow())&&repository.existsActiveRobotCollision(s.getRobot().getRobotId(),s.getStartsAt(),s.getEndsAt(),s.getScheduleId()))throw new ConflictException("Robot already has an overlapping ACTIVE schedule");s.setStatus(ScheduleStatus.ACTIVE);s.setNextRunAt(firstRun(s,now));if(s.getNextRunAt()==null)s.setStatus(ScheduleStatus.RETIRED);audit(a,"SCHEDULE_ACTIVATED",s,md);return mapper.toResponse(s);}
     @Override @Transactional public ScheduleResponse pause(UUID id,AccountPrincipal a,RequestMetadata md){Schedule s=schedule(id);scope(s,a);if(s.getStatus()==ScheduleStatus.PAUSED)return mapper.toResponse(s);if(s.getStatus()!=ScheduleStatus.ACTIVE)throw new BusinessRuleException("Only ACTIVE schedule can be paused");s.setStatus(ScheduleStatus.PAUSED);s.setNextRunAt(null);audit(a,"SCHEDULE_PAUSED",s,md);return mapper.toResponse(s);}
     @Override @Transactional public ScheduleResponse retire(UUID id,String reason,AccountPrincipal a,RequestMetadata md){Schedule s=schedule(id);scope(s,a);if(s.getStatus()==ScheduleStatus.RETIRED)return mapper.toResponse(s);ScheduleStatus before=s.getStatus();s.setStatus(ScheduleStatus.RETIRED);s.setNextRunAt(null);auditService.record(account(a.accountId()),"SCHEDULE_RETIRED","Schedule",id,Map.of("status",before.name()),Map.of("status","RETIRED","reason",reason),md);return mapper.toResponse(s);}
     @Override @Transactional public ScheduleResponse restore(UUID id,String reason,AccountPrincipal a,RequestMetadata md){Schedule s=schedule(id);scope(s,a);if(s.getStatus()!=ScheduleStatus.RETIRED)throw new BusinessRuleException("Only RETIRED schedule can be restored");s.setStatus(ScheduleStatus.PAUSED);s.setNextRunAt(null);auditService.record(account(a.accountId()),"SCHEDULE_RESTORED","Schedule",id,Map.of("status","RETIRED"),Map.of("status","PAUSED","reason",reason),md);return mapper.toResponse(s);}
@@ -41,7 +43,16 @@ public class ScheduleServiceImpl implements ScheduleService {
     @Override
     @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public int runDue(Instant now, int batchSize) {
-        List<Schedule> due = repository.lockDue(now, PageRequest.of(0, batchSize));
+        var page = PageRequest.of(0, batchSize);
+        var cursor = dueCursor;
+        List<Schedule> due = cursor == null ? repository.lockDue(now, page)
+                : repository.lockDueAfter(now, cursor.fireAt(), cursor.scheduleId(), page);
+        if (due.isEmpty() && cursor != null) due = repository.lockDue(now, page);
+        // Rotate bounded scans so an unchanged blocked ONCE occurrence cannot starve later rows.
+        if (!due.isEmpty()) {
+            var last = due.getLast();
+            dueCursor = new DueCursor(last.getNextRunAt(), last.getScheduleId());
+        }
         int count = 0;
         for (Schedule schedule : due) {
             Instant fire = schedule.getNextRunAt();
@@ -57,7 +68,9 @@ public class ScheduleServiceImpl implements ScheduleService {
                 schedule.setLastRunAt(fire);
                 count++;
             }
-            // Patrol skips unavailable occurrences and never enqueues a backlog after a downtime.
+            // Keep an ONCE intent due until it has a durable job (or its window expires).
+            if (isPatrol && job == null && schedule.getScheduleType() == ScheduleType.ONCE) continue;
+            // Recurring patrols coalesce missed occurrences rather than accumulating jobs.
             schedule.setNextRunAt(nextRun(schedule, activeAt));
             if (schedule.getScheduleType() == ScheduleType.ONCE || schedule.getNextRunAt() == null) {
                 schedule.setStatus(ScheduleStatus.RETIRED);
@@ -66,7 +79,7 @@ public class ScheduleServiceImpl implements ScheduleService {
         return count;
     }
     private void validateShape(ScheduleCreateRequest r){try{ZoneId.of(r.timezone());}catch(Exception e){throw new BusinessRuleException("Invalid IANA timezone");}if(r.endsAt()!=null&&!r.endsAt().isAfter(r.startsAt()))throw new BusinessRuleException("endsAt must be after startsAt");switch(r.scheduleType()){case ONCE->{if(r.intervalSec()!=null||r.cronExpression()!=null)throw new BusinessRuleException("ONCE cannot define interval or cron");}case INTERVAL->{if(r.intervalSec()==null||r.cronExpression()!=null)throw new BusinessRuleException("INTERVAL requires intervalSec only");}case CRON->{if(r.cronExpression()==null||r.intervalSec()!=null)throw new BusinessRuleException("CRON requires cronExpression only");try{CronExpression.parse(r.cronExpression());}catch(Exception e){throw new BusinessRuleException("Invalid cron expression");}}}}
-    private Instant firstRun(Schedule s,Instant now){if(s.getStartsAt().isAfter(now))return s.getStartsAt();return s.getMisfirePolicy()==MisfirePolicy.FIRE_ONCE?now:nextRun(s,now);}
+    private Instant firstRun(Schedule s,Instant now){if(s.getStartsAt().isAfter(now))return s.getScheduleType()==ScheduleType.CRON?nextRun(s,s.getStartsAt().minusNanos(1)):s.getStartsAt();return s.getMisfirePolicy()==MisfirePolicy.FIRE_ONCE?now:nextRun(s,now);}
     private Instant nextRun(Schedule s,Instant after){return switch(s.getScheduleType()){case ONCE->null;case INTERVAL->after.plusSeconds(s.getIntervalSec());case CRON->{ZonedDateTime next=CronExpression.parse(s.getCronExpression()).next(after.atZone(ZoneId.of(s.getTimezone())));yield next==null?null:next.toInstant();}};}
     private void scope(Schedule s,AccountPrincipal a){staffScope.requireScheduleAccess(s,a);}
     private void requireUsableWorkflow(Workflow w,AccountPrincipal a){if(w.getStatus()!=WorkflowStatus.PUBLISHED||!w.isAcceptsNewJobs())throw new BusinessRuleException("Schedule requires a published workflow accepting jobs");if(a.role()==Role.STAFF&&!STAFF_SERVICE_TYPES.contains(w.getServiceType().toUpperCase(Locale.ROOT)))throw new AccessDeniedException("Workflow service type is not available to Staff schedules");}

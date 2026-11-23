@@ -115,14 +115,14 @@ public class MqttSessionRegistry {
                 reconciled=false;reason="Robot is held by a legacy or recovery Job";
             }
         }
-        if (!reconciled) for (Job job:active) safety.recovery(job,reason);
+        if (!reconciled) for (Job job:active) if (holdsPhysicalScope(job)) safety.recovery(job,reason);
         session.setRobotId(e.robotId());session.setTransportSessionId(e.transportSessionId());session.setProducerSessionId(e.producerSessionId());
         session.setOwnerInstanceId(connection.instanceId());session.setConnectionId(currentConnection);
         session.setHandshakeAccepted(true);session.setHandshakeAcked(sameTransport && session.isHandshakeAcked());session.setClosed(false);
         if(!mapping.telemetryMatches(e.robotId(),hello.path("mappingSession"))
                 || active.stream().anyMatch(j->mapping.open(j.getJobId())) && (!hello.path("mappingEnabled").asBoolean()
                 || mappingProcessChanged)) {
-            reconciled=false;reason="Unknown or foreign open mapping session";active.forEach(j->safety.recovery(j,"Unknown or foreign open mapping session"));robot.setStatus(RobotStatus.ERROR);
+            reconciled=false;reason="Unknown or foreign open mapping session";active.stream().filter(MqttSessionRegistry::holdsPhysicalScope).forEach(j->safety.recovery(j,"Unknown or foreign open mapping session"));robot.setStatus(RobotStatus.ERROR);
         }
         session.setDispatchReady(reconciled);session.setFailureReason(reason);
         session.setHelloJson(hello.deepCopy());session.setHelloReceivedAt(Instant.now(clock));
@@ -144,14 +144,14 @@ public class MqttSessionRegistry {
         var context=navigationSessions.current(e.robotId());
         if(session.getHelloJson().hasNonNull("navigationSession") && (context==null || !navigationSessions.peer(e.robotId(),session)
                 || !navigationSessions.matches(context,p.path("navigationSession")))) {
-            session.setDispatchReady(false);session.setFailureReason("NAVIGATION_SESSION_CLOSED_OR_CHANGED");active.forEach(j->safety.recovery(j,session.getFailureReason()));
+            session.setDispatchReady(false);session.setFailureReason("NAVIGATION_SESSION_CLOSED_OR_CHANGED");active.stream().filter(MqttSessionRegistry::holdsPhysicalScope).forEach(j->safety.recovery(j,session.getFailureReason()));
         }
         if (e.time().isAfter(now.plusSeconds(5)) || e.time().isBefore(now.minusSeconds(15))) throw new BusinessRuleException("Stale/future MQTT heartbeat");
         if (session.getHeartbeatJson()!=null && session.getLastHeartbeatAt()!=null && e.time().isBefore(Instant.parse(session.getHeartbeatJson().path("occurredAt").asText()))) return;
         UUID mapId=p.path("currentMapId").isNull()?null:UUID.fromString(p.path("currentMapId").asText());
         boolean mappingOpen=com.mediassistrover.backend.mapping.MappingLifecycleService.reportsOpen(p.path("mappingSession"));
         if(!mapping.telemetryMatches(e.robotId(),p.path("mappingSession")) || mappingOpen && (mapId!=null || !p.path("mapAssetHash").isNull())) {
-            session.setDispatchReady(false);session.setFailureReason("Mapping heartbeat scope/map identity mismatch");active.forEach(j->safety.recovery(j,session.getFailureReason()));
+            session.setDispatchReady(false);session.setFailureReason("Mapping heartbeat scope/map identity mismatch");active.stream().filter(MqttSessionRegistry::holdsPhysicalScope).forEach(j->safety.recovery(j,session.getFailureReason()));
         }
         FacilityMap map=mapId==null || mappingOpen?null:maps.findById(mapId).orElseThrow(()->new BusinessRuleException("Heartbeat map does not exist"));
         RobotNavigationProfile deployed=navigationProfiles.findById(e.robotId()).orElse(null);
@@ -160,16 +160,16 @@ public class MqttSessionRegistry {
                 .filter(c->c.getSendAttempts()>0 && "MOVE".equals(c.getPayloadJson().path("step").path("stepType").asText()))
                 .anyMatch(c->deployed==null || c.getNavigationProfileHash()==null || !c.getNavigationProfileHash().equals(deployed.getProfileHash())
                         || !deployed.getMapAssetHash().equalsIgnoreCase(p.path("mapAssetHash").asText()));
-        if(incompatibleMove) {session.setDispatchReady(false);session.setFailureReason("Navigation profile/map hash changed during MOVE");active.forEach(j->safety.recovery(j,session.getFailureReason()));}
-        if (active.stream().anyMatch(j->j.getMap()!=null && !mapping.open(j.getJobId()) && (map==null || !j.getMap().getMapId().equals(map.getMapId())))) {
-            session.setDispatchReady(false);session.setFailureReason("Heartbeat map differs from held Job");active.forEach(j->safety.recovery(j,session.getFailureReason()));
+        if(incompatibleMove) {session.setDispatchReady(false);session.setFailureReason("Navigation profile/map hash changed during MOVE");active.stream().filter(MqttSessionRegistry::holdsPhysicalScope).forEach(j->safety.recovery(j,session.getFailureReason()));}
+        if (active.stream().filter(MqttSessionRegistry::holdsPhysicalScope).anyMatch(j->j.getMap()!=null && !mapping.open(j.getJobId()) && (map==null || !j.getMap().getMapId().equals(map.getMapId())))) {
+            session.setDispatchReady(false);session.setFailureReason("Heartbeat map differs from held Job");active.stream().filter(MqttSessionRegistry::holdsPhysicalScope).forEach(j->safety.recovery(j,session.getFailureReason()));
         }
         if (!p.path("activeJobStepId").isNull()) {
             UUID id=UUID.fromString(p.path("activeJobStepId").asText());
             boolean known=active.stream().anyMatch(j->j.getSelectedJobStep()!=null && j.getSelectedJobStep().getJobStepId().equals(id));
             RobotCommandOutbox recent=commands.findByJobStepId(id).orElse(null);
             if (!known && (recent==null || !recent.getRobotId().equals(e.robotId()) || !"COMPLETED".equals(recent.getState()))) {
-                session.setDispatchReady(false);session.setFailureReason("Unknown active Pi operation");active.forEach(j->safety.recovery(j,session.getFailureReason()));
+                session.setDispatchReady(false);session.setFailureReason("Unknown active Pi operation");active.stream().filter(MqttSessionRegistry::holdsPhysicalScope).forEach(j->safety.recovery(j,session.getFailureReason()));
             }
         }
         RobotStatus previous=robot.getStatus();
@@ -226,6 +226,11 @@ public class MqttSessionRegistry {
                 session.getProducerSessionId(),session.getConnectionId(),context.getSessionId(),context.getMap().getMapId(),
                 context.getMapAssetHash(),context.getInitializationRevision(),now.plusSeconds(15)));
         else applicationEvents.publishEvent(new NavigationLivePoseService.Closed(e.robotId()));
+    }
+
+    /** A future patrol does not impose its map on the robot's current physical operation. */
+    private static boolean holdsPhysicalScope(Job job) {
+        return !com.mediassistrover.backend.service.JobOccupancyPolicy.unstartedPatrolIntent(job);
     }
 
     private void validateFreshMapPose(JsonNode pose,FacilityMap map,String mappingSessionId) {

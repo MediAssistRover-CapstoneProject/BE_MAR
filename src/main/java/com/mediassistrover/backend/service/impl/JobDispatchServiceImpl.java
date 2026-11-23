@@ -15,13 +15,17 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
-import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
 public class JobDispatchServiceImpl implements JobDispatchService {
+    private record QueueCursor(int priority, Instant queuedAt, UUID jobId) { }
+    private record DispatchBatch(int assigned, QueueCursor last) { }
+    private volatile QueueCursor tailCursor;
     private static final java.util.Set<JobStatus> OCCUPYING = com.mediassistrover.backend.service.JobOccupancyPolicy.MOTION_OWNERS;
     private final JobRepository jobRepository;
     private final RobotRepository robotRepository;
@@ -36,11 +40,33 @@ public class JobDispatchServiceImpl implements JobDispatchService {
         if (limit < 1) return 0;
         // Discover queue IDs without locking the shared status index. Lock only
         // each selected primary row, in dispatch priority order, then recheck.
-        List<UUID> queued = jobRepository.findUnassignedQueuedJobIds(PageRequest.of(0, limit));
+        var page = PageRequest.of(0, limit);
+        List<UUID> queued = jobRepository.findUnassignedQueuedJobIds(page);
+        var visited = new HashSet<UUID>();
+        var head = assign(queued, visited);
+        if(head.assigned()>0 || queued.size()<limit || head.last()==null)return head.assigned();
+        // Retry the priority head every time. Only a completely blocked full head permits
+        // one bounded rotating tail batch, so jobs for another free robot/map still progress.
+        QueueCursor cursor=tailCursor==null?head.last():tailCursor;
+        List<UUID> tail=jobRepository.findUnassignedQueuedJobIdsAfter(cursor.priority(),cursor.queuedAt(),cursor.jobId(),page);
+        if(tail.isEmpty() && tailCursor!=null) {
+            cursor=head.last();
+            tail=jobRepository.findUnassignedQueuedJobIdsAfter(cursor.priority(),cursor.queuedAt(),cursor.jobId(),page);
+        }
+        var result=assign(tail,visited);
+        tailCursor=result.last()==null?head.last():result.last();
+        return result.assigned();
+    }
+
+    private DispatchBatch assign(List<UUID> queued, Set<UUID> visited) {
         int assigned = 0;
+        QueueCursor last=null;
         for (UUID id : queued) {
+            if(!visited.add(id))continue;
             Job job=jobRepository.lockById(id).orElse(null);
-            if (job==null || job.getStatus()!=JobStatus.QUEUED || job.getRobot()!=null) continue;
+            if(job==null)continue;
+            last=new QueueCursor(job.getPriority(),job.getQueuedAt(),job.getJobId());
+            if (job.getStatus()!=JobStatus.QUEUED || job.getRobot()!=null || job.getCancelRequestedAt()!=null) continue;
             Robot robot = chooseRobot(job);
             if (robot == null) continue;
             job.setRobot(robot);
@@ -48,7 +74,7 @@ public class JobDispatchServiceImpl implements JobDispatchService {
             wakeups.request(job);
             assigned++;
         }
-        return assigned;
+        return new DispatchBatch(assigned,last);
     }
 
     private Robot chooseRobot(Job job) {
