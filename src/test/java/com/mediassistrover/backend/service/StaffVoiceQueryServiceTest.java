@@ -112,6 +112,37 @@ class StaffVoiceQueryServiceTest {
         }
     }
 
+    @Test void namedOnDutyStaffNavigationUsesOneCurrentMapEndpoint() {
+        UUID mapId = UUID.randomUUID(), roomId = UUID.randomUUID(), endpointId = UUID.randomUUID();
+        StaffProfile staff = doctor("Trung", AccountStatus.ACTIVE);
+        staff.setJobTitle("Điều dưỡng");
+        when(profiles.findVoiceDirectory()).thenReturn(List.of(staff));
+        var shift = checkedIn(staff, roomId, "Phòng khám 2");
+        var reachable = new StaffDutyService.Duty(shift.staffProfileId(), shift.accountId(),
+                shift.fullName(), null, shift.shiftId(), shift.startsAt(), shift.endsAt(),
+                shift.checkedInAt(), roomId, "PK2", "Phòng khám 2", endpointId, true, null, null);
+        when(duty.list(null, null)).thenReturn(List.of(shift));
+        when(duty.list(mapId, null)).thenReturn(List.of(reachable));
+
+        var ready = service.answer("Dẫn tôi đến phòng của nhân viên Trung", mapId);
+        assertEquals("STAFF_NAVIGATION_READY", ready.code());
+        assertEquals(endpointId, ready.endpointId());
+        assertEquals("Phòng khám 2", ready.destinationLabel());
+
+        var noMap = service.answer("Dẫn tôi đến phòng của nhân viên Trung", null);
+        assertEquals("MAP_REQUIRED", noMap.code());
+        assertNull(noMap.endpointId());
+
+        when(duty.list(mapId, null)).thenReturn(List.of(shift));
+        var noEndpoint = service.answer("Dẫn tôi đến phòng của nhân viên Trung", mapId);
+        assertEquals("STAFF_ROOM_NO_ENDPOINT", noEndpoint.code());
+        assertNull(noEndpoint.endpointId());
+
+        when(duty.list(null, null)).thenReturn(List.of());
+        assertEquals("STAFF_OFF_DUTY",
+                service.answer("Dẫn tôi đến phòng của nhân viên Trung", mapId).code());
+    }
+
     @Test void anUnmatchedSpokenNameDoesNotAssertThatNoEmployeeExists() {
         when(profiles.findVoiceDirectory()).thenReturn(List.of());
         var answer = service.answer("Ở bệnh viện có nhân viên tên Thành hay không?", null);

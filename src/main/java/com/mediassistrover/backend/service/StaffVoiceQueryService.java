@@ -28,7 +28,12 @@ public class StaffVoiceQueryService {
     private final Clock clock;
 
     public record Query(@NotBlank @Size(max = 300) String question, UUID mapId) {}
-    public record Answer(boolean recognized, String code, String answer, Instant checkedAt) {}
+    public record Answer(boolean recognized, String code, String answer, Instant checkedAt,
+                         UUID endpointId, String destinationLabel) {
+        public Answer(boolean recognized, String code, String answer, Instant checkedAt) {
+            this(recognized, code, answer, checkedAt, null, null);
+        }
+    }
     private static final Pattern NAME = Pattern.compile("(?:^| )(?:bac si|bs|nhan vien) (?:nao )?(?:co )?(?:ten(?: la)? |la )?(.+?)(?= (?:dang|hien|o|co|truc|ca|hom|check|lam|trong|khong|chua|hay)(?: |$)|$)");
 
     public Answer answerForRobot(String question, UUID robotId) {
@@ -41,6 +46,9 @@ public class StaffVoiceQueryService {
         if (text.isBlank()) return unknown();
         boolean aboutDoctor = text.contains("bac si") || text.startsWith("bs ") || text.contains(" bs ");
         boolean aboutStaff = text.contains("nhan vien");
+        boolean navigateToStaff = (text.startsWith("dan ") || text.startsWith("dua ")
+                || text.startsWith("di den ") || text.startsWith("toi muon den "))
+                && text.contains("phong") && (aboutDoctor || aboutStaff);
         boolean roomQuery = text.contains("phong") &&
                 (text.contains("bac si nao") || text.contains("ai dang truc") || text.contains("ai truc")
                         || text.contains("nhan vien nao dang truc"));
@@ -48,13 +56,13 @@ public class StaffVoiceQueryService {
                 (text.contains("phong nao") || text.contains("o dau") || text.contains("truc")
                         || text.contains("check in") || text.contains("dang o")
                         || text.contains("hien o") || text.contains("benh vien") || text.contains("ca lam")
-                        || text.contains(" ten ") || text.startsWith("co "));
+                        || text.contains(" ten ") || text.startsWith("co ") || navigateToStaff);
         if (!roomQuery && !personQuery) return unknown();
         Instant now = clock.instant();
-        return roomQuery ? inRoom(text, mapId, now) : findPerson(text, aboutDoctor, now);
+        return roomQuery ? inRoom(text, mapId, now) : findPerson(text, aboutDoctor, navigateToStaff, mapId, now);
     }
 
-    private Answer findPerson(String question, boolean askedForDoctor, Instant now) {
+    private Answer findPerson(String question, boolean askedForDoctor, boolean navigate, UUID mapId, Instant now) {
         Matcher matcher = NAME.matcher(question);
         if (!matcher.find() || matcher.group(1).matches("(?:do|nay|nao|ay|kia|ten|la|co)(?: (?:do|nay|nao|ay|kia|ten|la|co))*"))
             return result("NAME_REQUIRED", "Bạn vui lòng nói rõ họ tên "
@@ -82,6 +90,26 @@ public class StaffVoiceQueryService {
         List<String> rooms = duty.list(null, null).stream()
                 .filter(s -> s.accountId().equals(profile.getAccount().getAccountId()))
                 .map(StaffDutyService.Duty::roomName).distinct().toList();
+        if (navigate && !rooms.isEmpty()) {
+            if (mapId == null) return result("MAP_REQUIRED",
+                    "Nhân viên " + fullName + " đang trực, nhưng robot chưa có phiên bản đồ đang mở.", now);
+            List<StaffDutyService.Duty> onMap = duty.list(mapId, null).stream()
+                    .filter(s -> s.accountId().equals(profile.getAccount().getAccountId())).toList();
+            if (onMap.isEmpty()) return result("STAFF_ROOM_NOT_ON_MAP",
+                    "Nhân viên " + fullName + " đang trực, nhưng phòng trực không thuộc bản đồ hiện tại.", now);
+            List<UUID> roomIds = onMap.stream().map(StaffDutyService.Duty::roomId).distinct().toList();
+            if (roomIds.size() != 1) return result("STAFF_MULTIPLE_ROOMS",
+                    "Nhân viên " + fullName + " đang trực ở nhiều phòng. Bạn vui lòng nói rõ phòng cần đến.", now);
+            List<UUID> targets = onMap.stream().map(StaffDutyService.Duty::endpointId)
+                    .filter(Objects::nonNull).distinct().toList();
+            if (targets.size() != 1 || onMap.stream().anyMatch(s -> !s.deliverable()))
+                return result("STAFF_ROOM_NO_ENDPOINT", "Nhân viên " + fullName
+                        + " đang trực tại " + onMap.getFirst().roomName()
+                        + ", nhưng phòng chưa có một điểm dẫn đường khả dụng trên bản đồ hiện tại.", now);
+            return new Answer(true, "STAFF_NAVIGATION_READY", "Nhân viên " + fullName
+                    + " đang trực tại " + onMap.getFirst().roomName() + ".", now,
+                    targets.getFirst(), onMap.getFirst().roomName());
+        }
         if (!isDoctor(profile)) {
             if (!rooms.isEmpty())
                 return result(askedForDoctor ? "STAFF_ON_DUTY_NOT_DOCTOR" : "STAFF_ON_DUTY",
