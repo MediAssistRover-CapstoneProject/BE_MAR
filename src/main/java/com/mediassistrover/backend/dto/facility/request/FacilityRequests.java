@@ -107,7 +107,31 @@ public final class FacilityRequests {
             @NotNull SelectionPolicy selectionPolicy,
             boolean allowFallback,
             String description,
-            boolean active) { }
+            boolean active,
+            UUID roomId,
+            @DecimalMin("0.1") @DecimalMax("2.0") BigDecimal fallbackRadiusM) {
+        public EndpointGroupRequest {
+            if (fallbackRadiusM == null) fallbackRadiusM = new BigDecimal("0.75");
+        }
+        public EndpointGroupRequest(UUID mapId, String groupCode, String groupName,
+                SelectionPolicy selectionPolicy, boolean allowFallback, String description, boolean active) {
+            this(mapId, groupCode, groupName, selectionPolicy, allowFallback, description, active, null, null);
+        }
+    }
+
+    public record RoomEndpointPairRequest(
+            @NotNull UUID mapId,
+            @NotNull UUID roomId,
+            @NotBlank @Size(max = 64) String groupCode,
+            @NotBlank @Size(max = 160) String groupName,
+            @NotNull UUID primaryEndpointId,
+            @NotNull UUID fallbackEndpointId,
+            @DecimalMin("0.1") @DecimalMax("2.0") BigDecimal fallbackRadiusM,
+            boolean setAsRoomDefault) {
+        public RoomEndpointPairRequest {
+            if (fallbackRadiusM == null) fallbackRadiusM = new BigDecimal("0.75");
+        }
+    }
 
     public record EndpointGroupMemberRequest(
             @NotNull UUID endpointGroupId,

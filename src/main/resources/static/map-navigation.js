@@ -187,6 +187,8 @@
         <label>Tên endpoint<input id="navPointName" maxlength="160" placeholder="Điểm trước cửa phòng"></label>
         <label>Loại endpoint<select id="navPointType"><option value="WAYPOINT">Waypoint — điểm đến</option><option value="PARK">Parking — vị trí đỗ / khởi tạo</option><option value="CHARGER">Manual Charger — vị trí sạc thủ công</option><option value="STAGING" hidden>Staging — điểm chờ cũ</option></select></label>
         <label>Zone gắn với endpoint<select id="navPointZone"><option value="">Không gắn zone</option></select></label>
+        <label>Phòng của endpoint<select id="navPointRoom"><option value="">Không gắn phòng</option></select></label>
+        <small>Điểm trong phòng và điểm đến dự phòng ngoài cửa cùng gán một phòng để tạo nhóm dự phòng.</small>
         <div class="fields"><label>X (m)<input id="navX" type="number" step="any"></label><label>Y (m)<input id="navY" type="number" step="any"></label></div>
         <label>Hướng thân robot trên map (độ)<input id="navYaw" type="number" step="1" min="-180" max="180" value="0"></label>
         <small>0° theo +X map; 90° theo +Y. Mũi tên thể hiện hướng thân robot; cần hiệu chuẩn góc lắp camera.</small>
@@ -218,7 +220,7 @@
     const state = {meta: null, map: null, image: null, imageUrl: null, endpoints: [], draft: null, editing: null,
       snapshot: null, receivedAt: 0, robotId: '', busy: false, generation: 0, timer: null, closed: false,
       dragging: null,seed:null,route:null,routeAt:0,follow:true,zoom:1.8,viewCenter:null,pan:null,routeKey:null,
-      zones:[],zoneEditing:null,zonePoints:[],zoneSyncAt:0,zoneAck:null};
+      zones:[],rooms:[],zoneEditing:null,zonePoints:[],zoneSyncAt:0,zoneAck:null};
     const say = (message, error = false) => { $('navAction').textContent = message; $('navAction').classList.toggle('nav-error', error); };
     const active = () => !!state.snapshot?.activeJobId || !!options.isWorkflowActive?.();
     function robotId() {
@@ -276,7 +278,7 @@
       for (const id of ['navNewPoint', 'navEndpoints', 'navPointCode', 'navPointName', 'navX', 'navY', 'navYaw']) $(id).disabled = !loaded || locked;
       $('navSavePoint').disabled = !loaded || locked || !state.draft;
       $('navDeletePoint').disabled = !loaded || locked || !selected()?.active;
-      for(const id of ['navPointType','navPointZone','navAtParking','navNewZone','navReloadZones','navZoneMode','navZones','navZoneCode','navZoneName','navZoneType','navZoneActive','navZonePoints','navZoneUndo','navSaveZone'])$(id).disabled=!loaded||locked;
+      for(const id of ['navPointType','navPointZone','navPointRoom','navAtParking','navNewZone','navReloadZones','navZoneMode','navZones','navZoneCode','navZoneName','navZoneType','navZoneActive','navZonePoints','navZoneUndo','navSaveZone'])$(id).disabled=!loaded||locked;
       $('navZoneSpeed').disabled=!loaded||locked||$('navZoneType').value!=='SPEED';
       $('navToggleZone').disabled=!loaded||locked||!state.zoneEditing;
       $('navParkingSeed').disabled=!loaded||locked||selected()?.endpointType!=='PARK'||!$('navAtParking').checked;
@@ -294,7 +296,7 @@
       const xM = Number($('navX').value), yM = Number($('navY').value), degrees = Number($('navYaw').value);
       if (!Number.isFinite(degrees) || degrees < -180 || degrees > 180 || !inside(state.meta, xM, yM)) throw Error('Điểm phải nằm trong map; hướng từ -180° đến 180°.');
       const old = state.editing;
-      return {mapId: state.meta.map_id, zoneId: $('navPointZone').value || null, roomId: old?.roomId ?? null,
+      return {mapId: state.meta.map_id, zoneId: $('navPointZone').value || null, roomId: $('navPointRoom').value || null,
         endpointCode: $('navPointCode').value.trim(), endpointName: $('navPointName').value.trim(),
         endpointType: $('navPointType').value, xM, yM, yawRad: angle(degrees * Math.PI / 180),
         active: old?.active ?? true, accessible: old?.accessible ?? true, publicVisible: old?.publicVisible ?? false,
@@ -440,7 +442,7 @@
     }
     function clearPoint() {
       state.draft = state.editing = null; $('navEndpoints').value = '';
-      $('navPointType').value='WAYPOINT';$('navPointZone').value='';$('navAtParking').checked=false;
+      $('navPointType').value='WAYPOINT';$('navPointZone').value='';$('navPointRoom').value='';$('navAtParking').checked=false;
       for (const id of ['navX', 'navY', 'navPointCode', 'navPointName']) $(id).value = '';
       $('navYaw').value = '0'; $('navPointId').textContent = 'Đang đặt endpoint mới. Bấm rồi kéo trên map để chọn hướng.';
       $('navSwagger').textContent = 'Chọn vị trí trên map để lấy JSON.'; controls(); draw();
@@ -449,6 +451,16 @@
       state.endpoints = (await pages('/api/v1/endpoints')).filter(e => e.mapId === state.meta.map_id && e.active);
       state.zoneAck=null;state.zoneSyncAt=0;
       showEndpoints(id); draw();
+    }
+    async function rooms(){
+      state.rooms=(await pages('/api/v1/rooms?includeDeleted=true')).filter(room=>room.floorId===state.map.floorId);
+      const selected=$('navPointRoom').value;
+      $('navPointRoom').replaceChildren(new Option('Không gắn phòng',''));
+      for(const room of state.rooms){
+        const option=new Option(room.roomCode+' — '+room.roomName+(room.active?'':' (đã tắt)'),room.roomId);
+        option.disabled=!room.active;$('navPointRoom').add(option);
+      }
+      $('navPointRoom').value=selected;
     }
     function clearZone(){state.zoneEditing=null;state.zonePoints=[];$('navZones').value='';$('navZoneCode').value='';$('navZoneName').value='';$('navZoneType').value='SPEED';$('navZoneSpeed').value='.15';$('navZoneActive').checked=true;zoneDraft();}
     function zoneBody(){
@@ -509,7 +521,7 @@
       canvas.width = meta.width_px; canvas.height = meta.height_px;
       canvas.style.width = 'min(100%, ' + Math.max(180, 650 * meta.width_px / meta.height_px) + 'px)'; canvas.hidden = false;
       $('navMapInfo').textContent = `${map.mapName} · ${map.status} · ${meta.width_px} × ${meta.height_px} ô · ${(meta.resolution_m_per_pixel * 100).toFixed(1)} cm/ô · frame ${meta.frame_id}`;
-      clearZone();$('navZoneMode').checked=false;await zones();await endpoints();
+      clearZone();$('navZoneMode').checked=false;await zones();await rooms();await endpoints();
       say('Đã tải map thật. Chọn endpoint đã lưu hoặc bấm/kéo để đặt điểm mới.');
       controls(); draw(); poll(generation);
     }
@@ -583,11 +595,15 @@
       const point = selected(); if (!point) return clearPoint();
       state.editing = point;
       $('navPointType').value=point.endpointType;$('navPointZone').value=point.zoneId||'';$('navAtParking').checked=false;
+      if(point.roomId&&!Array.from($('navPointRoom').options).some(o=>o.value===point.roomId)){
+        const missing=new Option('Phòng đã gắn: '+point.roomId,point.roomId);missing.disabled=true;$('navPointRoom').add(missing);
+      }
+      $('navPointRoom').value=point.roomId||'';
       if(point.zoneId&&!Array.from($('navPointZone').options).some(o=>o.value===point.zoneId)){$('navPointZone').add(new Option('Zone đã gắn: '+point.zoneId,point.zoneId));$('navPointZone').value=point.zoneId;}
       for (const [id, value] of Object.entries({navX: point.xM, navY: point.yM, navYaw: point.yawRad * 180 / Math.PI, navPointCode: point.endpointCode, navPointName: point.endpointName})) $(id).value = value;
       $('navPointId').textContent = 'Endpoint ID: ' + point.endpointId; updateDraft();
     };
-    for (const id of ['navX', 'navY', 'navYaw', 'navPointCode', 'navPointName','navPointType','navPointZone']) $(id).addEventListener('input', updateDraft);
+    for (const id of ['navX', 'navY', 'navYaw', 'navPointCode', 'navPointName','navPointType','navPointZone','navPointRoom']) $(id).addEventListener('input', updateDraft);
     $('navAtParking').onchange=controls;
     $('navParkingSeed').onclick=()=>{const p=selected();if(!p||p.endpointType!=='PARK'||!$('navAtParking').checked)return;for(const [id,v] of Object.entries({navSeedX:p.xM,navSeedY:p.yM,navSeedYaw:p.yawRad*180/Math.PI}))$(id).value=v;updateSeed();say('Đã điền vị trí parking. Bấm Gửi vị trí khởi tạo cho AMCL khi phiên map sẵn sàng; chờ Pi xác minh.');};
     $('navNewZone').onclick=()=>{clearZone();$('navZoneMode').checked=true;$('navSeedMode').checked=false;};

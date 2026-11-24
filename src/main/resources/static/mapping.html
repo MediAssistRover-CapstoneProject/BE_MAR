@@ -63,6 +63,7 @@
 </section>
 <section id="mappingAutonomy" class="panel"></section>
 <section id="mapNavigation" class="panel" aria-label="Đặt endpoint và dẫn đường trên map đã lưu"></section>
+<section id="endpointGroupEditor" class="panel" aria-label="Cấu hình hai điểm đến cùng phòng"></section>
 <section id="publishedWorkflowRunner" class="panel" aria-label="Chạy workflow đã xuất bản"></section>
 <section id="patrolWorkflowBuilder" class="panel" aria-label="Cấu hình tuyến tuần tra"></section>
 <section class="panel" aria-label="Cấu hình dẫn đường bằng giọng nói">
@@ -81,7 +82,7 @@
 <section id="robotTestWorkflow" class="panel" aria-label="Chạy workflow robot"></section>
 
 <details class="panel"><summary>Trạng thái nhiệm vụ</summary><pre id="state"></pre></details>
-<script src="/robot-data-selectors.js?v=20261122-catalog"></script>
+<script src="/robot-data-selectors.js?v=20261124-endpoint-groups"></script>
 <script src="/mapping-autonomy.js?v=20261117-cadence"></script>
 <script>
 'use strict';
@@ -425,7 +426,7 @@ function setWorkflowField(field,id,label){
 $('prepareMapping').onclick=async()=>{const b=$('prepareMapping');b.disabled=true;try{await prepareWorkflow('mapping-workflow.json','WF_MAPPING','workflow');notice('Workflow quét và lưu đã sẵn sàng.')}catch(e){notice(e.message)}finally{b.disabled=false}};
 $('prepareVoiceNavigation').onclick=async()=>{const b=$('prepareVoiceNavigation');b.disabled=true;try{await prepareWorkflow('voice-navigation-workflow.json','WF_VOICE_ENDPOINT_V1','voiceNavigationWorkflow',true);notice('Workflow voice đã sẵn sàng. Robot mời đi theo trước khi MOVE và báo khi đã tới nơi.')}catch(e){notice(e.message)}finally{b.disabled=false}};
 </script>
-<script src="/map-navigation.js?v=20261108-workflow-recheck"></script>
+<script src="/map-navigation.js?v=20261124-room-endpoints"></script>
 <script>
 autoMapping=MappingAutonomy.mount({
   context:()=>({job,session,mapping,busy,jogActive:jog.active}),buttons,
@@ -437,13 +438,15 @@ autoMapping=MappingAutonomy.mount({
 </script>
 <script src="/robot-test-workflow.js?v=20261117-speed"></script>
 <script src="/published-workflow-runner.js?v=20261122-dropdowns"></script>
-<script src="/patrol-workflow-builder.js?v=20261122-checkpoints"></script>
+<script src="/patrol-workflow-builder.js?v=20261124-endpoint-groups"></script>
+<script src="/endpoint-group-editor.js?v=20261124-room-pair"></script>
 <script>
 let workflowRunner,publishedRunner;
 const savedMapNavigation=SavedMapNavigation.mount({element:document.getElementById('mapNavigation'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,isMappingActive:()=>mapping||jog.active,getSavedMapId:()=>document.getElementById('savedMapId').value,isWorkflowActive:()=>workflowRunner?.isActive()||publishedRunner?.isActive()||false,refreshWorkflowState:()=>Promise.all([workflowRunner?.refresh(),publishedRunner?.refresh()]),onContextChange:()=>{workflowRunner?.refreshContext();publishedRunner?.refreshContext()}});
 publishedRunner=PublishedWorkflowRunner.mount({element:document.getElementById('publishedWorkflowRunner'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,getNavigation:()=>savedMapNavigation.state,isMappingActive:()=>mapping||jog.active,onCreated:(result,workflow)=>{if(workflow.serviceType==='MAPPING'){$('job').value=result.jobId;watch().catch(error=>notice(error.message))}}});
 workflowRunner=RobotTestWorkflow.mount({element:document.getElementById('robotTestWorkflow'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,getNavigation:()=>savedMapNavigation.state,isMappingActive:()=>mapping||jog.active});
 PatrolWorkflowBuilder.mount({element:$('patrolWorkflowBuilder'),getToken:()=>$('token').value,getNavigation:()=>savedMapNavigation.state,onPublished:async result=>{await publishedRunner.selectWorkflow(result.workflowId);}});
+EndpointGroupEditor.mount({element:$('endpointGroupEditor'),getToken:()=>$('token').value,getNavigation:()=>savedMapNavigation.state});
 const connectionCatalog=RobotDataCatalog.create({getToken:()=>$('token').value});
 let connectionEpoch=0,selectedConnectionRobot=$('robot').value;
 function fillConnectionSelect(id,rows,placeholder){

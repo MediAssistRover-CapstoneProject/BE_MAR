@@ -24,7 +24,8 @@ public interface FacilityMapper {
     @Mapping(target = "xM", expression = "java(entity.getXM())")
     @Mapping(target = "yM", expression = "java(entity.getYM())")
     EndpointResponse toResponse(Endpoint entity);
-    @Mapping(target = "mapId", source = "map.mapId") EndpointGroupResponse toResponse(EndpointGroup entity);
+    @Mapping(target = "mapId", source = "map.mapId")
+    @Mapping(target = "roomId", source = "room.roomId") EndpointGroupResponse toResponse(EndpointGroup entity);
     @Mapping(target = "endpointGroupId", source = "endpointGroup.endpointGroupId")
     @Mapping(target = "endpointId", source = "endpoint.endpointId") @Mapping(target = "mapId", source = "map.mapId")
     EndpointGroupMemberResponse toResponse(EndpointGroupMember entity);
@@ -41,6 +42,7 @@ public interface FacilityMapper {
     @Mapping(target = "roomId", source = "room.roomId")
     PublicFacilityResponses.Endpoint toPublicResponse(Endpoint entity);
     @Mapping(target = "mapId", source = "map.mapId")
+    @Mapping(target = "roomId", source = "room.roomId")
     PublicFacilityResponses.EndpointGroup toPublicResponse(EndpointGroup entity);
     PublicFacilityResponses.Hospital toPublicResponse(HospitalInformation entity);
     @Mapping(target = "hospitalInformationId", source = "hospitalInformation.hospitalInformationId")
@@ -58,7 +60,8 @@ public interface FacilityMapper {
     @Mapping(target = "floor", ignore = true) @Mapping(target = "defaultEndpointGroup", ignore = true) Room toEntity(RoomRequest request);
     @Mapping(target = "map", ignore = true) @Mapping(target = "zone", ignore = true) @Mapping(target = "room", ignore = true)
     Endpoint toEntity(EndpointRequest request);
-    @Mapping(target = "map", ignore = true) EndpointGroup toEntity(EndpointGroupRequest request);
+    @Mapping(target = "map", ignore = true) @Mapping(target = "room", ignore = true)
+    EndpointGroup toEntity(EndpointGroupRequest request);
 
     @Mapping(target = "hospitalInformationId", ignore = true) @Mapping(target = "updatedBy", ignore = true)
     @Mapping(target = "status", ignore = true) @Mapping(target = "createdAt", ignore = true) @Mapping(target = "updatedAt", ignore = true)
@@ -89,7 +92,7 @@ public interface FacilityMapper {
     @Mapping(target = "XM", source = "xM")
     @Mapping(target = "YM", source = "yM")
     void update(EndpointRequest request, @MappingTarget Endpoint entity);
-    @Mapping(target = "endpointGroupId", ignore = true) @Mapping(target = "map", ignore = true)
+    @Mapping(target = "endpointGroupId", ignore = true) @Mapping(target = "map", ignore = true) @Mapping(target = "room", ignore = true)
     @Mapping(target = "createdAt", ignore = true) @Mapping(target = "updatedAt", ignore = true)
     void update(EndpointGroupRequest request, @MappingTarget EndpointGroup entity);
 }

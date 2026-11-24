@@ -5,6 +5,7 @@ import com.mediassistrover.backend.enums.EndpointType;
 import com.mediassistrover.backend.enums.ZoneType;
 
 import java.time.Instant;
+import java.math.BigDecimal;
 import java.util.UUID;
 
 /** DTOs intentionally limited to fields safe for the anonymous patient catalog. */
@@ -26,5 +27,9 @@ public final class PublicFacilityResponses {
     public record Endpoint(UUID endpointId, UUID mapId, UUID zoneId, UUID roomId, String endpointCode,
                            String endpointName, EndpointType endpointType, boolean accessible) { }
     public record EndpointGroup(UUID endpointGroupId, UUID mapId, String groupCode, String groupName,
-                                String description) { }
+                                String description, UUID roomId, BigDecimal fallbackRadiusM) {
+        public EndpointGroup(UUID endpointGroupId, UUID mapId, String groupCode, String groupName, String description) {
+            this(endpointGroupId, mapId, groupCode, groupName, description, null, new BigDecimal("0.75"));
+        }
+    }
 }

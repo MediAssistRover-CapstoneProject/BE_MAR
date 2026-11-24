@@ -166,10 +166,14 @@
       if(!validId(mapId))return [];
       return choices(await mapRows('/api/v1/endpoint-groups',mapId,scope()),'endpointGroupId',r=>[r.groupCode,r.groupName,r.selectionPolicy,state(r)],mapId);
     }
+    async function endpointGroupMembers(mapId){
+      if(!validId(mapId))return [];
+      return mapRows('/api/v1/endpoint-group-members',mapId,scope());
+    }
     async function workflows(serviceType){
       return choices(await list('/api/v1/workflows/published',scope(),{serviceType}),'workflowId',r=>[r.workflowName,r.workflowCode,'v'+r.versionNo,r.serviceType,r.status]);
     }
-    return Object.freeze({maps,robots,floors,rooms,endpoints,staff,shifts,serviceRequests,jobs,incidents,zones,endpointGroups,workflows,invalidate,invalidateCache:invalidate});
+    return Object.freeze({maps,robots,floors,rooms,endpoints,staff,shifts,serviceRequests,jobs,incidents,zones,endpointGroups,endpointGroupMembers,workflows,invalidate,invalidateCache:invalidate});
   }
   return Object.freeze({create});
 });

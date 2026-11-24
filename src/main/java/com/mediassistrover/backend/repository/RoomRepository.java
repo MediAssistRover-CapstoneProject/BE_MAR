@@ -18,6 +18,7 @@ public interface RoomRepository extends JpaRepository<Room, UUID> {
     Optional<Room> lockById(@Param("id") UUID id);
     boolean existsByRoomCodeIgnoreCase(String roomCode);
     Optional<Room> findByRoomCodeIgnoreCase(String roomCode);
+    java.util.List<Room> findByDefaultEndpointGroupEndpointGroupId(UUID groupId);
     @Query("""
             select r from Room r where r.active = true and r.floor.active = true and r.publicVisible = true
               and exists (select e.endpointId from Endpoint e where e.room = r and e.active = true

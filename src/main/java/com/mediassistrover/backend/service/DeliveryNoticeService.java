@@ -23,7 +23,7 @@ public class DeliveryNoticeService {
  private final DeliveryEmailService email;
  @EventListener public void created(Created e){notice(e.job(),null,"CREATED","Có đơn giao hàng mới dành cho bạn.");}
  public void arrived(JobStep s){if(receiverMove(s)&&s.getResultJson()!=null&&s.getResultJson().path("reached").asBoolean())notice(s.getJobTask().getJob(),s,"ARRIVED","Robot đã tới. Mời bạn ra nhận hàng.");}
- private boolean receiverMove(JobStep s){return Set.of("MOVE_RECEIVER","TRANSIT").contains(s.getStepCodeSnapshot())&&"MOVE".equals(s.getStepTypeSnapshot());}
+ private boolean receiverMove(JobStep s){return Set.of("MOVE_RECEIVER","TRANSIT","GROUP_RECEIVER_MOVE","GROUP_MOVE").contains(s.getStepCodeSnapshot())&&"MOVE".equals(s.getStepTypeSnapshot());}
  @Scheduled(fixedDelay=500) @Transactional public void approaching(){
   if(!schedulingEnabled)return;
   for(UUID id:jobs.findRunningDeliveryIds()){

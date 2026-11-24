@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mediassistrover.backend.dto.request.request.ServiceRequestRequests.NavigationCreateRequest;
 import com.mediassistrover.backend.dto.request.response.ServiceRequestResponses.DeviceRequestDetailResponse;
 import com.mediassistrover.backend.entity.Endpoint;
+import com.mediassistrover.backend.entity.EndpointGroup;
+import com.mediassistrover.backend.entity.EndpointGroupMember;
 import com.mediassistrover.backend.entity.Workflow;
 import com.mediassistrover.backend.enums.*;
 import com.mediassistrover.backend.exception.*;
@@ -18,7 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.*;
 
 /** Voice selects a real endpoint; the published workflow owns execution. */
-@Service @RequiredArgsConstructor @Transactional(readOnly=true)
+@Service @RequiredArgsConstructor(onConstructor_=@org.springframework.beans.factory.annotation.Autowired) @Transactional(readOnly=true)
 public class VoiceNavigationService {
     public static final String WORKFLOW_CODE="WF_VOICE_ENDPOINT_V1";
     public static final double DEFAULT_SPEED_MPS = 0.35;
@@ -35,6 +37,14 @@ public class VoiceNavigationService {
     private final MqttWire wire;
     private final com.mediassistrover.backend.speech.SpeechSettingsService speechSettings;
     private final VoiceAdmissionService admission;
+    private final EndpointGroupMemberRepository members;
+
+    // Retain the constructor used by existing integrations that only read the voice catalog.
+    public VoiceNavigationService(NavigationSessionService sessions,DeviceResourceScopePolicy scope,EndpointRepository endpoints,
+            WorkflowRepository workflows,ServiceRequestRepository rows,ServiceRequestService requests,JobRepository jobs,
+            MqttWire wire,com.mediassistrover.backend.speech.SpeechSettingsService speechSettings,VoiceAdmissionService admission) {
+        this(sessions,scope,endpoints,workflows,rows,requests,jobs,wire,speechSettings,admission,null);
+    }
 
     public ObjectNode destinations(DevicePrincipal device) {
         scope.requireCurrentDevice(device);
@@ -79,7 +89,8 @@ public class VoiceNavigationService {
         if(prior!=null){
             if(prior.getRequestedRobot()==null||!prior.getRequestedRobot().getRobotId().equals(device.robotId())
                 ||prior.getRequestType()!=ServiceRequestType.NAVIGATION||!prior.getRequestDataJson().path("voice_navigation").asBoolean()
-                ||!input.endpointId().toString().equals(prior.getRequestDataJson().path("endpoint_id").asText())
+                ||!input.endpointId().toString().equals(prior.getRequestDataJson().path("voice_requested_endpoint_id")
+                    .asText(prior.getRequestDataJson().path("endpoint_id").asText()))
                 ||!input.navigationSessionId().toString().equals(prior.getRequestDataJson().path("navigation_session_id").asText())
                 ||!Objects.equals(input.voiceInteractionId()==null?null:input.voiceInteractionId().toString(),
                     prior.getRequestDataJson().hasNonNull("voice_interaction_id")?prior.getRequestDataJson().path("voice_interaction_id").asText():null)
@@ -108,15 +119,37 @@ public class VoiceNavigationService {
                 "VOICE_NAVIGATION_WORKFLOW_NOT_PREPARED: prepare WF_VOICE_ENDPOINT_V1 on mapping.html"));
         if(input.workflowOwnsInvite()!=null && input.workflowOwnsInvite()!=ownsInvite(workflow))
             throw new ConflictException("VOICE_NAVIGATION_WORKFLOW_CHANGED: refresh the catalog and confirm again");
+        EndpointGroup group=input.workflowOwnsInvite()==null?null:fallbackGroup(target,mapId);
+        if(group!=null && (!workflow.getInputSchemaJson().path("properties").has("endpoint_group_id")
+                || !java.util.stream.StreamSupport.stream(workflow.getInputSchemaJson().path("properties")
+                    .path("target_mode").path("enum").spliterator(),false).anyMatch(value->"ENDPOINT_GROUP".equals(value.asText()))))
+            throw new BusinessRuleException("VOICE_NAVIGATION_WORKFLOW_NOT_PREPARED: prepare the new endpoint-group workflow on mapping.html");
         var data=wire.object().put("voice_navigation",true).put("max_speed_mps",speed)
-            .put("arrival_text",arrivalText(target));
+            .put("arrival_text",arrivalText(target)).put("voice_requested_endpoint_id",target.getEndpointId().toString());
         if(input.workflowOwnsInvite()!=null)data.put("workflow_owns_invite",input.workflowOwnsInvite());
         if(input.voiceInteractionId()!=null)data.put("voice_interaction_id",input.voiceInteractionId().toString());
-        var body=new NavigationCreateRequest(mapId,workflow.getWorkflowId(),null,null,target.getEndpointId(),null,
-            TargetMode.ENDPOINT,NavigationMode.STANDARD,null,1,null,50,"Confirmed voice destination: "+target.getEndpointCode(),
+        var body=new NavigationCreateRequest(mapId,workflow.getWorkflowId(),group==null?null:group.getRoom().getRoomId(),null,
+            group==null?target.getEndpointId():null,group==null?null:group.getEndpointGroupId(),
+            group==null?TargetMode.ENDPOINT:TargetMode.ENDPOINT_GROUP,NavigationMode.STANDARD,null,1,null,50,"Confirmed voice destination: "+target.getEndpointCode(),
             data,device.robotId(),input.navigationSessionId());
         var created=requests.createDeviceNavigation(body,key,device,metadata);
         return requests.getDeviceRequest(created.request().serviceRequestId(),device);
+    }
+
+    private EndpointGroup fallbackGroup(Endpoint primary,UUID mapId) {
+        if(members==null || primary.getRoom()==null || !primary.getRoom().isActive())return null;
+        var group=primary.getRoom().getDefaultEndpointGroup();
+        if(group==null || !group.isActive() || !group.isAllowFallback() || group.getRoom()==null
+                || group.getSelectionPolicy()!=SelectionPolicy.PRIORITY || !mapId.equals(group.getMap().getMapId())
+                || !primary.getRoom().getRoomId().equals(group.getRoom().getRoomId()))return null;
+        var pair=members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(group.getEndpointGroupId()).stream()
+                .filter(EndpointGroupMember::isActive).toList();
+        if(pair.size()!=2 || pair.getFirst().getSequenceNo()!=1 || pair.get(1).getSequenceNo()!=2
+                || !primary.getEndpointId().equals(pair.getFirst().getEndpoint().getEndpointId())
+                || pair.stream().anyMatch(m->!m.getEndpoint().isActive() || !m.getEndpoint().isAccessible()
+                    || !mapId.equals(m.getMap().getMapId()) || !mapId.equals(m.getEndpoint().getMap().getMapId())
+                    || m.getEndpoint().getRoom()==null || !m.getEndpoint().getRoom().getRoomId().equals(group.getRoom().getRoomId())))return null;
+        return group;
     }
 
     private static boolean ownsInvite(Workflow workflow) {

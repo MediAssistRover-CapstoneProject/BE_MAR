@@ -140,8 +140,10 @@ public class MapHardDeleteService {
         add(scopes, "RobotLocationHistory", "map_id", id);
         add(scopes, "EndpointGroupMember", "map_id", id);
         add(scopes, "Endpoint", "map_id", id);
-        scopes.put("Room", new Scope("Room", "room_id", List.copyOf(candidates)));
         add(scopes, "EndpointGroup", "map_id", id);
+        // Room.defaultEndpointGroup is detached before deletion; scoped groups
+        // now also reference Room, so delete those groups before owned rooms.
+        scopes.put("Room", new Scope("Room", "room_id", List.copyOf(candidates)));
         add(scopes, "Zone", "map_id", id);
         add(scopes, "Map", "map_id", id);
         return new Plan(scopes, List.copyOf(candidates), shared.size());

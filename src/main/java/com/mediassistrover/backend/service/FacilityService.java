@@ -62,6 +62,7 @@ public interface FacilityService {
     com.mediassistrover.backend.dto.common.DeletionContracts.HardDeleteResponse forceDeleteEndpoint(UUID id, String reason, UUID actorId, RequestMetadata metadata);
 
     EndpointGroupResponse createEndpointGroup(EndpointGroupRequest request, UUID actorId, RequestMetadata metadata);
+    EndpointGroupResponse createRoomEndpointPair(RoomEndpointPairRequest request, UUID actorId, RequestMetadata metadata);
     EndpointGroupResponse updateEndpointGroup(UUID id, EndpointGroupRequest request, UUID actorId, RequestMetadata metadata);
     EndpointGroupResponse setEndpointGroupActive(UUID id, boolean active, String reason, UUID actorId, RequestMetadata metadata);
     Page<EndpointGroupResponse> listEndpointGroups(boolean includeDeleted, Pageable pageable);

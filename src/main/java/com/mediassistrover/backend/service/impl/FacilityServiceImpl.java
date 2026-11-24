@@ -6,6 +6,7 @@ import com.mediassistrover.backend.dto.common.DeletionContracts.*;
 import com.mediassistrover.backend.entity.*;
 import com.mediassistrover.backend.enums.HospitalInformationStatus;
 import com.mediassistrover.backend.enums.MapStatus;
+import com.mediassistrover.backend.enums.SelectionPolicy;
 import com.mediassistrover.backend.exception.BusinessRuleException;
 import com.mediassistrover.backend.exception.ConflictException;
 import com.mediassistrover.backend.exception.ResourceNotFoundException;
@@ -24,6 +25,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Objects;
 import java.util.Map;
 import java.util.UUID;
 
@@ -199,10 +203,36 @@ public class FacilityServiceImpl implements FacilityService {
 
     @Override @Transactional public EndpointGroupResponse createEndpointGroup(EndpointGroupRequest r,UUID a,RequestMetadata md){
         if(groupRepository.existsByMapMapIdAndGroupCodeIgnoreCase(r.mapId(),r.groupCode()))throw new ConflictException("Endpoint group code already exists in this map");
-        EndpointGroup e=mapper.toEntity(r);e.setMap(facilityMap(r.mapId()));e=groupRepository.save(e);audit(account(a),"ENDPOINT_GROUP_CREATED","EndpointGroup",e.getEndpointGroupId(),md);return mapper.toResponse(e);}
-    @Override @Transactional public EndpointGroupResponse updateEndpointGroup(UUID id,EndpointGroupRequest r,UUID a,RequestMetadata md){EndpointGroup e=group(id);
+        EndpointGroup e=mapper.toEntity(r);bindGroup(e,r);e=groupRepository.save(e);audit(account(a),"ENDPOINT_GROUP_CREATED","EndpointGroup",e.getEndpointGroupId(),md);return mapper.toResponse(e);}
+    @Override @Transactional public EndpointGroupResponse createRoomEndpointPair(RoomEndpointPairRequest r,UUID a,RequestMetadata md){
+        if(r.primaryEndpointId().equals(r.fallbackEndpointId()))throw new BusinessRuleException("Primary and fallback endpoints must be distinct");
+        if(groupRepository.existsByMapMapIdAndGroupCodeIgnoreCase(r.mapId(),r.groupCode()))throw new ConflictException("Endpoint group code already exists in this map");
+        Account actor=account(a);Room room=room(r.roomId());
+        if(!room.isActive()||!room.getFloor().isActive())throw new BusinessRuleException("Room and floor must be active");
+        Endpoint primary=endpoint(r.primaryEndpointId()),fallback=endpoint(r.fallbackEndpointId());
+        EndpointGroup group=EndpointGroup.builder().groupCode(r.groupCode()).groupName(r.groupName())
+                .selectionPolicy(SelectionPolicy.PRIORITY).allowFallback(true).active(true).build();
+        bindGroup(group,new EndpointGroupRequest(r.mapId(),r.groupCode(),r.groupName(),SelectionPolicy.PRIORITY,
+                true,null,true,r.roomId(),r.fallbackRadiusM()));
+        for(Endpoint candidate:List.of(primary,fallback)){
+            ensureMemberScope(group,candidate);
+            if(!candidate.isActive()||!candidate.isAccessible())throw new BusinessRuleException("Room pair endpoints must be active and accessible");
+        }
+        // One transaction owns the group, both ordered memberships, and optional room default.
+        group=groupRepository.save(group);
+        for(int index=0;index<2;index++){
+            Endpoint candidate=index==0?primary:fallback;
+            memberRepository.save(EndpointGroupMember.builder().id(new EndpointGroupMemberId(group.getEndpointGroupId(),candidate.getEndpointId()))
+                    .endpointGroup(group).endpoint(candidate).map(group.getMap()).sequenceNo(index+1).active(true).build());
+        }
+        if(r.setAsRoomDefault())room.setDefaultEndpointGroup(group);
+        audit(actor,"ROOM_ENDPOINT_PAIR_CREATED","EndpointGroup",group.getEndpointGroupId(),md);
+        return mapper.toResponse(group);
+    }
+    @Override @Transactional public EndpointGroupResponse updateEndpointGroup(UUID id,EndpointGroupRequest r,UUID a,RequestMetadata md){EndpointGroup e=lockedGroup(id);
         if((!e.getMap().getMapId().equals(r.mapId())||!e.getGroupCode().equalsIgnoreCase(r.groupCode()))&&groupRepository.existsByMapMapIdAndGroupCodeIgnoreCase(r.mapId(),r.groupCode()))throw new ConflictException("Endpoint group code already exists in this map");
-        mapper.update(r,e);e.setMap(facilityMap(r.mapId()));audit(account(a),"ENDPOINT_GROUP_UPDATED","EndpointGroup",id,md);return mapper.toResponse(e);}
+        if(e.getRoom()!=null&&r.roomId()==null)throw new BusinessRuleException("Room group scope cannot be removed");
+        mapper.update(r,e);bindGroup(e,r);audit(account(a),"ENDPOINT_GROUP_UPDATED","EndpointGroup",id,md);return mapper.toResponse(e);}
     @Override @Transactional public EndpointGroupResponse setEndpointGroupActive(UUID id,boolean active,String reason,UUID a,RequestMetadata md){EndpointGroup e=group(id);boolean before=e.isActive();e.setActive(active);auditService.record(account(a),active?"ENDPOINT_GROUP_ACTIVATED":"ENDPOINT_GROUP_DEACTIVATED","EndpointGroup",id,Map.of("active",before),Map.of("active",active,"reason",reason),md);return mapper.toResponse(e);}
     @Override public Page<EndpointGroupResponse> listEndpointGroups(boolean includeDeleted,Pageable p){return(includeDeleted?groupRepository.findAll(p):groupRepository.findByActiveTrue(p)).map(mapper::toResponse);}
     @Override public EndpointGroupResponse getEndpointGroup(UUID id,boolean includeDeleted){EndpointGroup e=group(id);if(!includeDeleted&&!e.isActive())throw notFound("EndpointGroup",id);return mapper.toResponse(e);}
@@ -212,16 +242,20 @@ public class FacilityServiceImpl implements FacilityService {
     @Override @Transactional public EndpointGroupMemberResponse createEndpointGroupMember(EndpointGroupMemberRequest r,UUID a,RequestMetadata md){
         EndpointGroupMemberId id=new EndpointGroupMemberId(r.endpointGroupId(),r.endpointId());if(memberRepository.existsById(id))throw new ConflictException("Endpoint is already in this group");
         if(memberRepository.existsByEndpointGroupEndpointGroupIdAndSequenceNo(r.endpointGroupId(),r.sequenceNo()))throw new ConflictException("Sequence number already exists in this group");
-        EndpointGroup g=group(r.endpointGroupId());Endpoint e=endpoint(r.endpointId());ensureSameMap(g,e);
+        EndpointGroup g=lockedGroup(r.endpointGroupId());Endpoint e=endpoint(r.endpointId());ensureMemberScope(g,e);
+        ensureActiveMemberLimit(g,e.getEndpointId(),r.active());
         EndpointGroupMember m=EndpointGroupMember.builder().id(id).endpointGroup(g).endpoint(e).map(g.getMap()).sequenceNo(r.sequenceNo()).active(r.active()).build();m=memberRepository.save(m);
         audit(account(a),"ENDPOINT_GROUP_MEMBER_CREATED","EndpointGroup",g.getEndpointGroupId(),md);return mapper.toResponse(m);}
     @Override @Transactional public EndpointGroupMemberResponse updateEndpointGroupMember(UUID groupId,UUID endpointId,EndpointGroupMemberRequest r,UUID a,RequestMetadata md){
         if(!groupId.equals(r.endpointGroupId())||!endpointId.equals(r.endpointId()))throw new BusinessRuleException("Path IDs must match request IDs");
+        lockedGroup(groupId);
         EndpointGroupMember m=memberRepository.findById(new EndpointGroupMemberId(groupId,endpointId)).orElseThrow(()->new ResourceNotFoundException("Endpoint group member not found"));
+        ensureMemberScope(m.getEndpointGroup(),m.getEndpoint());
+        ensureActiveMemberLimit(m.getEndpointGroup(),endpointId,r.active());
         if(m.getSequenceNo()!=r.sequenceNo()&&memberRepository.existsByEndpointGroupEndpointGroupIdAndSequenceNo(groupId,r.sequenceNo()))throw new ConflictException("Sequence number already exists in this group");
         m.setSequenceNo(r.sequenceNo());m.setActive(r.active());audit(account(a),"ENDPOINT_GROUP_MEMBER_UPDATED","EndpointGroup",groupId,md);return mapper.toResponse(m);}
-    @Override @Transactional public EndpointGroupMemberResponse removeEndpointGroupMember(UUID groupId,UUID endpointId,String reason,UUID a,RequestMetadata md){EndpointGroupMember m=member(groupId,endpointId);m.setActive(false);auditService.record(account(a),"ENDPOINT_GROUP_MEMBER_DEACTIVATED","EndpointGroupMember",groupId,Map.of("active",true),Map.of("active",false,"reason",reason),md);return mapper.toResponse(m);}
-    @Override @Transactional public EndpointGroupMemberResponse restoreEndpointGroupMember(UUID groupId,UUID endpointId,String reason,UUID a,RequestMetadata md){EndpointGroupMember m=member(groupId,endpointId);m.setActive(true);auditService.record(account(a),"ENDPOINT_GROUP_MEMBER_RESTORED","EndpointGroupMember",groupId,Map.of("active",false),Map.of("active",true,"reason",reason),md);return mapper.toResponse(m);}
+    @Override @Transactional public EndpointGroupMemberResponse removeEndpointGroupMember(UUID groupId,UUID endpointId,String reason,UUID a,RequestMetadata md){lockedGroup(groupId);EndpointGroupMember m=member(groupId,endpointId);m.setActive(false);auditService.record(account(a),"ENDPOINT_GROUP_MEMBER_DEACTIVATED","EndpointGroupMember",groupId,Map.of("active",true),Map.of("active",false,"reason",reason),md);return mapper.toResponse(m);}
+    @Override @Transactional public EndpointGroupMemberResponse restoreEndpointGroupMember(UUID groupId,UUID endpointId,String reason,UUID a,RequestMetadata md){lockedGroup(groupId);EndpointGroupMember m=member(groupId,endpointId);ensureMemberScope(m.getEndpointGroup(),m.getEndpoint());ensureActiveMemberLimit(m.getEndpointGroup(),endpointId,true);m.setActive(true);auditService.record(account(a),"ENDPOINT_GROUP_MEMBER_RESTORED","EndpointGroupMember",groupId,Map.of("active",false),Map.of("active",true,"reason",reason),md);return mapper.toResponse(m);}
     @Override public DeletionImpactResponse endpointGroupMemberDeletionImpact(UUID groupId,UUID endpointId){member(groupId,endpointId);return new DeletionImpactResponse(groupId,"EndpointGroupMember",true,java.util.List.of(),Map.of("endpointId",0L));}
     @Override @Transactional public HardDeleteResponse forceDeleteEndpointGroupMember(UUID groupId,UUID endpointId,String reason,UUID a,RequestMetadata md){EndpointGroupMember m=member(groupId,endpointId);memberRepository.delete(m);var result=new HardDeleteResponse(groupId,"EndpointGroupMember",Map.of("EndpointGroupMember",1L));auditService.record(account(a),"ENDPOINT_GROUP_MEMBER_FORCE_DELETED","EndpointGroupMember",groupId,null,Map.of("endpointId",endpointId,"reason",reason),md);return result;}
     @Override public Page<EndpointGroupMemberResponse> listEndpointGroupMembers(Pageable p){return memberRepository.findAll(p).map(mapper::toResponse);}
@@ -232,9 +266,61 @@ public class FacilityServiceImpl implements FacilityService {
     @Override public Page<RoomResponse> listPublicRooms(Pageable p){return roomRepository.findByActiveTrueAndPublicVisibleTrue(p).map(mapper::toResponse);}
     @Override public Page<EndpointResponse> listPublicEndpoints(Pageable p){return endpointRepository.findByActiveTrueAndPublicVisibleTrue(p).map(mapper::toResponse);}
 
-    private void bindRoom(Room e,RoomRequest r){Floor f=floor(r.floorId());e.setFloor(f);if(r.defaultEndpointGroupId()==null){e.setDefaultEndpointGroup(null);return;}EndpointGroup g=group(r.defaultEndpointGroupId());if(!g.getMap().getFloor().getFloorId().equals(f.getFloorId()))throw new BusinessRuleException("Default endpoint group must belong to the room floor");e.setDefaultEndpointGroup(g);}
-    private void bindEndpoint(Endpoint e,EndpointRequest r){FacilityMap map=facilityMap(r.mapId());e.setMap(map);Zone z=r.zoneId()==null?null:zone(r.zoneId());Room room=r.roomId()==null?null:room(r.roomId());if(z!=null&&!z.getMap().getMapId().equals(map.getMapId()))throw new BusinessRuleException("Zone and endpoint must use the same map");if(room!=null&&!room.getFloor().getFloorId().equals(map.getFloor().getFloorId()))throw new BusinessRuleException("Room and endpoint map must belong to the same floor");e.setZone(z);e.setRoom(room);}
-    private void ensureSameMap(EndpointGroup g,Endpoint e){if(!g.getMap().getMapId().equals(e.getMap().getMapId()))throw new BusinessRuleException("Endpoint group and endpoint must use the same map");}
+    private void bindRoom(Room e,RoomRequest r){
+        Floor f=floor(r.floorId());
+        if(e.getRoomId()!=null){
+            for(Endpoint endpoint:endpointRepository.findByRoomRoomIdOrderByEndpointCodeAsc(e.getRoomId()))
+                if(!endpoint.getMap().getFloor().getFloorId().equals(f.getFloorId()))throw new BusinessRuleException("Room endpoints must belong to the room floor");
+            for(EndpointGroup scoped:groupRepository.findByRoomRoomId(e.getRoomId()))
+                if(!scoped.getMap().getFloor().getFloorId().equals(f.getFloorId()))throw new BusinessRuleException("Room endpoint groups must belong to the room floor");
+        }
+        e.setFloor(f);
+        if(r.defaultEndpointGroupId()==null){e.setDefaultEndpointGroup(null);return;}
+        EndpointGroup g=group(r.defaultEndpointGroupId());
+        if(!g.getMap().getFloor().getFloorId().equals(f.getFloorId()))throw new BusinessRuleException("Default endpoint group must belong to the room floor");
+        if(g.getRoom()!=null&&!Objects.equals(g.getRoom().getRoomId(),e.getRoomId()))throw new BusinessRuleException("Default endpoint group must belong to this room");
+        e.setDefaultEndpointGroup(g);
+    }
+    private void bindEndpoint(Endpoint e,EndpointRequest r){
+        FacilityMap map=facilityMap(r.mapId());Zone z=r.zoneId()==null?null:zone(r.zoneId());Room room=r.roomId()==null?null:room(r.roomId());
+        if(z!=null&&!z.getMap().getMapId().equals(map.getMapId()))throw new BusinessRuleException("Zone and endpoint must use the same map");
+        if(room!=null&&!room.getFloor().getFloorId().equals(map.getFloor().getFloorId()))throw new BusinessRuleException("Room and endpoint map must belong to the same floor");
+        if(e.getEndpointId()!=null)for(EndpointGroupMember membership:memberRepository.findByEndpointEndpointId(e.getEndpointId())){
+            EndpointGroup group=membership.getEndpointGroup();
+            if(!group.getMap().getMapId().equals(map.getMapId()))throw new BusinessRuleException("Endpoint cannot leave the map of its endpoint group");
+            if(group.getRoom()!=null&&(room==null||!group.getRoom().getRoomId().equals(room.getRoomId())))throw new BusinessRuleException("Endpoint cannot leave the room of its endpoint group");
+        }
+        e.setMap(map);e.setZone(z);e.setRoom(room);
+    }
+    private void bindGroup(EndpointGroup e,EndpointGroupRequest r){
+        FacilityMap map=facilityMap(r.mapId());Room room=r.roomId()==null?null:room(r.roomId());
+        BigDecimal radius=r.fallbackRadiusM();
+        if(radius==null||radius.compareTo(new BigDecimal("0.1"))<0||radius.compareTo(new BigDecimal("2"))>0)throw new BusinessRuleException("Fallback radius must be between 0.1 and 2 metres");
+        if(room!=null){
+            if(r.selectionPolicy()!=SelectionPolicy.PRIORITY)throw new BusinessRuleException("Room endpoint groups require PRIORITY selection");
+            if(!room.getFloor().getFloorId().equals(map.getFloor().getFloorId()))throw new BusinessRuleException("Room and endpoint group map must belong to the same floor");
+        }
+        e.setMap(map);e.setRoom(room);e.setFallbackRadiusM(radius);
+        if(e.getEndpointGroupId()!=null){
+            List<EndpointGroupMember> memberships=memberRepository.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(e.getEndpointGroupId());
+            for(EndpointGroupMember membership:memberships)ensureMemberScope(e,membership.getEndpoint());
+            if(room!=null&&memberships.stream().filter(EndpointGroupMember::isActive).count()>2)throw new BusinessRuleException("Room endpoint groups support at most two active members");
+            for(Room defaultRoom:roomRepository.findByDefaultEndpointGroupEndpointGroupId(e.getEndpointGroupId())){
+                if(!defaultRoom.getFloor().getFloorId().equals(map.getFloor().getFloorId())||room!=null&&!room.getRoomId().equals(defaultRoom.getRoomId()))
+                    throw new BusinessRuleException("Endpoint group must remain in the scope of rooms using it as default");
+            }
+        }
+    }
+    private void ensureMemberScope(EndpointGroup group,Endpoint endpoint){
+        if(!group.getMap().getMapId().equals(endpoint.getMap().getMapId()))throw new BusinessRuleException("Endpoint group and endpoint must use the same map");
+        if(group.getRoom()!=null&&(endpoint.getRoom()==null||!group.getRoom().getRoomId().equals(endpoint.getRoom().getRoomId())))throw new BusinessRuleException("Endpoint group and endpoint must use the same room");
+    }
+    private void ensureActiveMemberLimit(EndpointGroup group,UUID endpointId,boolean active){
+        if(!active||group.getRoom()==null)return;
+        long others=memberRepository.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(group.getEndpointGroupId()).stream()
+                .filter(EndpointGroupMember::isActive).filter(m->!m.getEndpoint().getEndpointId().equals(endpointId)).count();
+        if(others>=2)throw new BusinessRuleException("Room endpoint groups support at most two active members");
+    }
     private void validateEffectiveWindow(Instant from,Instant until){if(from!=null&&until!=null&&!until.isAfter(from))throw new BusinessRuleException("effectiveUntil must be after effectiveFrom");}
     private HospitalInformation hospitalProfile(UUID id){HospitalInformation h=hospital(id);if(!"HOSPITAL_PROFILE".equalsIgnoreCase(h.getInfoCategory()))throw new BusinessRuleException("Floor must reference HospitalInformation category HOSPITAL_PROFILE");return h;}
     private Account account(UUID id){return accountRepository.findById(id).orElseThrow(()->notFound("Account",id));}
@@ -246,6 +332,7 @@ public class FacilityServiceImpl implements FacilityService {
     private Room room(UUID id){return roomRepository.findById(id).orElseThrow(()->notFound("Room",id));}
     private Endpoint endpoint(UUID id){return endpointRepository.findById(id).orElseThrow(()->notFound("Endpoint",id));}
     private EndpointGroup group(UUID id){return groupRepository.findById(id).orElseThrow(()->notFound("EndpointGroup",id));}
+    private EndpointGroup lockedGroup(UUID id){return groupRepository.lockById(id).orElseThrow(()->notFound("EndpointGroup",id));}
     private EndpointGroupMember member(UUID groupId,UUID endpointId){return memberRepository.findById(new EndpointGroupMemberId(groupId,endpointId)).orElseThrow(()->new ResourceNotFoundException("Endpoint group member not found"));}
     private ResourceNotFoundException notFound(String type,UUID id){return new ResourceNotFoundException(type+" not found: "+id);}
     private HardDeleteResponse forceCatalog(FacilityDeletionResource resource,UUID id,String reason,UUID actorId,RequestMetadata md){Account actor=account(actorId);HardDeleteResponse result=catalogDelete.delete(resource,id);auditService.record(actor,resource.name()+"_FORCE_DELETED",resource.name(),id,null,Map.of("reason",reason,"deleted",result.deleted()),md);return result;}

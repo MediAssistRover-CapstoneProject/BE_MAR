@@ -1,10 +1,10 @@
 {
   "workflow": {
     "workflowCode": "WF_VOICE_ENDPOINT_V1",
-    "versionNo": 4,
-    "workflowName": "Voice: mời đi theo, dẫn đường và báo đến nơi",
+    "versionNo": 7,
+    "workflowName": "Dẫn đường: điểm chính và điểm đến dự phòng cùng phòng",
     "serviceType": "NAVIGATION",
-    "description": "Play the invitation before MOVE and announce arrival after MOVE succeeds. Endpoint and map come from BE.",
+    "description": "Mời đi theo trước khi MOVE; Nav2 tính lại đường bình thường. Nhóm cùng phòng chỉ đổi điểm sau bằng chứng vật cản và xác nhận dừng.",
     "inputSchemaJson": {
       "type": "object",
       "properties": {
@@ -14,29 +14,73 @@
         },
         "target_mode": {
           "type": "string",
-          "const": "ENDPOINT"
+          "enum": [
+            "ENDPOINT",
+            "ENDPOINT_GROUP"
+          ]
         },
         "endpoint_id": {
           "type": "string",
           "format": "uuid"
         },
         "max_speed_mps": {
-          "type": ["number", "null"],
+          "type": [
+            "number",
+            "null"
+          ],
           "minimum": 0.1,
           "maximum": 0.35
         },
         "arrival_text": {
-          "type": ["string", "null"],
+          "type": [
+            "string",
+            "null"
+          ],
           "minLength": 1,
           "maxLength": 500
+        },
+        "endpoint_group_id": {
+          "type": "string",
+          "format": "uuid"
         }
       },
       "required": [
         "map_id",
-        "target_mode",
-        "endpoint_id"
+        "target_mode"
       ],
-      "additionalProperties": true
+      "additionalProperties": true,
+      "oneOf": [
+        {
+          "properties": {
+            "target_mode": {
+              "const": "ENDPOINT"
+            }
+          },
+          "required": [
+            "endpoint_id"
+          ],
+          "not": {
+            "required": [
+              "endpoint_group_id"
+            ]
+          }
+        },
+        {
+          "properties": {
+            "target_mode": {
+              "const": "ENDPOINT_GROUP"
+            }
+          },
+          "required": [
+            "endpoint_group_id"
+          ],
+          "not": {
+            "required": [
+              "endpoint_id"
+            ]
+          }
+        }
+      ]
     },
     "inputUiJson": {},
     "defaultInputsJson": {
@@ -45,19 +89,13 @@
     "outputMappingJson": {
       "invitation_speech": {
         "$ref": "/outputs/ANNOUNCE_INVITATION"
-      },
-      "move_result": {
-        "$ref": "/outputs/MOVE_TO_ENDPOINT"
-      },
-      "arrival_speech": {
-        "$ref": "/outputs/ANNOUNCE_ARRIVAL"
       }
     },
     "requiredCapabilitiesJson": [
       "MOVE"
     ],
-    "maxDurationSec": 300,
-    "maxTotalVisits": 3,
+    "maxDurationSec": 600,
+    "maxTotalVisits": 17,
     "graphVersion": 3,
     "schemaVersion": 3
   },
@@ -151,6 +189,194 @@
         "retryCodesJson": [],
         "maxVisits": 1,
         "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "CHECK_CONDITION",
+        "stepCode": "TARGET_MODE",
+        "stepName": "TARGET_MODE",
+        "sequenceNo": 4,
+        "paramsJson": {
+          "expression": {
+            "path": "/inputs/target_mode",
+            "operator": "EQ",
+            "value": "ENDPOINT_GROUP"
+          }
+        },
+        "inputMappingJson": {},
+        "timeoutSec": 30,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "DATA_SERVICE",
+        "stepCode": "GROUP_TARGET_RESOLVE",
+        "stepName": "GROUP_TARGET_RESOLVE",
+        "sequenceNo": 5,
+        "paramsJson": {
+          "service_key": "RESOLVE_TARGETS"
+        },
+        "inputMappingJson": {
+          "endpoint_group_id": {
+            "$ref": "/inputs/endpoint_group_id"
+          }
+        },
+        "timeoutSec": 30,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "SET_CONTEXT",
+        "stepCode": "GROUP_TARGET_INIT",
+        "stepName": "GROUP_TARGET_INIT",
+        "sequenceNo": 6,
+        "paramsJson": {
+          "operations": [
+            {
+              "path": "/vars/group_target_index",
+              "value": 0
+            }
+          ]
+        },
+        "inputMappingJson": {},
+        "timeoutSec": 30,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "DATA_SERVICE",
+        "stepCode": "GROUP_TARGET_SELECT",
+        "stepName": "GROUP_TARGET_SELECT",
+        "sequenceNo": 7,
+        "paramsJson": {
+          "service_key": "SELECT_TARGET"
+        },
+        "inputMappingJson": {
+          "targets": {
+            "$ref": "/outputs/GROUP_TARGET_RESOLVE/data/targets"
+          },
+          "index": {
+            "$ref": "/vars/group_target_index"
+          }
+        },
+        "timeoutSec": 30,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 3,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "CHECK_CONDITION",
+        "stepCode": "GROUP_TARGET_HAS",
+        "stepName": "GROUP_TARGET_HAS",
+        "sequenceNo": 8,
+        "paramsJson": {
+          "expression": {
+            "path": "/outputs/GROUP_TARGET_SELECT/data/has_target",
+            "operator": "EQ",
+            "value": true
+          }
+        },
+        "inputMappingJson": {},
+        "timeoutSec": 30,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 3,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "MOVE",
+        "stepCode": "GROUP_TARGET_MOVE",
+        "stepName": "GROUP_TARGET_MOVE",
+        "sequenceNo": 9,
+        "paramsJson": {
+          "mode": "NORMAL",
+          "max_speed_mps": 0.35
+        },
+        "inputMappingJson": {
+          "map_id": {
+            "$ref": "/inputs/map_id"
+          },
+          "endpoint_id": {
+            "$ref": "/outputs/GROUP_TARGET_SELECT/data/endpoint_id"
+          },
+          "max_speed_mps": {
+            "$ref": "/inputs/max_speed_mps"
+          }
+        },
+        "timeoutSec": 180,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 2,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "SET_CONTEXT",
+        "stepCode": "GROUP_TARGET_NEXT",
+        "stepName": "GROUP_TARGET_NEXT",
+        "sequenceNo": 10,
+        "paramsJson": {
+          "operations": [
+            {
+              "path": "/vars/group_target_index",
+              "operation": "INCREMENT",
+              "value": 1
+            }
+          ]
+        },
+        "inputMappingJson": {},
+        "timeoutSec": 30,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 2,
+        "auditLevel": "FULL"
+      },
+      {
+        "taskCode": "NAVIGATE",
+        "stepType": "INTERACT",
+        "stepCode": "ANNOUNCE_GROUP_ARRIVAL",
+        "stepName": "Thông báo điểm đến thực tế",
+        "sequenceNo": 11,
+        "description": "",
+        "paramsJson": {
+          "prompt_key": "VOICE_ARRIVAL",
+          "action": "SPEAK"
+        },
+        "inputMappingJson": {
+          "data": {
+            "text": {
+              "$ref": "/outputs/GROUP_TARGET_SELECT/data/arrival_text"
+            },
+            "language_code": "vi",
+            "speed_wpm": 150,
+            "volume": 100
+          }
+        },
+        "timeoutSec": 90,
+        "maxAttempts": 1,
+        "retryDelaySec": 0,
+        "retryCodesJson": [],
+        "maxVisits": 1,
+        "auditLevel": "FULL"
       }
     ],
     "transitions": [
@@ -159,7 +385,7 @@
         "outcome": "SUCCESS",
         "priority": 1,
         "defaultTransition": true,
-        "toStepCode": "MOVE_TO_ENDPOINT"
+        "toStepCode": "TARGET_MODE"
       },
       {
         "fromStepCode": "ANNOUNCE_INVITATION",
@@ -212,6 +438,210 @@
       },
       {
         "fromStepCode": "ANNOUNCE_ARRIVAL",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "TARGET_MODE",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": false,
+        "toStepCode": "GROUP_TARGET_RESOLVE",
+        "conditionJson": {
+          "path": "/result/value",
+          "operator": "EQ",
+          "value": true
+        }
+      },
+      {
+        "fromStepCode": "TARGET_MODE",
+        "outcome": "SUCCESS",
+        "priority": 2,
+        "defaultTransition": true,
+        "toStepCode": "MOVE_TO_ENDPOINT"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_RESOLVE",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": true,
+        "toStepCode": "GROUP_TARGET_INIT"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_INIT",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": true,
+        "toStepCode": "GROUP_TARGET_SELECT"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_SELECT",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": true,
+        "toStepCode": "GROUP_TARGET_HAS"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_NEXT",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": true,
+        "toStepCode": "GROUP_TARGET_SELECT"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_MOVE",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": true,
+        "toStepCode": "ANNOUNCE_GROUP_ARRIVAL"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_HAS",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": false,
+        "toStepCode": "GROUP_TARGET_MOVE",
+        "conditionJson": {
+          "path": "/result/value",
+          "operator": "EQ",
+          "value": true
+        }
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_HAS",
+        "outcome": "SUCCESS",
+        "priority": 2,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_MOVE",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": false,
+        "toStepCode": "GROUP_TARGET_NEXT",
+        "conditionJson": {
+          "path": "/error/errorCode",
+          "operator": "EQ",
+          "value": "PATH_UNAVAILABLE"
+        }
+      },
+      {
+        "fromStepCode": "ANNOUNCE_GROUP_ARRIVAL",
+        "outcome": "SUCCESS",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "SUCCEEDED"
+      },
+      {
+        "fromStepCode": "TARGET_MODE",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "TARGET_MODE",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_RESOLVE",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_RESOLVE",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_INIT",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_INIT",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_SELECT",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_SELECT",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_HAS",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_HAS",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_MOVE",
+        "outcome": "FAILURE",
+        "priority": 2,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_MOVE",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "RECOVERY_REQUIRED"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_NEXT",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "GROUP_TARGET_NEXT",
+        "outcome": "TIMEOUT",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "ANNOUNCE_GROUP_ARRIVAL",
+        "outcome": "FAILURE",
+        "priority": 1,
+        "defaultTransition": true,
+        "terminalStatus": "FAILED"
+      },
+      {
+        "fromStepCode": "ANNOUNCE_GROUP_ARRIVAL",
         "outcome": "TIMEOUT",
         "priority": 1,
         "defaultTransition": true,

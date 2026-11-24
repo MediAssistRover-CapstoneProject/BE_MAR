@@ -5,7 +5,20 @@
   'use strict';
   const UUID=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
   const MAX_CHECKPOINTS=5;
-  function request(values,checkpoints,endpoints,zones){
+  function eligibleGroups(endpointId,mapId,endpoints,groups,members){
+    const primary=endpoints.find(row=>row.id===endpointId);
+    if(!primary?.raw.roomId)return [];
+    return groups.filter(group=>{
+      const raw=group.raw;
+      if(raw.mapId!==mapId||raw.active===false||raw.allowFallback!==true||raw.selectionPolicy!=='PRIORITY'||raw.roomId!==primary.raw.roomId)return false;
+      const pair=members.filter(member=>member.endpointGroupId===group.id&&member.active!==false).sort((a,b)=>a.sequenceNo-b.sequenceNo);
+      return pair.length===2&&pair[0].sequenceNo===1&&pair[1].sequenceNo===2&&pair[0].endpointId===endpointId&&pair.every(member=>{
+        const endpoint=endpoints.find(row=>row.id===member.endpointId);
+        return endpoint&&member.mapId===mapId&&endpoint.raw.mapId===mapId&&endpoint.raw.roomId===raw.roomId&&endpoint.raw.active!==false&&endpoint.raw.accessible!==false&&endpoint.raw.yawRad!=null;
+      });
+    });
+  }
+  function request(values,checkpoints,endpoints,zones,groups=[],members=[]){
     const number=(name,min,max,integer=false)=>{
       const raw=values[name],n=Number(raw);
       if(raw===''||raw==null||!Number.isFinite(n)||n<min||n>max||integer&&!Number.isInteger(n))throw Error('Tham số '+name+' phải trong khoảng '+min+'–'+max+'.');
@@ -20,6 +33,10 @@
       if(!endpoint||endpoint.raw.mapId!==mapId||endpoint.raw.active===false||endpoint.raw.accessible===false||endpoint.raw.yawRad==null)throw Error('Endpoint không còn hợp lệ trên map đã chọn. Tải lại dữ liệu.');
       if(!['PATROL_FALL','RESTRICTED_ZONE','CROWD_DENSITY'].includes(point.sensingType))throw Error('Chọn kiểu quan sát hợp lệ.');
       const item={endpointId:point.endpointId,sensingType:point.sensingType};
+      if(point.endpointGroupId){
+        if(!eligibleGroups(point.endpointId,mapId,endpoints,groups,members).some(group=>group.id===point.endpointGroupId))throw Error('Nhóm dự phòng cần đúng phòng/map, hai điểm hợp lệ và endpoint chính ở thứ tự 1. Tải lại dữ liệu.');
+        item.endpointGroupId=point.endpointGroupId;
+      }
       if(point.sensingType!=='PATROL_FALL'){
         const zone=zones.find(row=>row.id===point.zoneId);
         if(!zone||zone.raw.mapId!==mapId||zone.raw.active===false||point.sensingType==='RESTRICTED_ZONE'&&zone.raw.zoneType!=='KEEP_OUT')throw Error('Chọn vùng đang bật trên đúng map; quan sát vùng cấm cần vùng KEEP_OUT.');
@@ -40,6 +57,7 @@
       <label>Bản đồ<select id="patrolMap"><option value="">Chọn map</option></select></label>
       <label>Tên tuyến<input id="patrolName" maxlength="160" placeholder="Ví dụ: Tuần tra hành lang và các phòng"></label>
       <label>Endpoint sẽ đi tới<select id="patrolEndpoint"><option value="">Chọn map trước</option></select></label>
+      <label>Điểm dự phòng cùng phòng<select id="patrolGroup"><option value="">Chỉ dùng endpoint đã chọn</option></select></label>
       <label>Quan sát tại điểm<select id="patrolSensing"><option value="PATROL_FALL">Người nghi té ngã</option><option value="RESTRICTED_ZONE">Người trong vùng cấm</option><option value="CROWD_DENSITY">Mật độ người</option></select></label>
       <label>Vùng quan sát<select id="patrolZone"><option value="">Không cần vùng cho té ngã</option></select></label>
       <label>Tốc độ MOVE (m/s)<input id="patrolSpeed" type="number" min="0.05" max="0.60" step="0.01" value="0.25"></label>
@@ -52,7 +70,7 @@
       <button id="patrolPreview" type="button">Xem trước workflow</button><button id="patrolPublish" type="button">Lưu và publish tuyến</button>
       <p id="patrolStatus" role="status" style="white-space:pre-line"></p><details><summary>Workflow xem trước</summary><pre id="patrolJson"></pre></details>`;
     const $=id=>host.querySelector('#'+id);
-    const state={mapId:'',endpoints:[],zones:[],points:[],busy:false,loading:false,generation:0,pending:null,token:'',closed:false};
+    const state={mapId:'',endpoints:[],zones:[],groups:[],members:[],points:[],busy:false,loading:false,generation:0,pending:null,token:'',closed:false};
     const token=()=>String(options.getToken()||'').trim().replace(/^Bearer\s+/i,'');
     function say(message){$('patrolStatus').textContent=message;}
     function fill(control,rows,placeholder,selected=''){
@@ -67,15 +85,18 @@
       const zones=state.zones.filter(row=>row.raw.active!==false&&(kind!=='RESTRICTED_ZONE'||row.raw.zoneType==='KEEP_OUT'));
       const current=$('patrolZone').value;fill($('patrolZone'),zones,kind==='PATROL_FALL'?'Không cần vùng cho té ngã':'Chọn vùng quan sát',current);
       $('patrolZone').disabled=lock||kind==='PATROL_FALL';
+      const groups=eligibleGroups($('patrolEndpoint').value,state.mapId,state.endpoints,state.groups,state.members);
+      fill($('patrolGroup'),groups,'Chỉ dùng endpoint đã chọn',$('patrolGroup').value);
+      $('patrolGroup').disabled=lock||!groups.length;
       $('patrolAdd').disabled=lock||state.points.length>=MAX_CHECKPOINTS||!$('patrolEndpoint').value||kind!=='PATROL_FALL'&&!zones.length;
       $('patrolPreview').disabled=state.busy||state.loading||!!state.pending||!state.points.length;
       $('patrolPublish').disabled=state.busy||state.loading||!state.points.length;
       $('patrolPublish').textContent=state.pending?'Gửi lại yêu cầu lưu tuyến cũ':'Lưu và publish tuyến';
       $('patrolPoints').replaceChildren();
       state.points.forEach((point,index)=>{
-        const line=document.createElement('li'),ep=state.endpoints.find(row=>row.id===point.endpointId),z=state.zones.find(row=>row.id===point.zoneId);
+        const line=document.createElement('li'),ep=state.endpoints.find(row=>row.id===point.endpointId),z=state.zones.find(row=>row.id===point.zoneId),group=state.groups.find(row=>row.id===point.endpointGroupId);
         const label={PATROL_FALL:'Té ngã',RESTRICTED_ZONE:'Vùng cấm',CROWD_DENSITY:'Mật độ người'}[point.sensingType];
-        line.append(document.createTextNode((ep?.label||point.endpointId)+' → '+label+(z?' · '+z.label:'')+' '));
+        line.append(document.createTextNode((ep?.label||point.endpointId)+(group?' · dự phòng '+group.label:'')+' → '+label+(z?' · '+z.label:'')+' '));
         for(const [text,offset]of [['↑',-1],['↓',1],['Xóa',0]]){
           const button=document.createElement('button');button.type='button';button.textContent=text;
           button.disabled=lock||offset!==0&&(index+offset<0||index+offset>=state.points.length);
@@ -86,13 +107,13 @@
     }
     async function loadMap(mapId){
       const epoch=++state.generation,credential=token(),previousPoints=state.mapId===mapId?state.points:[],previousEndpoint=$('patrolEndpoint').value;
-      state.loading=true;state.mapId=mapId;state.points=previousPoints;state.endpoints=[];state.zones=[];render();
+      state.loading=true;state.mapId=mapId;state.points=previousPoints;state.endpoints=[];state.zones=[];state.groups=[];state.members=[];render();
       fill($('patrolEndpoint'),[],'Đang tải endpoint…');
       try{
-        const [endpoints,zones]=await Promise.all([catalog.endpoints(mapId),catalog.zones(mapId)]);
+        const [endpoints,zones,groups,members]=await Promise.all([catalog.endpoints(mapId),catalog.zones(mapId),catalog.endpointGroups(mapId),catalog.endpointGroupMembers(mapId)]);
         if(state.closed||epoch!==state.generation||credential!==token())return;
-        state.endpoints=endpoints.filter(row=>row.raw.active!==false&&row.raw.accessible!==false&&row.raw.yawRad!=null);state.zones=zones.filter(row=>row.raw.active!==false);
-        state.points=previousPoints.filter(point=>state.endpoints.some(row=>row.id===point.endpointId)&&(point.sensingType==='PATROL_FALL'||state.zones.some(row=>row.id===point.zoneId)));
+        state.endpoints=endpoints.filter(row=>row.raw.active!==false&&row.raw.accessible!==false&&row.raw.yawRad!=null);state.zones=zones.filter(row=>row.raw.active!==false);state.groups=groups;state.members=members;
+        state.points=previousPoints.filter(point=>state.endpoints.some(row=>row.id===point.endpointId)&&(point.sensingType==='PATROL_FALL'||state.zones.some(row=>row.id===point.zoneId))&&(!point.endpointGroupId||eligibleGroups(point.endpointId,mapId,state.endpoints,groups,members).some(group=>group.id===point.endpointGroupId)));
         fill($('patrolEndpoint'),state.endpoints,'Chọn điểm sẽ đi tới',previousEndpoint);
         $('patrolMapStatus').textContent=state.endpoints.length+' endpoint · '+state.zones.length+' zone. '+(state.zones.some(row=>row.raw.zoneType==='KEEP_OUT')?'Có vùng cấm KEEP_OUT.':'Chưa có vùng KEEP_OUT trên map này; cần tạo vùng cấm trước khi kiểm tra xâm nhập.')+(state.points.length<previousPoints.length?' Đã bỏ điểm/vùng không còn hợp lệ; kiểm tra lại tuyến.':'');
       }catch(error){if(epoch===state.generation&&credential===token())say(error.message);}
@@ -106,13 +127,13 @@
         if(state.closed||epoch!==state.generation||credential!==token())return;
         fill($('patrolMap'),rows,'Chọn map',preferred||state.mapId||options.getNavigation?.()?.meta?.map_id);
         state.loading=false;
-        if($('patrolMap').value)await loadMap($('patrolMap').value);else{state.mapId='';state.points=[];state.endpoints=[];state.zones=[];say('Chọn map và thêm từng endpoint vào tuyến.');}
+        if($('patrolMap').value)await loadMap($('patrolMap').value);else{state.mapId='';state.points=[];state.endpoints=[];state.zones=[];state.groups=[];state.members=[];say('Chọn map và thêm từng endpoint vào tuyến.');}
       }catch(error){if(epoch===state.generation)say(error.message);}
       finally{if(epoch===state.generation){state.loading=false;render();}}
     }
     function body(){
       if(state.token!==token())throw Error('Token đã thay đổi. Tải lại danh sách trước khi lưu tuyến.');
-      return request({name:$('patrolName').value,mapId:$('patrolMap').value,maxSpeedMps:$('patrolSpeed').value,moveTimeoutSec:$('patrolMoveTimeout').value,sensingWindowSec:$('patrolWindow').value,repeatCount:$('patrolRepeats').value,fallDetection:$('patrolFall').checked},state.points,state.endpoints,state.zones);
+      return request({name:$('patrolName').value,mapId:$('patrolMap').value,maxSpeedMps:$('patrolSpeed').value,moveTimeoutSec:$('patrolMoveTimeout').value,sensingWindowSec:$('patrolWindow').value,repeatCount:$('patrolRepeats').value,fallDetection:$('patrolFall').checked},state.points,state.endpoints,state.zones,state.groups,state.members);
     }
     async function post(path,data){
       const credential=token();if(!credential)throw Error('Nhập access token ADMIN ở đầu trang.');
@@ -138,10 +159,10 @@
     $('patrolUseMap').onclick=()=>{const map=options.getNavigation?.()?.meta?.map_id;if(!map){say('Mở bản đồ ở phần dẫn đường trước hoặc chọn từ danh sách map.');return;}loadMaps(map);};
     $('patrolMap').onchange=()=>loadMap($('patrolMap').value);
     $('patrolSensing').onchange=render;$('patrolEndpoint').onchange=render;
-    $('patrolAdd').onclick=()=>{if(state.points.length>=MAX_CHECKPOINTS)return;const p={endpointId:$('patrolEndpoint').value,sensingType:$('patrolSensing').value};if(p.sensingType!=='PATROL_FALL')p.zoneId=$('patrolZone').value;try{request({name:'Kiểm tra điểm',mapId:state.mapId,maxSpeedMps:.25,moveTimeoutSec:60,sensingWindowSec:3,repeatCount:1,fallDetection:false},[p],state.endpoints,state.zones);state.points.push(p);render();}catch(error){say(error.message);}};
+    $('patrolAdd').onclick=()=>{if(state.points.length>=MAX_CHECKPOINTS)return;const p={endpointId:$('patrolEndpoint').value,sensingType:$('patrolSensing').value};if($('patrolGroup').value)p.endpointGroupId=$('patrolGroup').value;if(p.sensingType!=='PATROL_FALL')p.zoneId=$('patrolZone').value;try{request({name:'Kiểm tra điểm',mapId:state.mapId,maxSpeedMps:.25,moveTimeoutSec:60,sensingWindowSec:3,repeatCount:1,fallDetection:false},[p],state.endpoints,state.zones,state.groups,state.members);state.points.push(p);render();}catch(error){say(error.message);}};
     $('patrolPreview').onclick=()=>execute(false);$('patrolPublish').onclick=()=>execute(true);
     window.addEventListener('pagehide',()=>{state.closed=true;state.generation++;});window.addEventListener('pageshow',()=>{state.closed=false;});render();
     return {loadMaps};
   }
-  return {request,MAX_CHECKPOINTS,mount};
+  return {request,eligibleGroups,MAX_CHECKPOINTS,mount};
 });

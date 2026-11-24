@@ -5,13 +5,19 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.repository.query.Param;
+import jakarta.persistence.LockModeType;
 
 import java.util.UUID;
 
 public interface EndpointGroupRepository extends JpaRepository<EndpointGroup, UUID> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select g from EndpointGroup g where g.endpointGroupId = :id")
+    java.util.Optional<EndpointGroup> lockById(@Param("id") UUID id);
     boolean existsByMapMapIdAndGroupCodeIgnoreCase(UUID mapId, String groupCode);
     Page<EndpointGroup> findByActiveTrue(Pageable pageable);
+    java.util.List<EndpointGroup> findByRoomRoomId(UUID roomId);
     @Query("""
             select g from EndpointGroup g where g.active = true
               and (:mapId is null or g.map.mapId = :mapId)

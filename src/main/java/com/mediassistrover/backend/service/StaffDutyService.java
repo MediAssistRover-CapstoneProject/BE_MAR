@@ -71,6 +71,9 @@ public class StaffDutyService {
         var group=room.getDefaultEndpointGroup();
         if(group!=null) {
             if(!group.isActive()||!group.getMap().getMapId().equals(map))throw new BusinessRuleException("Configure an active room endpoint group on this map");
+            if(fallbackGroup(s,map)!=null)
+                return members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(group.getEndpointGroupId()).stream()
+                    .filter(EndpointGroupMember::isActive).findFirst().orElseThrow().getEndpoint();
             return members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(group.getEndpointGroupId()).stream()
                 .filter(EndpointGroupMember::isActive).map(EndpointGroupMember::getEndpoint)
                 .filter(e->usable(e,room,map)).findFirst().orElseThrow(()->new BusinessRuleException("Room has no usable endpoint"));
@@ -78,6 +81,21 @@ public class StaffDutyService {
         var candidates=endpoints.findByMapMapIdOrderByEndpointCodeAsc(map).stream().filter(e->usable(e,room,map)).toList();
         if(candidates.size()!=1)throw new BusinessRuleException("Configure a unique endpoint or default endpoint group for the room");
         return candidates.getFirst();
+    }
+
+    /** A room pair retains destination authority until navigation has actually chosen its endpoint. */
+    public EndpointGroup fallbackGroup(Shift s, UUID map) {
+        Room room=s.getRoom();var group=room.getDefaultEndpointGroup();
+        if(group==null || group.getRoom()==null || !group.isAllowFallback())return null;
+        if(!group.isActive() || !group.getMap().getMapId().equals(map)
+                || !group.getRoom().getRoomId().equals(room.getRoomId()) || group.getSelectionPolicy()!=SelectionPolicy.PRIORITY)
+            throw new BusinessRuleException("Delivery fallback group must be active, ordered and scoped to the receiver room/map");
+        var pair=members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(group.getEndpointGroupId()).stream()
+                .filter(EndpointGroupMember::isActive).toList();
+        if(pair.size()!=2 || pair.getFirst().getSequenceNo()!=1 || pair.get(1).getSequenceNo()!=2
+                || pair.stream().anyMatch(member -> !usable(member.getEndpoint(),room,map)))
+            throw new BusinessRuleException("Delivery fallback requires two usable room endpoints in primary/fallback order");
+        return group;
     }
     private boolean usable(Endpoint e, Room r, UUID map){return e.isActive()&&e.isAccessible()&&e.getRoom()!=null&&e.getRoom().getRoomId().equals(r.getRoomId())&&e.getMap().getMapId().equals(map);}
     public List<Duty> list(UUID map,UUID room){

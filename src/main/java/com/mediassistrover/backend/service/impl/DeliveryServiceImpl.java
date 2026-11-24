@@ -25,6 +25,7 @@ public class DeliveryServiceImpl implements DeliveryService {
     private final DeliveryItemRepository itemRepository; private final FacilityMapRepository mapRepository;
     private final RoomRepository roomRepository; private final EndpointRepository endpointRepository;
     private final EndpointGroupRepository groupRepository; private final AccountRepository accountRepository;
+    private final EndpointGroupMemberRepository groupMembers;
     private final AuthVerificationService verificationService; private final RequestJobMapper mapper;
     private final AuditService auditService; private final ObjectMapper objectMapper; private final Clock clock;
     private final JobStepRepository jobStepRepository; private final RuntimeStepCompletionService completionService;
@@ -43,18 +44,30 @@ public class DeliveryServiceImpl implements DeliveryService {
         if(receiverShiftId!=null){
             if(actor.role()==Role.STAFF&&!actor.accountId().equals(r.expectedSenderAccountId()))throw new org.springframework.security.access.AccessDeniedException("The current staff member must be the sender");
             Shift shift=duty.require(receiverShiftId,r.expectedReceiverAccountId());receiverShift=shift;Endpoint target=duty.target(shift,r.mapId());
-            r=new Create(r.mapId(),r.pickupRoomId(),shift.getRoom().getRoomId(),r.pickupEndpointId(),target.getEndpointId(),null,
-                r.expectedSenderAccountId(),r.expectedReceiverAccountId(),TargetMode.ENDPOINT,shift.getStaffProfile().getAccount().getFullName(),r.recipientContact(),r.requiresConfirmation(),
+            EndpointGroup fallback=duty.fallbackGroup(shift,r.mapId());
+            r=new Create(r.mapId(),r.pickupRoomId(),shift.getRoom().getRoomId(),r.pickupEndpointId(),fallback==null?target.getEndpointId():null,fallback==null?null:fallback.getEndpointGroupId(),
+                r.expectedSenderAccountId(),r.expectedReceiverAccountId(),fallback==null?TargetMode.ENDPOINT:TargetMode.ENDPOINT_GROUP,shift.getStaffProfile().getAccount().getFullName(),r.recipientContact(),r.requiresConfirmation(),
                 r.temperatureRequirement(),r.deliveryDeadline(),r.deliveryNote(),r.items(),r.priority(),r.note(),r.data(),receiverShiftId,r.authenticationMethod());
         }
         if(r.targetMode()==null||r.recipientName()==null||r.recipientName().isBlank())throw new BusinessRuleException("Delivery target and recipient name are required");
         FacilityMap map=map(r.mapId());Endpoint pickup=endpoint(r.pickupEndpointId());Endpoint destination=endpoint(r.deliveryEndpointId());EndpointGroup group=group(r.deliveryGroupId());
         validateMap(map,pickup,"Pickup endpoint");validateTarget(map,r.targetMode(),destination,group);
         Room pickupRoom=room(r.pickupRoomId());Room deliveryRoom=room(r.deliveryRoomId());validateRoomMap(map,pickupRoom);validateRoomMap(map,deliveryRoom);
+        if(group!=null && group.getRoom()!=null) {
+            var pair=groupMembers.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(group.getEndpointGroupId()).stream().filter(EndpointGroupMember::isActive).toList();
+            if(deliveryRoom==null || !deliveryRoom.getRoomId().equals(group.getRoom().getRoomId()) || !group.getRoom().isActive()
+                    || group.getSelectionPolicy()!=SelectionPolicy.PRIORITY || pair.size()!=2
+                    || pair.getFirst().getSequenceNo()!=1 || pair.get(1).getSequenceNo()!=2
+                    || pair.stream().anyMatch(m->!m.getEndpoint().isActive() || !m.getEndpoint().isAccessible()
+                        || !map.getMapId().equals(m.getMap().getMapId()) || !map.getMapId().equals(m.getEndpoint().getMap().getMapId())
+                        || m.getEndpoint().getRoom()==null || !deliveryRoom.getRoomId().equals(m.getEndpoint().getRoom().getRoomId())))
+                throw new BusinessRuleException("Delivery fallback requires two active accessible endpoints in its destination room/map");
+        }
         Account expectedSender=expectedStaff(r.expectedSenderAccountId(),"Expected sender");
         Account expectedReceiver=expectedStaff(r.expectedReceiverAccountId(),"Expected receiver");
         ObjectNode data=r.data()!=null&&r.data().isObject()?((ObjectNode)r.data().deepCopy()):objectMapper.createObjectNode();
         data.remove("receiver_shift_id");if(receiverShiftId!=null)data.put("receiver_shift_id",receiverShiftId.toString());
+        data.remove(List.of("delivery_endpoint_id","delivery_group_id"));
         data.put("map_id",map.getMapId().toString());data.put("pickup_endpoint_id",pickup.getEndpointId().toString());data.put("target_mode",r.targetMode().name());
         if(destination!=null)data.put("delivery_endpoint_id",destination.getEndpointId().toString());if(group!=null)data.put("delivery_group_id",group.getEndpointGroupId().toString());
         Instant now=Instant.now(clock);Account account=account(actor.accountId());

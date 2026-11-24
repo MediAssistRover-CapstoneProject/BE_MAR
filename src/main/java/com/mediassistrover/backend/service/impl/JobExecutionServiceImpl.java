@@ -186,7 +186,12 @@ public class JobExecutionServiceImpl implements JobExecutionService {
             if(delivery.getReceiverShift()!=null){
             var shift=staffDuty.require(delivery.getReceiverShift().getShiftId(),delivery.getExpectedReceiverAccount().getAccountId());
             var target=staffDuty.target(shift,delivery.getMap().getMapId());
-            if(!target.getEndpointId().equals(delivery.getDeliveryEndpoint().getEndpointId())||!shift.getRoom().getRoomId().equals(delivery.getDeliveryRoom().getRoomId()))
+            var group=staffDuty.fallbackGroup(shift,delivery.getMap().getMapId());
+            boolean sameTarget=delivery.getTargetMode()==TargetMode.ENDPOINT_GROUP
+                    ? group!=null && delivery.getDeliveryGroup()!=null
+                        && group.getEndpointGroupId().equals(delivery.getDeliveryGroup().getEndpointGroupId())
+                    : group==null && delivery.getDeliveryEndpoint()!=null && target.getEndpointId().equals(delivery.getDeliveryEndpoint().getEndpointId());
+            if(!sameTarget||!shift.getRoom().getRoomId().equals(delivery.getDeliveryRoom().getRoomId()))
                 throw new BusinessRuleException("Receiver room changed; create a new delivery request");
             }
         }
@@ -265,6 +270,7 @@ public class JobExecutionServiceImpl implements JobExecutionService {
         return workflowRepository.findByStatusAndAcceptsNewJobsTrueOrderByWorkflowCodeAscVersionNoDesc(WorkflowStatus.PUBLISHED).stream()
             .filter(w->"DELIVERY".equalsIgnoreCase(w.getServiceType()))
             .filter(w->w.getSchemaVersion()==3 || d.getAuthenticationMethod()==DeliveryAuthenticationMethod.QR_CODE && policy.mode()==com.mediassistrover.backend.mqtt.MqttRolloutService.Mode.LEGACY_COMPATIBLE)
+            .filter(w->d.getTargetMode()!=TargetMode.ENDPOINT_GROUP || supportsDeliveryGroup(w))
             .filter(w->{var auth=stepRepository.findByWorkflowWorkflowIdOrderBySequenceNoAsc(w.getWorkflowId()).stream().filter(Step::isEnabled).filter(s->s.getStepType()==StepType.AUTHENTICATE).toList();
                 return auth.stream().anyMatch(s->"DELIVERY_SENDER".equals(s.getParamsJson().path("purpose").asText()))
                     && auth.stream().anyMatch(s->"DELIVERY_RECEIVER".equals(s.getParamsJson().path("purpose").asText()))
@@ -274,9 +280,51 @@ public class JobExecutionServiceImpl implements JobExecutionService {
                         return expected.equals(params.path("method").asText()) && !s.getInputMappingJson().has("method") && !s.getInputMappingJson().has("purpose");});})
             .max(java.util.Comparator.comparingInt(Workflow::getVersionNo)).orElseThrow(()->new BusinessRuleException("No published delivery workflow for "+d.getAuthenticationMethod()));
     }
+    /** Never send a group request into an older published direct-endpoint workflow. */
+    private boolean supportsDeliveryGroup(Workflow workflow) { return supportsTargetGroup(workflow,"delivery_group_id"); }
+    private boolean supportsTargetGroup(Workflow workflow, String field) {
+        if(workflow.getSchemaVersion()!=3)return false;
+        var actions=stepRepository.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId()).stream().filter(Step::isEnabled).toList();
+        var selectors=actions.stream().filter(s->s.getStepType()==StepType.DATA_SERVICE
+                && "SELECT_TARGET".equals(s.getParamsJson().path("service_key").asText())).toList();
+        return actions.stream().anyMatch(s->s.getStepType()==StepType.DATA_SERVICE
+                && "RESOLVE_TARGETS".equals(s.getParamsJson().path("service_key").asText())
+                && ("/inputs/"+field).equals(s.getInputMappingJson().path("endpoint_group_id").path("$ref").asText()))
+            && selectors.stream().anyMatch(selector -> actions.stream().anyMatch(move->move.getStepType()==StepType.MOVE
+                && ("/outputs/"+selector.getStepCode()+"/data/endpoint_id").equals(move.getInputMappingJson().path("endpoint_id").path("$ref").asText())))
+            && workflow.getInputSchemaJson().path("properties").has(field);
+    }
     private final org.springframework.beans.factory.ObjectProvider<com.mediassistrover.backend.service.FaceAuthService> face;
     private final com.mediassistrover.backend.service.DeliveryAuthenticationPolicy deliveryAuthenticationPolicy;
-    private Workflow workflowFor(ServiceRequest request,com.mediassistrover.backend.mqtt.MqttRolloutService.State policy){if(request.getRequestType()==ServiceRequestType.DELIVERY)return deliveryWorkflow(request,policy);ServiceRequestType type=request.getRequestType();String serviceType=switch(type){case INFORMATION->"INFORMATION";case NAVIGATION->"NAVIGATION";case ESCORT->"ESCORT";case DELIVERY->"DELIVERY";case EMERGENCY_SOS->"EMERGENCY";case CROWD_MONITORING->"CROWD_MONITORING";case FALL_DETECTION_RESPONSE->"FALL_DETECTION_RESPONSE";case RESTRICTED_AREA_MONITORING->"RESTRICTED_AREA_MONITORING";case AUTO_CHARGING->"AUTO_CHARGING";case NAVIGATION_RECOVERY->"NAVIGATION_RECOVERY";case ROBOT_STARTUP_STANDBY->"ROBOT_STARTUP_STANDBY";};Workflow selected=type==ServiceRequestType.NAVIGATION?navigationRepository.findById(request.getServiceRequestId()).map(NavigationRequest::getWorkflow).orElse(null):null;if(selected!=null){if(selected.getStatus()!=WorkflowStatus.PUBLISHED||!selected.isAcceptsNewJobs()||!serviceType.equalsIgnoreCase(selected.getServiceType()))throw new BusinessRuleException("Selected workflow is not compatible with request type "+type);return selected;}return (policy.mode()==com.mediassistrover.backend.mqtt.MqttRolloutService.Mode.LEGACY_COMPATIBLE?workflowRepository.findFirstByServiceTypeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(serviceType,WorkflowStatus.PUBLISHED):workflowRepository.findFirstByServiceTypeIgnoreCaseAndStatusAndAcceptsNewJobsTrueAndSchemaVersionOrderByVersionNoDesc(serviceType,WorkflowStatus.PUBLISHED,3)).orElseThrow(()->new BusinessRuleException("No published workflow accepts request type "+type));}
+    private Workflow workflowFor(ServiceRequest request, com.mediassistrover.backend.mqtt.MqttRolloutService.State policy) {
+        if(request.getRequestType()==ServiceRequestType.DELIVERY)return deliveryWorkflow(request,policy);
+        ServiceRequestType type=request.getRequestType();
+        String serviceType=switch(type){case INFORMATION->"INFORMATION";case NAVIGATION->"NAVIGATION";case ESCORT->"ESCORT";
+            case DELIVERY->"DELIVERY";case EMERGENCY_SOS->"EMERGENCY";case CROWD_MONITORING->"CROWD_MONITORING";
+            case FALL_DETECTION_RESPONSE->"FALL_DETECTION_RESPONSE";case RESTRICTED_AREA_MONITORING->"RESTRICTED_AREA_MONITORING";
+            case AUTO_CHARGING->"AUTO_CHARGING";case NAVIGATION_RECOVERY->"NAVIGATION_RECOVERY";case ROBOT_STARTUP_STANDBY->"ROBOT_STARTUP_STANDBY";};
+        NavigationRequest navigation=type==ServiceRequestType.NAVIGATION?navigationRepository.findById(request.getServiceRequestId()).orElse(null):null;
+        boolean grouped=navigation!=null && navigation.getTargetMode()==TargetMode.ENDPOINT_GROUP
+            || type==ServiceRequestType.ESCORT && escortRepository.findById(request.getServiceRequestId())
+                .map(escort->escort.getTargetMode()==TargetMode.ENDPOINT_GROUP).orElse(false);
+        Workflow selected=navigation==null?null:navigation.getWorkflow();
+        if(selected!=null){
+            if(selected.getStatus()!=WorkflowStatus.PUBLISHED || !selected.isAcceptsNewJobs() || !serviceType.equalsIgnoreCase(selected.getServiceType()))
+                throw new BusinessRuleException("Selected workflow is not compatible with request type "+type);
+            if(grouped && !supportsTargetGroup(selected,"endpoint_group_id"))
+                throw new BusinessRuleException("Selected workflow does not support endpoint-group navigation; publish a group-capable draft first");
+            return selected;
+        }
+        if(grouped)return workflowRepository.findByStatusAndAcceptsNewJobsTrueOrderByWorkflowCodeAscVersionNoDesc(WorkflowStatus.PUBLISHED).stream()
+            .filter(workflow->serviceType.equalsIgnoreCase(workflow.getServiceType()))
+            .filter(workflow->supportsTargetGroup(workflow,"endpoint_group_id"))
+            .max(Comparator.comparingInt(Workflow::getVersionNo))
+            .orElseThrow(()->new BusinessRuleException("No published endpoint-group workflow accepts request type "+type));
+        return (policy.mode()==com.mediassistrover.backend.mqtt.MqttRolloutService.Mode.LEGACY_COMPATIBLE
+            ?workflowRepository.findFirstByServiceTypeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(serviceType,WorkflowStatus.PUBLISHED)
+            :workflowRepository.findFirstByServiceTypeIgnoreCaseAndStatusAndAcceptsNewJobsTrueAndSchemaVersionOrderByVersionNoDesc(serviceType,WorkflowStatus.PUBLISHED,3))
+            .orElseThrow(()->new BusinessRuleException("No published workflow accepts request type "+type));
+    }
     private Robot selectRobot(Robot preferred,FacilityMap map,Workflow workflow){
         return selectRobot(preferred,map,workflow,-1);
     }

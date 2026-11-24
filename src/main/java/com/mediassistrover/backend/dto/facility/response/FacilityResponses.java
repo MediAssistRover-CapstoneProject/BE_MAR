@@ -40,7 +40,14 @@ public final class FacilityResponses {
             Instant createdAt, Instant updatedAt) { }
     public record EndpointGroupResponse(UUID endpointGroupId, UUID mapId, String groupCode, String groupName,
             SelectionPolicy selectionPolicy, boolean allowFallback, String description, boolean active,
-            Instant createdAt, Instant updatedAt) { }
+            Instant createdAt, Instant updatedAt, UUID roomId, BigDecimal fallbackRadiusM) {
+        public EndpointGroupResponse(UUID endpointGroupId, UUID mapId, String groupCode, String groupName,
+                SelectionPolicy selectionPolicy, boolean allowFallback, String description, boolean active,
+                Instant createdAt, Instant updatedAt) {
+            this(endpointGroupId, mapId, groupCode, groupName, selectionPolicy, allowFallback, description,
+                    active, createdAt, updatedAt, null, new BigDecimal("0.75"));
+        }
+    }
     public record EndpointGroupMemberResponse(UUID endpointGroupId, UUID endpointId, UUID mapId,
             int sequenceNo, boolean active, Instant createdAt) { }
 }

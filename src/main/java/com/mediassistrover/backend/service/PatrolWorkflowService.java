@@ -28,6 +28,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Objects;
 
 /** Reuses the regular schema 3 workflow and schedule lifecycle for bounded patrol runs. */
 @Service
@@ -46,6 +47,9 @@ public class PatrolWorkflowService {
     private final StepRepository steps;
     private final FacilityMapRepository maps;
     private final EndpointRepository endpoints;
+    private final EndpointGroupRepository groups;
+    private final EndpointGroupMemberRepository members;
+    private final StepTransitionRepository transitions;
     private final ZoneRepository zones;
     private final JobRepository jobs;
     private final RobotMqttSessionRepository links;
@@ -63,7 +67,12 @@ public class PatrolWorkflowService {
     private final ObjectMapper json;
 
     public record Checkpoint(@NotNull UUID endpointId, UUID zoneId,
-                             @NotBlank @Pattern(regexp = "CROWD_DENSITY|RESTRICTED_ZONE|PATROL_FALL") String sensingType) { }
+                             @NotBlank @Pattern(regexp = "CROWD_DENSITY|RESTRICTED_ZONE|PATROL_FALL") String sensingType,
+                             UUID endpointGroupId) {
+        public Checkpoint(UUID endpointId, UUID zoneId, String sensingType) {
+            this(endpointId, zoneId, sensingType, null);
+        }
+    }
 
     public record Create(@NotBlank @Size(max = 160) String name, @NotNull UUID mapId,
                          @NotEmpty @Size(max = 5) List<@NotNull @Valid Checkpoint> checkpoints,
@@ -114,35 +123,46 @@ public class PatrolWorkflowService {
     }
 
     GraphCreateRequest graph(Create request, String code) {
+        if (request.checkpoints() == null || request.checkpoints().isEmpty() || request.checkpoints().size() > 5)
+            throw new BusinessRuleException("Patrol requires 1..5 checkpoints");
         int repeats = request.repeatCount() == null ? 1 : request.repeatCount();
         if (repeats < 0 || repeats > 1000) throw new BusinessRuleException("Patrol repeatCount must be 0 (continuous) or 1..1000");
         double speed = request.maxSpeedMps() == null ? .25 : request.maxSpeedMps();
         int moveTimeout = request.moveTimeoutSec() == null ? 60 : request.moveTimeoutSec();
         int window = request.sensingWindowSec() == null ? 12 : request.sensingWindowSec();
+        if (speed < .05 || speed > .60 || !Double.isFinite(speed) || moveTimeout < 15 || moveTimeout > 120 || window < 1 || window > 30)
+            throw new BusinessRuleException("Patrol speed or timeout is outside its supported range");
         if (window < 3 && (Boolean.TRUE.equals(request.fallDetection()) || request.checkpoints().stream().anyMatch(PatrolWorkflowService::fallOnly)))
             throw new BusinessRuleException("Patrol fall detection requires a sensing window of at least 3 seconds");
         List<GraphStepRequest> actions = new ArrayList<>();
-        for (Checkpoint checkpoint : request.checkpoints()) {
-            int number = actions.size() / 2 + 1;
-            actions.add(step(StepType.MOVE, "MOVE_" + number, "Move to checkpoint " + number,
-                    actions.size() + 1, moveTimeout, json.createObjectNode().put("mode", SERVICE)
-                            .put("map_id", request.mapId().toString())
-                            .put("endpoint_id", checkpoint.endpointId().toString()).put("max_speed_mps", speed)));
+        List<GraphTransitionRequest> edges = new ArrayList<>();
+        int candidateMoves = 0;
+        for (int index = 0; index < request.checkpoints().size(); index++) {
+            Checkpoint checkpoint = request.checkpoints().get(index);
+            int number = index + 1;
+            if (checkpoint.endpointGroupId() == null) {
+                actions.add(step(StepType.MOVE, "MOVE_" + number, "Move to checkpoint " + number,
+                        actions.size() + 1, moveTimeout, json.createObjectNode().put("mode", SERVICE)
+                                .put("map_id", request.mapId().toString())
+                                .put("endpoint_id", checkpoint.endpointId().toString()).put("max_speed_mps", speed)));
+                standardRoutes(edges, "MOVE_" + number, "SENSE_" + number);
+                candidateMoves++;
+            } else {
+                EndpointGroupWorkflowSupport.append(json, actions, edges, TASK, "GROUP_" + number,
+                        json.getNodeFactory().textNode(checkpoint.endpointGroupId().toString()),
+                        json.getNodeFactory().textNode(request.mapId().toString()), SERVICE, speed, moveTimeout,
+                        2, "SENSE_" + number, TerminalStatus.FAILED);
+                candidateMoves += 2;
+            }
             var sensing = json.createObjectNode().put("sensing_type", checkpoint.sensingType()).put("window_sec", window);
             if (checkpoint.zoneId() != null) sensing.put("zone_id", checkpoint.zoneId().toString());
             if (fallOnly(checkpoint) || Boolean.TRUE.equals(request.fallDetection())) sensing.put("fall_detection", true);
             actions.add(step(StepType.EXECUTE_SENSING, "SENSE_" + number, "Observe checkpoint " + number,
                     actions.size() + 1, window + 10, sensing));
-        }
-        List<GraphTransitionRequest> edges = new ArrayList<>();
-        for (int i = 0; i < actions.size(); i++) {
-            String from = actions.get(i).stepCode();
-            boolean last = i + 1 == actions.size();
-            edges.add(new GraphTransitionRequest(from, last ? null : actions.get(i + 1).stepCode(),
-                    TransitionOutcome.SUCCESS, null, 1, true, last ? TerminalStatus.SUCCEEDED : null));
-            edges.add(new GraphTransitionRequest(from, null, TransitionOutcome.FAILURE, null, 1, true, TerminalStatus.FAILED));
-            // Orchestration enters RECOVERY_REQUIRED separately if physical stop is unconfirmed.
-            edges.add(new GraphTransitionRequest(from, null, TransitionOutcome.TIMEOUT, null, 1, true, TerminalStatus.FAILED));
+            String following = index + 1 == request.checkpoints().size() ? null
+                    : request.checkpoints().get(index + 1).endpointGroupId() == null
+                        ? "MOVE_" + (number + 1) : "GROUP_" + (number + 1) + "_RESOLVE";
+            standardRoutes(edges, "SENSE_" + number, following);
         }
         var schema = json.createObjectNode().put("type", "object").put("additionalProperties", false);
         var fields = schema.putObject("properties");
@@ -150,12 +170,24 @@ public class PatrolWorkflowService {
         fields.putObject("patrol_repeat_count").put("type", "integer").put("minimum", 0).put("maximum", 1000);
         schema.putArray("required").add("map_id");
         var defaults = json.createObjectNode().put("map_id", request.mapId().toString()).put("patrol_repeat_count", repeats);
-        int duration = request.checkpoints().size() * (moveTimeout + window + 10) + 30;
+        int duration = candidateMoves * moveTimeout + request.checkpoints().size() * (window + 10) + 300;
+        boolean grouped = request.checkpoints().stream().anyMatch(checkpoint -> checkpoint.endpointGroupId() != null);
+        var ui = json.createObjectNode();
+        if (grouped) ui.set("patrol_definition", json.valueToTree(request));
         var workflow = new WorkflowUpsertRequest(code, 1, request.name(), SERVICE,
-                "Finite patrol with one sensing window after each successful MOVE", schema, json.createObjectNode(),
-                defaults, json.createObjectNode(), json.createArrayNode(), duration, actions.size(), 3, 3);
+                "Finite patrol with one sensing window after each successful MOVE", schema, ui,
+                defaults, json.createObjectNode(), json.createArrayNode(), duration,
+                actions.stream().mapToInt(GraphStepRequest::maxVisits).sum(), 3, 3);
         return new GraphCreateRequest(workflow, new GraphRequest(actions.getFirst().stepCode(),
                 List.of(new TaskRequest(TASK, "Patrol checkpoints", 1, null, json.createObjectNode())), actions, edges));
+    }
+
+    private void standardRoutes(List<GraphTransitionRequest> routes, String from, String next) {
+        routes.add(new GraphTransitionRequest(from, next, TransitionOutcome.SUCCESS, null, 1, true,
+                next == null ? TerminalStatus.SUCCEEDED : null));
+        routes.add(new GraphTransitionRequest(from, null, TransitionOutcome.FAILURE, null, 1, true, TerminalStatus.FAILED));
+        // A missing physical stop is handled by the runtime safety gate before these routes run.
+        routes.add(new GraphTransitionRequest(from, null, TransitionOutcome.TIMEOUT, null, 1, true, TerminalStatus.FAILED));
     }
 
     private GraphStepRequest step(StepType type, String code, String name, int sequence, int timeout, JsonNode params) {
@@ -193,13 +225,7 @@ public class PatrolWorkflowService {
         }
         FacilityMap map = requireMap(mapId(workflow));
         var actions = checkpointSteps(workflow, map.getMapId());
-        for (int i = 0; i < actions.size(); i += 2) {
-            var move = actions.get(i).getParamsJson();
-            var sensing = actions.get(i + 1).getParamsJson();
-            requireCheckpoint(map.getMapId(), new Checkpoint(requiredUuid(move, "endpoint_id"),
-                    sensing.hasNonNull("zone_id") ? requiredUuid(sensing, "zone_id") : null,
-                    sensing.path("sensing_type").asText()));
-        }
+        for (var action : actions) requireCheckpoint(map.getMapId(), action.checkpoint());
         return map;
     }
 
@@ -237,14 +263,21 @@ public class PatrolWorkflowService {
                 || !link.getHeartbeatJson().path("activeJobStepId").isNull()
                 || (link.getHelloJson().path("simulation").asBoolean() && !mqtt.isAllowSimulation())) return null;
         var actions = checkpointSteps(workflow, mapId);
-        if (navigation.ready(robot, link, actions.getFirst().getParamsJson()) == null) return null;
-        for (int i = 0; i < actions.size(); i += 2) {
-            var move = actions.get(i);
-            var sensing = actions.get(i + 1);
+        for (var action : actions) {
+            var sensing = action.sensing();
             var config = sensing.getParamsJson();
-            var checkpoint = new Checkpoint(requiredUuid(move.getParamsJson(), "endpoint_id"),
-                    config.hasNonNull("zone_id") ? requiredUuid(config, "zone_id") : null, config.path("sensing_type").asText());
+            var checkpoint = action.checkpoint();
             requireCheckpoint(mapId, checkpoint);
+            if (checkpoint.endpointGroupId() == null) {
+                if (navigation.ready(robot, link, action.move().getParamsJson()) == null) return null;
+            } else {
+                for (var member : members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(checkpoint.endpointGroupId())) {
+                    if (!member.isActive()) continue;
+                    var params = json.createObjectNode().put("map_id", mapId.toString())
+                            .put("endpoint_id", member.getEndpoint().getEndpointId().toString());
+                    if (navigation.ready(robot, link, params) == null) return null;
+                }
+            }
             if ((fallOnly(checkpoint) || config.path("fall_detection").asBoolean()) && !fallCapable(link)) return null;
             if (fallOnly(checkpoint)) continue;
             ai.requireEnabled();
@@ -256,11 +289,16 @@ public class PatrolWorkflowService {
         return map;
     }
 
-    private List<Step> checkpointSteps(Workflow workflow, UUID mapId) {
+    private record CheckpointSteps(Checkpoint checkpoint, Step move, Step sensing) { }
+
+    private List<CheckpointSteps> checkpointSteps(Workflow workflow, UUID mapId) {
         var actions = steps.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId());
+        if (workflow.getInputUiJson() != null && workflow.getInputUiJson().has("patrol_definition"))
+            return generatedCheckpointSteps(workflow, mapId, actions);
         if (actions.isEmpty() || actions.size() > 10 || actions.size() % 2 != 0) {
             throw new BusinessRuleException("Patrol requires 1..5 MOVE/sensing checkpoint pairs");
         }
+        List<CheckpointSteps> checkpoints = new ArrayList<>();
         for (int i = 0; i < actions.size(); i += 2) {
             var move = actions.get(i);
             var sensing = actions.get(i + 1);
@@ -270,8 +308,78 @@ public class PatrolWorkflowService {
                     || !mapId.toString().equals(move.getParamsJson().path("map_id").asText())) {
                 throw new BusinessRuleException("Patrol requires enabled MOVE on its map followed by sensing");
             }
+            var config = sensing.getParamsJson();
+            checkpoints.add(new CheckpointSteps(new Checkpoint(requiredUuid(move.getParamsJson(), "endpoint_id"),
+                    config.hasNonNull("zone_id") ? requiredUuid(config, "zone_id") : null,
+                    config.path("sensing_type").asText()), move, sensing));
         }
-        return actions;
+        return checkpoints;
+    }
+
+    /** A group branch is accepted only when it is exactly the bounded graph authored by this API. */
+    private List<CheckpointSteps> generatedCheckpointSteps(Workflow workflow, UUID mapId, List<Step> actions) {
+        Create definition;
+        try { definition = json.treeToValue(workflow.getInputUiJson().path("patrol_definition"), Create.class); }
+        catch (Exception invalid) { throw new BusinessRuleException("Patrol checkpoint definition is invalid"); }
+        if (definition == null || !mapId.equals(definition.mapId()) || definition.checkpoints() == null
+                || definition.checkpoints().stream().anyMatch(Objects::isNull)
+                || definition.checkpoints().stream().noneMatch(checkpoint -> checkpoint.endpointGroupId() != null))
+            throw new BusinessRuleException("Patrol group definition must retain its fixed checkpoint/map authority");
+        var expected = graph(definition, workflow.getWorkflowCode());
+        var planned = expected.graph().steps();
+        if (actions.size() != planned.size() || workflow.getMaxTotalVisits() != expected.workflow().maxTotalVisits()
+                || workflow.getMaxDurationSec() != expected.workflow().maxDurationSec()
+                || workflow.getStartStep() == null
+                || !expected.graph().startStepCode().equals(workflow.getStartStep().getStepCode()))
+            throw new BusinessRuleException("Patrol group graph or execution budget differs from its checkpoint definition");
+        for (int index = 0; index < planned.size(); index++) {
+            var actual = actions.get(index); var intended = planned.get(index);
+            if (!actual.isEnabled() || actual.getStepType() != intended.stepType()
+                    || !intended.stepCode().equals(actual.getStepCode()) || actual.getSequenceNo() != intended.sequenceNo()
+                    || actual.getTask() == null || !TASK.equals(actual.getTask().getTaskCode())
+                    || actual.getTimeoutSec() != intended.timeoutSec() || actual.getMaxVisits() != intended.maxVisits()
+                    || actual.getMaxAttempts() != 1 || actual.getRetryDelaySec() != 0
+                    || !sameJson(actual.getRetryCodesJson(), intended.retryCodesJson())
+                    || !sameJson(actual.getParamsJson(), intended.paramsJson())
+                    || !sameJson(actual.getInputMappingJson(), intended.inputMappingJson()))
+                throw new BusinessRuleException("Patrol group steps differ from the generated bounded navigation/sensing graph");
+        }
+        var routes = transitions.findByWorkflowWorkflowIdOrderByFromStepSequenceNoAscOutcomeAscPriorityAsc(workflow.getWorkflowId());
+        if (routes.size() != expected.graph().transitions().size()
+                || expected.graph().transitions().stream().anyMatch(intended -> routes.stream().noneMatch(actual ->
+                    intended.fromStepCode().equals(actual.getFromStep().getStepCode())
+                    && Objects.equals(intended.toStepCode(), actual.getToStep() == null ? null : actual.getToStep().getStepCode())
+                    && intended.outcome() == actual.getOutcome() && intended.priority() == actual.getPriority()
+                    && intended.defaultTransition() == actual.isDefaultTransition() && intended.terminalStatus() == actual.getTerminalStatus()
+                    && sameJson(intended.conditionJson(), actual.getConditionJson()))))
+            throw new BusinessRuleException("Patrol group transitions differ from the generated fallback guard");
+        List<CheckpointSteps> result = new ArrayList<>();
+        for (int index = 0; index < definition.checkpoints().size(); index++) {
+            var checkpoint = definition.checkpoints().get(index); int number = index + 1;
+            String move = checkpoint.endpointGroupId() == null ? "MOVE_" + number : "GROUP_" + number + "_MOVE";
+            Step movement = actions.stream().filter(step -> move.equals(step.getStepCode())).findFirst().orElseThrow();
+            Step sensing = actions.stream().filter(step -> ("SENSE_" + number).equals(step.getStepCode())).findFirst().orElseThrow();
+            result.add(new CheckpointSteps(checkpoint, movement, sensing));
+        }
+        return result;
+    }
+
+    private boolean sameJson(JsonNode left, JsonNode right) {
+        if (left == null || left.isNull()) return right == null || right.isNull();
+        if (right == null || right.isNull()) return false;
+        if (left.isNumber() && right.isNumber()) return left.decimalValue().compareTo(right.decimalValue()) == 0;
+        if (left.isObject() && right.isObject()) {
+            if (left.size() != right.size()) return false;
+            var fields = left.fieldNames();
+            while (fields.hasNext()) { String field = fields.next(); if (!right.has(field) || !sameJson(left.get(field), right.get(field))) return false; }
+            return true;
+        }
+        if (left.isArray() && right.isArray()) {
+            if (left.size() != right.size()) return false;
+            for (int index = 0; index < left.size(); index++) if (!sameJson(left.get(index), right.get(index))) return false;
+            return true;
+        }
+        return left.equals(right);
     }
 
     public static boolean fallCapable(RobotMqttSession link) {
@@ -314,6 +422,23 @@ public class PatrolWorkflowService {
         if (!endpoint.isActive() || !endpoint.isAccessible() || !mapId.equals(endpoint.getMap().getMapId())
                 || endpoint.getYawRad() == null) {
             throw new BusinessRuleException("Patrol checkpoint needs an active accessible endpoint with heading on the patrol map");
+        }
+        if (checkpoint.endpointGroupId() != null) {
+            var group = groups.findById(checkpoint.endpointGroupId()).orElseThrow(() -> new BusinessRuleException("Patrol endpoint group not found"));
+            if (!group.isActive() || !group.isAllowFallback() || group.getRoom() == null
+                    || group.getSelectionPolicy() != SelectionPolicy.PRIORITY || !mapId.equals(group.getMap().getMapId())
+                    || endpoint.getRoom() == null || !group.getRoom().getRoomId().equals(endpoint.getRoom().getRoomId()))
+                throw new BusinessRuleException("Patrol fallback group must be ordered and scoped to the primary endpoint room/map");
+            var pair = members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(checkpoint.endpointGroupId()).stream()
+                    .filter(EndpointGroupMember::isActive).toList();
+            if (pair.size() != 2 || pair.getFirst().getSequenceNo() != 1 || pair.get(1).getSequenceNo() != 2
+                    || !checkpoint.endpointId().equals(pair.getFirst().getEndpoint().getEndpointId())
+                    || pair.stream().anyMatch(member -> !member.getMap().getMapId().equals(mapId)
+                        || !member.getEndpoint().isActive() || !member.getEndpoint().isAccessible()
+                        || member.getEndpoint().getYawRad() == null || !member.getEndpoint().getMap().getMapId().equals(mapId)
+                        || member.getEndpoint().getRoom() == null
+                        || !group.getRoom().getRoomId().equals(member.getEndpoint().getRoom().getRoomId())))
+                throw new BusinessRuleException("Patrol fallback requires its explicit primary as member 1 and one usable same-room fallback");
         }
         if (fallOnly(checkpoint)) {
             if (checkpoint.zoneId() != null) throw new BusinessRuleException("A patrol fall-only checkpoint does not require a sensing zone");

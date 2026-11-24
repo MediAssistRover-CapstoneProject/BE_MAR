@@ -14,6 +14,7 @@ import java.util.UUID;
 public interface EndpointGroupMemberRepository extends JpaRepository<EndpointGroupMember, EndpointGroupMemberId> {
     boolean existsByEndpointGroupEndpointGroupIdAndSequenceNo(UUID groupId, int sequenceNo);
     List<EndpointGroupMember> findByEndpointGroupEndpointGroupIdOrderBySequenceNo(UUID groupId);
+    List<EndpointGroupMember> findByEndpointEndpointId(UUID endpointId);
     @Query("""
             select m from EndpointGroupMember m
             where m.endpointGroup.endpointGroupId = :groupId and m.endpointGroup.active = true

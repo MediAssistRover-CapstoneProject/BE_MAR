@@ -22,17 +22,27 @@ public class StaffQrDeliveryWorkflowFactory {
         var schema = json.createObjectNode().put("type", "object").put("additionalProperties", true);
         var properties = schema.putObject("properties");
         var required = schema.putArray("required");
-        for (String field : List.of("map_id", "pickup_endpoint_id", "delivery_endpoint_id", "service_request_id",
+        for (String field : List.of("map_id", "pickup_endpoint_id", "service_request_id",
                 "expected_sender_account_id", "expected_receiver_account_id")) {
             properties.putObject(field).put("type", "string").put("format", "uuid");
             required.add(field);
         }
+        properties.putObject("delivery_endpoint_id").put("type", "string").put("format", "uuid");
+        properties.putObject("delivery_group_id").put("type", "string").put("format", "uuid");
+        properties.putObject("target_mode").put("type", "string").putArray("enum").add("ENDPOINT").add("ENDPOINT_GROUP");
+        var targets = schema.putArray("oneOf");
+        var direct = targets.addObject(); direct.putObject("properties").putObject("target_mode").put("const", "ENDPOINT");
+        direct.putArray("required").add("delivery_endpoint_id"); direct.putObject("not").putArray("required").add("delivery_group_id");
+        var grouped = targets.addObject(); grouped.putObject("properties").putObject("target_mode").put("const", "ENDPOINT_GROUP");
+        grouped.putArray("required").add("target_mode").add("delivery_group_id");
+        grouped.putObject("not").putArray("required").add("delivery_endpoint_id");
         properties.putObject("compartment_id").put("const", "CART_MAIN");
         properties.putObject("items").put("type", "array").put("minItems", 1);
         required.add("compartment_id").add("items");
         for (String field : List.of("pickup_arrival_text", "delivery_arrival_text", "delivery_completed_text"))
             properties.putObject(field).put("type", "string").put("minLength", 1).put("maxLength", 500);
         var defaults = json.createObjectNode()
+                .put("target_mode", "ENDPOINT")
                 .put("pickup_arrival_text", "Đã tới điểm nhận hàng. Mời nhân viên giao hàng chuẩn bị mã QR.")
                 .put("delivery_arrival_text", method == DeliveryAuthenticationMethod.QR_CODE
                         ? "Đã tới điểm giao hàng. Mời nhân viên nhận hàng chuẩn bị mã QR."
@@ -45,11 +55,38 @@ public class StaffQrDeliveryWorkflowFactory {
         addAnnouncement(steps, "RECEIVER", "ANNOUNCE", "Thông báo giao hàng thành công",
                 "DELIVERY_COMPLETED", "delivery_completed_text");
         List<GraphTransitionRequest> transitions = transitions(steps);
+        // Both navigation branches join before arrival/authentication, so a failed candidate never
+        // repeats pickup or obtains a receiver grant before actually reaching its selected endpoint.
+        transitions.replaceAll(route -> "MOVE_RECEIVER".equals(route.toStepCode())
+                ? new GraphTransitionRequest(route.fromStepCode(), "RECEIVER_TARGET_MODE", route.outcome(),
+                    route.conditionJson(), route.priority(), route.defaultTransition(), route.terminalStatus()) : route);
+        var mode = json.createObjectNode(); mode.putObject("expression")
+                .put("path", "/inputs/target_mode").put("operator", "EQ").put("value", "ENDPOINT_GROUP");
+        add(steps, "RECEIVER", "RECEIVER_TARGET", StepType.CHECK_CONDITION, "Chọn đích giao hàng", 30,
+                mode, json.createObjectNode());
+        // Use a stable branch name for notices and published-workflow compatibility checks.
+        int modeIndex = steps.size() - 1;
+        var modeStep = steps.get(modeIndex);
+        steps.set(modeIndex, new GraphStepRequest(modeStep.taskCode(), modeStep.stepType(), "RECEIVER_TARGET_MODE",
+                modeStep.stepName(), modeStep.sequenceNo(), null, modeStep.paramsJson(), modeStep.inputMappingJson(),
+                modeStep.timeoutSec(), 1, 0, json.createArrayNode(), 1, StepAuditLevel.FULL));
+        var branch = EndpointGroupWorkflowSupport.append(json, steps, transitions, "RECEIVER", "GROUP_RECEIVER",
+                EndpointGroupWorkflowSupport.reference(json, "/inputs/delivery_group_id"),
+                EndpointGroupWorkflowSupport.reference(json, "/inputs/map_id"), "NORMAL", .35, 180, 2,
+                "ARRIVAL_RECEIVER", TerminalStatus.FAILED);
+        var groupedMode = json.createObjectNode().put("path", "/result/value").put("operator", "EQ").put("value", true);
+        transitions.add(new GraphTransitionRequest("RECEIVER_TARGET_MODE", branch.startStepCode(), TransitionOutcome.SUCCESS,
+                groupedMode, 1, false, null));
+        transitions.add(new GraphTransitionRequest("RECEIVER_TARGET_MODE", "MOVE_RECEIVER", TransitionOutcome.SUCCESS,
+                null, 2, true, null));
+        for (var outcome : List.of(TransitionOutcome.FAILURE, TransitionOutcome.TIMEOUT))
+            transitions.add(new GraphTransitionRequest("RECEIVER_TARGET_MODE", null, outcome, null, 1, true, TerminalStatus.FAILED));
         String suffix = UUID.randomUUID().toString().replace("-", "").substring(0, 12).toUpperCase(java.util.Locale.ROOT);
         var workflow = new WorkflowUpsertRequest((method==DeliveryAuthenticationMethod.QR_CODE?"WF_STAFF_QR_DELIVERY_":"WF_STAFF_FACE_DELIVERY_") + suffix, 1, method==DeliveryAuthenticationMethod.QR_CODE?"Giao hàng A → B bằng QR staff":"Giao hàng quan trọng: gửi QR, nhận khuôn mặt",
                 "DELIVERY", "Robot xác thực người giao và người nhận, sau đó xác nhận hàng và khóa ngăn.",
                 schema, json.createObjectNode(), defaults, json.createObjectNode(),
-                json.createArrayNode().add("NAVIGATION").add("HARDWARE_CONTROL"), 2400, steps.size(), 3, 3);
+                json.createArrayNode().add("NAVIGATION").add("HARDWARE_CONTROL"), 2400,
+                steps.stream().mapToInt(GraphStepRequest::maxVisits).sum(), 3, 3);
         var tasks = List.of(new TaskRequest("SENDER", "Nhận hàng", 1, null, json.createObjectNode()),
                 new TaskRequest("RECEIVER", "Bàn giao", 2, null, json.createObjectNode()));
         return new GraphCreateRequest(workflow, new GraphRequest("MOVE_SENDER", tasks, steps, transitions));
