@@ -71,7 +71,8 @@ All `/api/v1/knowledge/documents` endpoints require ADMIN:
 | `GET /api/v1/knowledge/documents/{id}/chunks` | Ordered extracted content and chunk states |
 | `POST /api/v1/knowledge/documents/{id}/replace` | Multipart replacement of an active COMPLETED document |
 | `POST /api/v1/knowledge/documents/{id}/retry` | Reprocess a FAILED v2/v3 document after fixing its cause |
-| `DELETE /api/v1/knowledge/documents/{id}` | Immediately withdraw it and pending replacements |
+| `DELETE /api/v1/knowledge/documents/{id}` | Hard-delete the document, its chunks, and pending replacements from BE; queue remote detach |
+| `DELETE /api/v1/knowledge/documents/{id}/chunks/{chunkId}` | Hard-delete one chunk of a COMPLETED v2/v3 document; queue remote detach |
 
 Whole-document replacement is explicit: uploading another file with the same
 name does not silently remove every item in the old file. Matching item keys
@@ -87,11 +88,15 @@ dedicated `X-Knowledge-Token` header (at least 32 characters), and accepts
 accepts a caller's own replacement text. It returns only active, complete files
 in the configured store. Do not expose the token to FE or Pi.
 
-Withdrawal is immediate at BE's publication gate. A durable outbox retries
-detaching remote files, including files created during cancellation. It detaches
-from this store; it does not delete a potentially shared OpenAI file object or
-erase the original BE payload. Original payload retention/purge remains an
-operator decision. An unknown upload ID needs operator reconciliation in OpenAI.
+Deletion removes BE document/chunk rows and the original payload in one DB
+transaction after recording known remote file IDs in a durable cleanup outbox.
+The publication gate immediately rejects those files, while the worker retries
+detaching them from this store. Detach does not delete a potentially shared
+OpenAI File object. An active worker lease or unknown upload outcome returns
+HTTP 409 without deleting rows; retry after processing or reconcile the unknown
+OpenAI upload. Deleting a chunk leaves the source PDF payload in its document,
+and uploading the source again can create that chunk again. A superseded older
+chunk is not automatically restored when its newer owner is deleted.
 
 ## Deploy together
 

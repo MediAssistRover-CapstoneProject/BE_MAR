@@ -1,6 +1,7 @@
 package com.mediassistrover.backend.knowledge;
 
 import com.mediassistrover.backend.exception.BusinessRuleException;
+import com.mediassistrover.backend.exception.ConflictException;
 import com.mediassistrover.backend.exception.FileTooLargeException;
 import com.mediassistrover.backend.exception.ResourceNotFoundException;
 import org.springframework.beans.factory.annotation.Value;
@@ -98,13 +99,80 @@ public class KnowledgeDocumentService {
 
     @Transactional
     public void delete(UUID id) {
-        get(id);
-        jdbc.queryForList("SELECT document_id FROM KnowledgeDocument WHERE document_id=? FOR UPDATE",String.class,id.toString());
-        // Logical removal is immediate; external detach is retried by the worker.
-        // Keep any outstanding lease so cleanup cannot race an in-flight attach.
-        jdbc.update("UPDATE KnowledgeDocument SET active=FALSE,status='CANCELLED',updated_at=UTC_TIMESTAMP(6) WHERE document_id=? OR (replaces_document_id=? AND status IN ('QUEUED','ATTACHING','PROCESSING'))",
-            id.toString(),id.toString());
-        jdbc.update("DELETE FROM KnowledgeTopicOwner WHERE document_id=?",id.toString());
+        String key=id.toString();
+        List<DeleteTarget> root=lockDeleteTargets("document_id=?",key);
+        if (root.isEmpty()) throw new ResourceNotFoundException("Knowledge document not found");
+        // A pending replacement must not publish after its parent is removed.
+        List<DeleteTarget> pending=lockDeleteTargets("replaces_document_id=? AND active=TRUE AND status IN ('QUEUED','ATTACHING','PROCESSING')",key);
+        List<DeleteTarget> targets=new java.util.ArrayList<>(pending);
+        targets.add(root.getFirst());
+        for (DeleteTarget target:targets) requireSafeToDelete(target);
+        for (DeleteTarget target:targets) {
+            queueRemoteCleanup(target.id());
+            jdbc.update("DELETE FROM KnowledgeTopicOwner WHERE document_id=?",target.id());
+            // Completed replacements may retain a historical FK to this document.
+            jdbc.update("UPDATE KnowledgeDocument SET replaces_document_id=NULL WHERE replaces_document_id=?",target.id());
+            jdbc.update("DELETE FROM KnowledgeDocumentChunk WHERE document_id=?",target.id());
+            jdbc.update("DELETE FROM KnowledgeDocument WHERE document_id=?",target.id());
+        }
+    }
+
+    @Transactional
+    public void deleteChunk(UUID documentId, UUID chunkId) {
+        String document=documentId.toString(), chunk=chunkId.toString();
+        List<DeleteTarget> rows=lockDeleteTargets("document_id=?",document);
+        if (rows.isEmpty()) throw new ResourceNotFoundException("Knowledge document not found");
+        DeleteTarget target=rows.getFirst();
+        requireSafeToDelete(target);
+        if (!target.status().equals("COMPLETED") || target.pipelineVersion()<2)
+            throw new ConflictException("KNOWLEDGE_CHUNK_DELETE_REQUIRES_COMPLETED_DOCUMENT");
+        List<String> found=jdbc.queryForList("SELECT chunk_id FROM KnowledgeDocumentChunk WHERE document_id=? AND chunk_id=? FOR UPDATE",
+            String.class,document,chunk);
+        if (found.isEmpty()) throw new ResourceNotFoundException("Knowledge chunk not found");
+        jdbc.update("""
+            INSERT IGNORE INTO KnowledgeRemoteCleanup(vector_store_id,openai_file_id)
+            SELECT d.vector_store_id,c.openai_file_id FROM KnowledgeDocument d
+            JOIN KnowledgeDocumentChunk c ON c.document_id=d.document_id
+            WHERE c.chunk_id=? AND c.openai_file_id IS NOT NULL
+            """,chunk);
+        jdbc.update("DELETE FROM KnowledgeTopicOwner WHERE chunk_id=?",chunk);
+        jdbc.update("DELETE FROM KnowledgeDocumentChunk WHERE chunk_id=?",chunk);
+    }
+
+    private record DeleteTarget(String id,String status,int pipelineVersion,boolean leased) { }
+
+    private List<DeleteTarget> lockDeleteTargets(String condition,String id) {
+        return jdbc.query("""
+            SELECT document_id,status,pipeline_version,
+                   (lease_until IS NOT NULL AND lease_until>UTC_TIMESTAMP(6)) AS leased
+            FROM KnowledgeDocument WHERE
+            """+condition+" FOR UPDATE",
+            (rs,n)->new DeleteTarget(rs.getString(1),rs.getString(2),rs.getInt(3),rs.getBoolean(4)),id);
+    }
+
+    private void requireSafeToDelete(DeleteTarget target) {
+        if (target.leased() || target.status().equals("UPLOADING"))
+            throw new ConflictException("KNOWLEDGE_DELETE_IN_PROGRESS");
+        if (target.status().equals("RECONCILIATION_REQUIRED"))
+            throw new ConflictException("KNOWLEDGE_UPLOAD_OUTCOME_UNKNOWN");
+        Long uploading=jdbc.queryForObject("SELECT COUNT(*) FROM KnowledgeDocumentChunk WHERE document_id=? AND status='UPLOADING'",
+            Long.class,target.id());
+        if (uploading!=null && uploading>0)
+            throw new ConflictException("KNOWLEDGE_UPLOAD_OUTCOME_UNKNOWN");
+    }
+
+    private void queueRemoteCleanup(String documentId) {
+        jdbc.update("""
+            INSERT IGNORE INTO KnowledgeRemoteCleanup(vector_store_id,openai_file_id)
+            SELECT d.vector_store_id,c.openai_file_id FROM KnowledgeDocument d
+            JOIN KnowledgeDocumentChunk c ON c.document_id=d.document_id
+            WHERE d.document_id=? AND c.openai_file_id IS NOT NULL
+            """,documentId);
+        jdbc.update("""
+            INSERT IGNORE INTO KnowledgeRemoteCleanup(vector_store_id,openai_file_id)
+            SELECT vector_store_id,openai_file_id FROM KnowledgeDocument
+            WHERE document_id=? AND openai_file_id IS NOT NULL
+            """,documentId);
     }
 
     public record ChunkView(String id, int ordinal, String content, String status, String errorCode, boolean active) { }

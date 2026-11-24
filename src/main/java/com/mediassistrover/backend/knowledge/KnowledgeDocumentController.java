@@ -58,8 +58,15 @@ public class KnowledgeDocumentController {
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    @Operation(summary="Disable document immediately; detach remote files asynchronously")
+    @Operation(summary="Delete document and chunks from the database; detach remote files asynchronously")
     public void delete(@PathVariable UUID id) { service.delete(id); }
+
+    @DeleteMapping("/{id}/chunks/{chunkId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Operation(summary="Delete one indexed chunk from the database; detach its remote file asynchronously")
+    public void deleteChunk(@PathVariable UUID id, @PathVariable UUID chunkId) {
+        service.deleteChunk(id,chunkId);
+    }
 
     @PostMapping(value="/{id}/replace",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.ACCEPTED)

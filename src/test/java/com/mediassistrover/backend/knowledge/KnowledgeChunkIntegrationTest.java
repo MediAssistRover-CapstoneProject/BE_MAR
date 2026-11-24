@@ -9,6 +9,8 @@ import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.transaction.support.TransactionTemplate;
+import com.mediassistrover.backend.exception.ConflictException;
+import com.mediassistrover.backend.exception.ResourceNotFoundException;
 import java.util.*;
 import java.nio.charset.StandardCharsets;
 import static org.junit.jupiter.api.Assertions.*;
@@ -74,7 +76,7 @@ class KnowledgeChunkIntegrationTest {
         verify(client,times(2)).upload(anyString(),anyString(),any());
     }
 
-    @Test void uncertainUploadIsNotRetriedAndDeletionDuringUploadCannotPublish() {
+    @Test void uncertainUploadIsNotRetriedAndDeletionDuringUploadIsRejected() {
         UUID id=upload();step(id);
         when(client.upload(anyString(),anyString(),any())).thenThrow(new OpenAiKnowledgeClient.Failure("OPENAI_UNREACHABLE",0,true));
         step(id);step(id);
@@ -82,14 +84,20 @@ class KnowledgeChunkIntegrationTest {
         verify(client,times(1)).upload(anyString(),anyString(),any());
         assertThrows(RuntimeException.class,()->service.retry(id));
 
-        UUID cancelled=upload();step(cancelled);
-        doAnswer(a->{service.delete(cancelled);return "file-late";}).when(client).upload(anyString(),anyString(),any());
-        step(cancelled);
-        assertEquals("CANCELLED",service.get(cancelled).status());
+        UUID uploading=upload();step(uploading);
+        doAnswer(a->{
+            assertThrows(ConflictException.class,()->new TransactionTemplate(transactions)
+                .executeWithoutResult(s->service.delete(uploading)));
+            return "file-late";
+        }).when(client).upload(anyString(),anyString(),any());
+        step(uploading);
+        ready(uploading);
+        new TransactionTemplate(transactions).executeWithoutResult(s->service.delete(uploading));
+        assertThrows(ResourceNotFoundException.class,()->service.get(uploading));
+        assertEquals(0L,jdbc.queryForObject("SELECT COUNT(*) FROM KnowledgeDocumentChunk WHERE document_id=?",Long.class,uploading.toString()));
         assertTrue(service.resolve(store,List.of("file-late")).isEmpty());
         worker.cleanup();
         verify(client).detach(store,"file-late");
-        verify(client,never()).attachChunk(eq(store),eq("file-late"),anyString(),anyInt());
     }
 
     @Test void replacementPublishesAtomicallyAndOldFileIsDetached() {
@@ -154,12 +162,17 @@ class KnowledgeChunkIntegrationTest {
         assertEquals(1,service.resolve(store,files(third)).size());
     }
 
-    @Test void cancelledExtractionAndFailedExtractionNeverPublish() {
+    @Test void deletionDuringExtractionIsRejectedAndFailedExtractionNeverPublishes() {
         UUID id=upload();
-        when(processor.extract(anyString(),any())).thenAnswer(a->{service.delete(id);return List.of(new KnowledgePreprocessor.Chunk("Late result","a".repeat(64)));});
+        when(processor.extract(anyString(),any())).thenAnswer(a->{
+            assertThrows(ConflictException.class,()->new TransactionTemplate(transactions)
+                .executeWithoutResult(s->service.delete(id)));
+            return List.of(new KnowledgePreprocessor.Chunk("Late result","a".repeat(64)));
+        });
         step(id);
-        assertEquals("CANCELLED",service.get(id).status());
-        assertTrue(service.chunks(id).isEmpty());
+        ready(id);
+        new TransactionTemplate(transactions).executeWithoutResult(s->service.delete(id));
+        assertThrows(ResourceNotFoundException.class,()->service.get(id));
         UUID failed=upload();
         when(processor.extract(anyString(),any())).thenThrow(new KnowledgePreprocessor.Failure("KNOWLEDGE_OCR_LOW_QUALITY"));
         step(failed);
@@ -168,6 +181,18 @@ class KnowledgeChunkIntegrationTest {
         new TransactionTemplate(transactions).executeWithoutResult(s->service.retry(failed));
         assertEquals("QUEUED",service.get(failed).status());
         verify(client,never()).upload(anyString(),anyString(),any());
+    }
+
+    @Test void deletingOneChunkRemovesOnlyThatChunkAndQueuesItsRemoteFile() {
+        UUID id=upload();ready(id);
+        List<String> before=files(id);
+        UUID chunk=UUID.fromString(service.chunks(id).getFirst().id());
+        new TransactionTemplate(transactions).executeWithoutResult(s->service.deleteChunk(id,chunk));
+        assertEquals(1,service.chunks(id).size());
+        assertEquals(1,service.resolve(store,before).size());
+        worker.cleanup();
+        verify(client).detach(store,before.getFirst());
+        verify(client,never()).detach(store,before.get(1));
     }
 
     @Test void leasePreventsConcurrentWorkerAndExpiredUploadNeedsReconciliation() {

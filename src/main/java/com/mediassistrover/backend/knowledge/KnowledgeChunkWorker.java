@@ -152,6 +152,13 @@ public class KnowledgeChunkWorker {
     }
     private void publish(String id,String token) {
         tx.executeWithoutResult(s->{
+            // Deletion and replacement creation lock the old document first.
+            // Use the same order here to avoid a parent/child lock inversion.
+            var replacing=jdbc.queryForList("SELECT replaces_document_id FROM KnowledgeDocument WHERE document_id=?",String.class,id);
+            if (replacing.isEmpty()) return;
+            String old=replacing.getFirst();
+            var active=old==null ? List.<String>of() : jdbc.queryForList(
+                "SELECT document_id FROM KnowledgeDocument WHERE document_id=? AND active=TRUE FOR UPDATE",String.class,old);
             if (!lock(id,token)) return;
             Long total=jdbc.queryForObject("SELECT COUNT(*) FROM KnowledgeDocumentChunk WHERE document_id=?",Long.class,id);
             Long pending=jdbc.queryForObject("SELECT COUNT(*) FROM KnowledgeDocumentChunk WHERE document_id=? AND status<>'COMPLETED'",Long.class,id);
@@ -159,10 +166,7 @@ public class KnowledgeChunkWorker {
             String store=jdbc.queryForObject("SELECT vector_store_id FROM KnowledgeDocument WHERE document_id=?",String.class,id);
             java.time.Instant created=jdbc.queryForObject("SELECT created_at FROM KnowledgeDocument WHERE document_id=?",
                 java.sql.Timestamp.class,id).toInstant();
-            String old=jdbc.queryForObject("SELECT replaces_document_id FROM KnowledgeDocument WHERE document_id=?",String.class,id);
             if (old!=null) {
-                // serialize against a concurrent deletion of the old document
-                var active=jdbc.queryForList("SELECT document_id FROM KnowledgeDocument WHERE document_id=? AND active=TRUE FOR UPDATE",String.class,old);
                 if (active.isEmpty()) { terminal(id,token,"CANCELLED","KNOWLEDGE_REPLACEMENT_CANCELLED"); return; }
                 jdbc.update("UPDATE KnowledgeDocument SET active=FALSE,status='CANCELLED',lease_token=NULL,lease_until=NULL,updated_at=UTC_TIMESTAMP(6) WHERE document_id=?",old);
                 jdbc.update("DELETE FROM KnowledgeTopicOwner WHERE document_id=?",old);
