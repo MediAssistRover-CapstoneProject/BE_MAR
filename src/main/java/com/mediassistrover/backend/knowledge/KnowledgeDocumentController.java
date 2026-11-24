@@ -51,6 +51,10 @@ public class KnowledgeDocumentController {
     @Operation(summary="Read extracted chunks (no additional approval required)")
     public java.util.List<KnowledgeDocumentService.ChunkView> chunks(@PathVariable UUID id) { return service.chunks(id); }
 
+    @GetMapping(value="/{id}/extracted-text",produces=MediaType.TEXT_PLAIN_VALUE)
+    @Operation(summary="Read the editable text extracted from the file, including OCR text")
+    public String extractedText(@PathVariable UUID id) { return service.extractedText(id); }
+
     @PostMapping("/{id}/retry")
     @ResponseStatus(HttpStatus.ACCEPTED)
     @Operation(summary="Retry a failed v2/v3 extraction/indexing job after fixing the cause (not unknown upload outcomes)")
@@ -73,4 +77,20 @@ public class KnowledgeDocumentController {
     @Operation(summary="Replace a ready document; old content remains available until new content is fully indexed")
     public KnowledgeDocumentService.Document replace(@PathVariable UUID id, @RequestPart("file") MultipartFile file,
             @AuthenticationPrincipal AccountPrincipal actor) { return service.replace(id,file,actor.accountId()); }
+
+    @PutMapping(value="/{id}",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    @Operation(summary="Update a document file and reindex all of its chunks as a new revision")
+    public KnowledgeDocumentService.Document update(@PathVariable UUID id, @RequestPart("file") MultipartFile file,
+            @AuthenticationPrincipal AccountPrincipal actor) { return service.replace(id,file,actor.accountId()); }
+
+    public record ChunkUpdate(String content) { }
+
+    @PutMapping(value="/{id}/chunks/{chunkId}",consumes=MediaType.APPLICATION_JSON_VALUE)
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    @Operation(summary="Edit one extracted/OCR chunk and publish a new document revision")
+    public KnowledgeDocumentService.Document updateChunk(@PathVariable UUID id,@PathVariable UUID chunkId,
+            @RequestBody ChunkUpdate body,@AuthenticationPrincipal AccountPrincipal actor) {
+        return service.updateChunk(id,chunkId,body==null?null:body.content(),actor.accountId());
+    }
 }

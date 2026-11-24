@@ -69,7 +69,10 @@ All `/api/v1/knowledge/documents` endpoints require ADMIN:
 | `POST /api/v1/knowledge/documents` | Upload; every call creates a new publication attempt, including identical bytes |
 | `GET /api/v1/knowledge/documents/{id}` | Status and sanitized error |
 | `GET /api/v1/knowledge/documents/{id}/chunks` | Ordered extracted content and chunk states |
+| `GET /api/v1/knowledge/documents/{id}/extracted-text` | Read the editable extracted/OCR text (plain text) |
 | `POST /api/v1/knowledge/documents/{id}/replace` | Multipart replacement of an active COMPLETED document |
+| `PUT /api/v1/knowledge/documents/{id}` | Update the file and reindex all chunks as a new revision (multipart `file`; returns new document ID) |
+| `PUT /api/v1/knowledge/documents/{id}/chunks/{chunkId}` | Edit one ready v3 chunk with JSON `{"content":"..."}`; returns new document ID |
 | `POST /api/v1/knowledge/documents/{id}/retry` | Reprocess a FAILED v2/v3 document after fixing its cause |
 | `DELETE /api/v1/knowledge/documents/{id}` | Hard-delete the document, its chunks, and pending replacements from BE; queue remote detach |
 | `DELETE /api/v1/knowledge/documents/{id}/chunks/{chunkId}` | Hard-delete one chunk of a COMPLETED v2/v3 document; queue remote detach |
@@ -81,6 +84,20 @@ explicit replacement the old document stays active;
 publication of the replacement and withdrawal of the predecessor share one DB
 transaction. Failed replacements leave the old document usable. Retry does not
 accept CANCELLED or RECONCILIATION_REQUIRED documents.
+Once a replacement is ready, the previous document and its chunks are removed
+from BE in that transaction. Its remote files are queued for detach. Clients
+should poll the new document ID returned by the update endpoint.
+Chunk editing snapshots all current chunks into a new revision, changes the
+selected chunk, and stores the resulting extracted/OCR text. The uploaded PDF,
+DOC or other binary remains available as an immutable reference, so the OCR
+text can differ from the original pixels or layout. The edited revision is
+indexed before the old document is removed. Only active chunks may be edited;
+inactive chunks superseded by another document stay inactive in the revision.
+The edited chunk keeps its existing topic identity, so this endpoint is for
+correcting the value of an existing fact or answer. Upload a revised file if
+the question, subject or structure itself changes.
+Editing is limited to 20,000 characters per chunk. A failed edited revision
+can be retried without re-extracting the original and losing the edit.
 
 `POST /api/v1/internal/knowledge/resolve` is for AI Voice only. It requires a
 dedicated `X-Knowledge-Token` header (at least 32 characters), and accepts

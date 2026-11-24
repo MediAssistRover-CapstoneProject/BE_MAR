@@ -36,7 +36,8 @@ class KnowledgeChunkIntegrationTest {
         jdbc.execute("CREATE TABLE Account(account_id BINARY(16) PRIMARY KEY)");
         new ResourceDatabasePopulator(new FileSystemResource("src/main/resources/db/migration/V60__knowledge_documents.sql"),
             new FileSystemResource("src/main/resources/db/migration/V65__knowledge_document_chunks.sql"),
-            new FileSystemResource("src/main/resources/db/migration/V66__knowledge_topic_publication.sql")).execute(ds);
+            new FileSystemResource("src/main/resources/db/migration/V66__knowledge_topic_publication.sql"),
+            new FileSystemResource("src/main/resources/db/migration/V68__knowledge_extracted_text.sql")).execute(ds);
         jdbc.update("INSERT INTO Account VALUES(UUID_TO_BIN(?))",actor.toString());
     }
     @BeforeEach void setup() {
@@ -106,11 +107,27 @@ class KnowledgeChunkIntegrationTest {
         UUID replacement=new TransactionTemplate(transactions).execute(s->service.replace(old,file("New policy"),actor).id());
         assertEquals(2,service.resolve(store,oldFiles).size());
         ready(replacement);
-        assertEquals("CANCELLED",service.get(old).status());
+        assertThrows(ResourceNotFoundException.class,()->service.get(old));
         assertTrue(service.resolve(store,oldFiles).isEmpty());
         assertEquals(2,service.resolve(store,files(replacement)).size());
         worker.cleanup();
         for(String file:oldFiles) verify(client).detach(store,file);
+    }
+
+    @Test void editingOcrChunkKeepsOriginalBinaryAndPublishesCorrectedText() {
+        UUID old=upload();ready(old);
+        byte[] original=jdbc.queryForObject("SELECT payload FROM KnowledgeDocument WHERE document_id=?",byte[].class,old.toString());
+        List<String> oldFiles=files(old);
+        UUID chunk=UUID.fromString(service.chunks(old).getFirst().id());
+        UUID revision=new TransactionTemplate(transactions).execute(s->
+            service.updateChunk(old,chunk,"Giờ khám được sửa thành 8 giờ.",actor).id());
+        assertArrayEquals(original,jdbc.queryForObject("SELECT payload FROM KnowledgeDocument WHERE document_id=?",byte[].class,revision.toString()));
+        assertTrue(service.extractedText(revision).contains("Giờ khám được sửa thành 8 giờ."));
+        assertEquals(2,service.resolve(store,oldFiles).size());
+        assertEquals("Giờ khám được sửa thành 8 giờ.",service.chunks(revision).getFirst().content());
+        ready(revision);
+        assertThrows(ResourceNotFoundException.class,()->service.get(old));
+        assertEquals("Giờ khám được sửa thành 8 giờ.",service.resolve(store,files(revision)).getFirst().text());
     }
 
     @Test void newerTopicWinsWithoutDeletingUnrelatedOldTopic() {

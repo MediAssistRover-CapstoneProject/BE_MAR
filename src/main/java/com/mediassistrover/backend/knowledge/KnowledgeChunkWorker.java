@@ -86,7 +86,10 @@ public class KnowledgeChunkWorker {
                             VALUES(?,?,?,?,?,?,'QUEUED')
                             """, UUID.randomUUID().toString(),id,i,chunk.text(),chunk.sha256(),chunk.topicKey());
                     }
-                    jdbc.update("UPDATE KnowledgeDocument SET processing_stage='INDEXING',status='PROCESSING' WHERE document_id=?",id);
+                    jdbc.update("""
+                        UPDATE KnowledgeDocument SET extracted_text=?,processing_stage='INDEXING',status='PROCESSING'
+                        WHERE document_id=?
+                        """,String.join("\n\n",chunks.stream().map(KnowledgePreprocessor.Chunk::text).toList()),id);
                 });
                 release(id,token,null,false);
                 return;
@@ -168,10 +171,9 @@ public class KnowledgeChunkWorker {
                 java.sql.Timestamp.class,id).toInstant();
             if (old!=null) {
                 if (active.isEmpty()) { terminal(id,token,"CANCELLED","KNOWLEDGE_REPLACEMENT_CANCELLED"); return; }
-                jdbc.update("UPDATE KnowledgeDocument SET active=FALSE,status='CANCELLED',lease_token=NULL,lease_until=NULL,updated_at=UTC_TIMESTAMP(6) WHERE document_id=?",old);
                 jdbc.update("DELETE FROM KnowledgeTopicOwner WHERE document_id=?",old);
             }
-            var topics=jdbc.query("SELECT chunk_id,topic_key,ordinal_no FROM KnowledgeDocumentChunk WHERE document_id=? AND topic_key IS NOT NULL ORDER BY topic_key,ordinal_no",
+            var topics=jdbc.query("SELECT chunk_id,topic_key,ordinal_no FROM KnowledgeDocumentChunk WHERE document_id=? AND active=TRUE AND topic_key IS NOT NULL ORDER BY topic_key,ordinal_no",
                 (rs,n)->new Topic(rs.getString(1),rs.getString(2),rs.getInt(3)),id);
             for (Topic topic:topics) {
                 jdbc.update("""
@@ -200,6 +202,22 @@ public class KnowledgeChunkWorker {
                 UPDATE KnowledgeDocument SET status='COMPLETED',processing_stage='READY',error_code=NULL,
                   lease_token=NULL,lease_until=NULL,updated_at=UTC_TIMESTAMP(6) WHERE document_id=?
                 """,id);
+            if (old!=null) {
+                jdbc.update("""
+                    INSERT IGNORE INTO KnowledgeRemoteCleanup(vector_store_id,openai_file_id)
+                    SELECT d.vector_store_id,c.openai_file_id FROM KnowledgeDocument d
+                    JOIN KnowledgeDocumentChunk c ON c.document_id=d.document_id
+                    WHERE d.document_id=? AND c.openai_file_id IS NOT NULL
+                    """,old);
+                jdbc.update("""
+                    INSERT IGNORE INTO KnowledgeRemoteCleanup(vector_store_id,openai_file_id)
+                    SELECT vector_store_id,openai_file_id FROM KnowledgeDocument
+                    WHERE document_id=? AND openai_file_id IS NOT NULL
+                    """,old);
+                jdbc.update("UPDATE KnowledgeDocument SET replaces_document_id=NULL WHERE replaces_document_id=?",old);
+                jdbc.update("DELETE FROM KnowledgeDocumentChunk WHERE document_id=?",old);
+                jdbc.update("DELETE FROM KnowledgeDocument WHERE document_id=?",old);
+            }
         });
     }
     private void terminal(String id,String token,String status,String error) {

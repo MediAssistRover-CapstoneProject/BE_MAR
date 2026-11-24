@@ -33,12 +33,14 @@ public class KnowledgeHardDeleteTest {
                 filename VARCHAR(255) NOT NULL, status VARCHAR(40) NOT NULL,
                 pipeline_version INT NOT NULL, active BOOLEAN NOT NULL,
                 lease_until TIMESTAMP NULL, openai_file_id VARCHAR(100) NULL,
+                extracted_text CLOB NULL,
                 replaces_document_id VARCHAR(36) NULL,
                 FOREIGN KEY (replaces_document_id) REFERENCES KnowledgeDocument(document_id))
             """);
         jdbc.execute("""
             CREATE TABLE KnowledgeDocumentChunk (
                 chunk_id VARCHAR(36) PRIMARY KEY, document_id VARCHAR(36) NOT NULL,
+                ordinal_no INT NOT NULL DEFAULT 0,
                 openai_file_id VARCHAR(100), status VARCHAR(40) NOT NULL,
                 active BOOLEAN NOT NULL, content VARCHAR(1000) NOT NULL,
                 FOREIGN KEY (document_id) REFERENCES KnowledgeDocument(document_id))

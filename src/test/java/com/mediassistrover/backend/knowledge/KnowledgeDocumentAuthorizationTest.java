@@ -41,10 +41,13 @@ class KnowledgeDocumentAuthorizationTest {
             assertThrows(AccessDeniedException.class, () -> controller.get(UUID.randomUUID()));
             assertThrows(AccessDeniedException.class, () -> controller.list(0, 20));
             assertThrows(AccessDeniedException.class, () -> controller.chunks(UUID.randomUUID()));
+            assertThrows(AccessDeniedException.class, () -> controller.extractedText(UUID.randomUUID()));
             assertThrows(AccessDeniedException.class, () -> controller.delete(UUID.randomUUID()));
             assertThrows(AccessDeniedException.class, () -> controller.deleteChunk(UUID.randomUUID(),UUID.randomUUID()));
             assertThrows(AccessDeniedException.class, () -> controller.retry(UUID.randomUUID()));
             assertThrows(AccessDeniedException.class, () -> controller.replace(UUID.randomUUID(),file,actor));
+            assertThrows(AccessDeniedException.class, () -> controller.update(UUID.randomUUID(),file,actor));
+            assertThrows(AccessDeniedException.class, () -> controller.updateChunk(UUID.randomUUID(),UUID.randomUUID(),new KnowledgeDocumentController.ChunkUpdate("new"),actor));
         }
         as("ADMIN");
         controller.upload(file, actor);

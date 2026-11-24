@@ -97,6 +97,75 @@ public class KnowledgeDocumentService {
         return create(upload,actor,id);
     }
 
+    /** Publish an edited extracted/OCR text revision while retaining the uploaded binary. */
+    @Transactional
+    public Document updateChunk(UUID documentId, UUID chunkId, String content, UUID actor) {
+        if (content==null || content.isBlank() || content.length()>20_000 || content.indexOf('\0')>=0)
+            throw new BusinessRuleException("KNOWLEDGE_CHUNK_CONTENT_INVALID");
+        String old=documentId.toString();
+        var source=jdbc.query("""
+            SELECT filename,content_type,payload,pipeline_version,status,active
+            FROM KnowledgeDocument WHERE document_id=? FOR UPDATE
+            """,(rs,n)->new Source(rs.getString(1),rs.getString(2),rs.getBytes(3),rs.getInt(4),
+                rs.getString(5),rs.getBoolean(6)),old);
+        if (source.isEmpty()) throw new ResourceNotFoundException("Knowledge document not found");
+        Source original=source.getFirst();
+        if (!original.active() || !original.status().equals("COMPLETED") || original.pipelineVersion()!=3
+                || original.bytes()==null)
+            throw new ConflictException("KNOWLEDGE_CHUNK_UPDATE_REQUIRES_READY_V3_DOCUMENT");
+        Long pending=jdbc.queryForObject("""
+            SELECT COUNT(*) FROM KnowledgeDocument WHERE replaces_document_id=? AND active=TRUE
+              AND status IN ('QUEUED','ATTACHING','PROCESSING')
+            """,Long.class,old);
+        if (pending!=null && pending>0) throw new ConflictException("KNOWLEDGE_REPLACEMENT_PENDING");
+        var chunks=jdbc.query("""
+            SELECT chunk_id,ordinal_no,content,topic_key,active,status FROM KnowledgeDocumentChunk
+            WHERE document_id=? ORDER BY ordinal_no FOR UPDATE
+            """,(rs,n)->new EditableChunk(rs.getString(1),rs.getInt(2),rs.getString(3),
+                rs.getString(4),rs.getBoolean(5),rs.getString(6)),old);
+        if (chunks.isEmpty()) throw new ConflictException("KNOWLEDGE_DOCUMENT_HAS_NO_CHUNKS");
+        EditableChunk target=chunks.stream().filter(c->c.id().equals(chunkId.toString())).findFirst()
+            .orElseThrow(()->new ResourceNotFoundException("Knowledge chunk not found"));
+        if (!target.active() || !target.status().equals("COMPLETED"))
+            throw new ConflictException("KNOWLEDGE_CHUNK_NOT_PUBLISHED");
+        if (target.content().equals(content)) throw new BusinessRuleException("KNOWLEDGE_CHUNK_UNCHANGED");
+        // The extracted text is the editable source. The original PDF/DOC remains an immutable reference.
+        var edited=chunks.stream().map(c->c.id().equals(target.id()) ? content : c.content()).toList();
+        String extracted=String.join("\n\n",edited);
+        if (extracted.length()>3_000_000) throw new BusinessRuleException("KNOWLEDGE_TEXT_LIMIT");
+        Upload upload=new Upload(original.filename(),original.contentType(),original.bytes(),sha256(original.bytes()));
+        Document revision=create(upload,actor,documentId);
+        String next=revision.id().toString();
+        jdbc.update("""
+            UPDATE KnowledgeDocument SET extracted_text=?,ocr_edited=TRUE,processing_stage='INDEXING',status='PROCESSING'
+            WHERE document_id=?
+            """,extracted,next);
+        for (EditableChunk chunk:chunks) {
+            String text=chunk.id().equals(target.id()) ? content : chunk.content();
+            jdbc.update("""
+                INSERT INTO KnowledgeDocumentChunk(chunk_id,document_id,ordinal_no,content,sha256,topic_key,status,active)
+                VALUES(?,?,?,?,?,?,?,?)
+                """,UUID.randomUUID().toString(),next,chunk.ordinal(),text,sha256(text.getBytes(StandardCharsets.UTF_8)),
+                chunk.topicKey(),chunk.active()?"QUEUED":"COMPLETED",chunk.active());
+        }
+        return get(revision.id());
+    }
+
+    private record Source(String filename,String contentType,byte[] bytes,int pipelineVersion,String status,boolean active) { }
+    private record EditableChunk(String id,int ordinal,String content,String topicKey,boolean active,String status) { }
+
+    private static String sha256(byte[] bytes) {
+        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); }
+        catch (NoSuchAlgorithmException error) { throw new IllegalStateException(error); }
+    }
+
+    public String extractedText(UUID id) {
+        get(id);
+        String text=jdbc.queryForObject("SELECT extracted_text FROM KnowledgeDocument WHERE document_id=?",String.class,id.toString());
+        if (text==null) throw new ConflictException("KNOWLEDGE_EXTRACTION_NOT_READY");
+        return text;
+    }
+
     @Transactional
     public void delete(UUID id) {
         String key=id.toString();
@@ -137,6 +206,12 @@ public class KnowledgeDocumentService {
             """,chunk);
         jdbc.update("DELETE FROM KnowledgeTopicOwner WHERE chunk_id=?",chunk);
         jdbc.update("DELETE FROM KnowledgeDocumentChunk WHERE chunk_id=?",chunk);
+        if (target.pipelineVersion()==3) {
+            var remaining=jdbc.queryForList("SELECT content FROM KnowledgeDocumentChunk WHERE document_id=? ORDER BY ordinal_no",
+                String.class,document);
+            jdbc.update("UPDATE KnowledgeDocument SET extracted_text=? WHERE document_id=?",
+                remaining.isEmpty()?null:String.join("\n\n",remaining),document);
+        }
     }
 
     private record DeleteTarget(String id,String status,int pipelineVersion,boolean leased) { }
@@ -181,13 +256,17 @@ public class KnowledgeDocumentService {
     public Document retry(UUID id) {
         var found=jdbc.queryForList("SELECT document_id FROM KnowledgeDocument WHERE document_id=? AND pipeline_version IN (2,3) AND active=TRUE AND status='FAILED' AND payload IS NOT NULL AND (lease_until IS NULL OR lease_until<UTC_TIMESTAMP(6)) FOR UPDATE",String.class,id.toString());
         if (found.isEmpty()) throw new BusinessRuleException("KNOWLEDGE_RETRY_REQUIRES_FAILED_DOCUMENT");
+        Boolean edited=jdbc.queryForObject("SELECT ocr_edited FROM KnowledgeDocument WHERE document_id=?",Boolean.class,id.toString());
         jdbc.update("""
             INSERT IGNORE INTO KnowledgeRemoteCleanup(vector_store_id,openai_file_id)
             SELECT d.vector_store_id,c.openai_file_id FROM KnowledgeDocument d JOIN KnowledgeDocumentChunk c ON c.document_id=d.document_id
             WHERE d.document_id=? AND c.openai_file_id IS NOT NULL
             """,id.toString());
-        jdbc.update("DELETE FROM KnowledgeDocumentChunk WHERE document_id=?",id.toString());
-        jdbc.update("UPDATE KnowledgeDocument SET status='QUEUED',processing_stage=NULL,error_code=NULL,attempts=0,next_attempt_at=UTC_TIMESTAMP(6),updated_at=UTC_TIMESTAMP(6) WHERE document_id=?",id.toString());
+        if (Boolean.TRUE.equals(edited))
+            jdbc.update("UPDATE KnowledgeDocumentChunk SET status='QUEUED',openai_file_id=NULL,error_code=NULL WHERE document_id=? AND active=TRUE",id.toString());
+        else jdbc.update("DELETE FROM KnowledgeDocumentChunk WHERE document_id=?",id.toString());
+        jdbc.update("UPDATE KnowledgeDocument SET status='QUEUED',processing_stage=?,error_code=NULL,attempts=0,next_attempt_at=UTC_TIMESTAMP(6),updated_at=UTC_TIMESTAMP(6) WHERE document_id=?",
+            Boolean.TRUE.equals(edited)?"INDEXING":null,id.toString());
         return get(id);
     }
 
