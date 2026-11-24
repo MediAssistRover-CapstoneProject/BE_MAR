@@ -16,7 +16,7 @@ import java.util.UUID;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 
-class KnowledgeHardDeleteTest {
+public class KnowledgeHardDeleteTest {
     private JdbcTemplate jdbc;
     private TransactionTemplate tx;
     private KnowledgeDocumentService service;
@@ -26,6 +26,7 @@ class KnowledgeHardDeleteTest {
             ";MODE=MySQL;DATABASE_TO_UPPER=FALSE;DB_CLOSE_DELAY=-1","sa","");
         jdbc=new JdbcTemplate(source);
         tx=new TransactionTemplate(new DataSourceTransactionManager(source));
+        jdbc.execute("CREATE ALIAS UTC_TIMESTAMP FOR \"com.mediassistrover.backend.knowledge.KnowledgeHardDeleteTest.utcTimestamp\"");
         jdbc.execute("""
             CREATE TABLE KnowledgeDocument (
                 document_id VARCHAR(36) PRIMARY KEY, vector_store_id VARCHAR(100) NOT NULL,
@@ -49,6 +50,10 @@ class KnowledgeHardDeleteTest {
                 PRIMARY KEY(vector_store_id,openai_file_id))
             """);
         service=new KnowledgeDocumentService(jdbc,mock(OpenAiKnowledgeClient.class),"vs_test");
+    }
+
+    public static Timestamp utcTimestamp(int precision) {
+        return Timestamp.from(Instant.now());
     }
 
     private UUID document(String state,UUID replaces) {
