@@ -70,6 +70,8 @@ All `/api/v1/knowledge/documents` endpoints require ADMIN:
 | `GET /api/v1/knowledge/documents/{id}` | Status and sanitized error |
 | `GET /api/v1/knowledge/documents/{id}/chunks` | Ordered extracted content and chunk states |
 | `GET /api/v1/knowledge/documents/{id}/extracted-text` | Read the editable extracted/OCR text (plain text) |
+| `GET /api/v1/knowledge/documents/search?q=...&page=0&size=20` | Search extracted/OCR text across ready documents; returns document metadata and a 240-character excerpt |
+| `GET /api/v1/knowledge/chunks/search?q=...&documentId=...&page=0&size=20` | Search ready documents' chunks; `documentId` is optional, and each result includes content and `active` |
 | `POST /api/v1/knowledge/documents/{id}/replace` | Multipart replacement of an active COMPLETED document |
 | `PUT /api/v1/knowledge/documents/{id}` | Edit all extracted/OCR text with JSON `{"content":"..."}`; regenerate all chunks and return a new document ID |
 | `PUT /api/v1/knowledge/documents/{id}/chunks/{chunkId}` | Edit one ready v3 chunk with JSON `{"content":"..."}`; returns new document ID |
@@ -107,6 +109,14 @@ dedicated `X-Knowledge-Token` header (at least 32 characters), and accepts
 `{"vectorStoreId":"vs_...","fileIds":["file-..."]}` (maximum 20). It never
 accepts a caller's own replacement text. It returns only active, complete files
 in the configured store. Do not expose the token to FE or Pi.
+
+The two ADMIN search APIs perform case-insensitive literal text matching in BE,
+not semantic/vector search. `q` is required and must be 2–200 characters;
+`page` starts at 0 and `size` is 1–50. Results include only active, COMPLETED
+documents in the configured store. Chunk search includes both published and
+superseded chunks of those documents; use `active` to tell them apart. While a
+replacement is indexing, the old ready revision remains searchable. Once it
+publishes, the old revision is removed and only the new one appears.
 
 Deletion removes BE document/chunk rows and the original payload in one DB
 transaction after recording known remote file IDs in a durable cleanup outbox.
