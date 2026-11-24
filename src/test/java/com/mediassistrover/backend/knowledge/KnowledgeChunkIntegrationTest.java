@@ -130,6 +130,23 @@ class KnowledgeChunkIntegrationTest {
         assertEquals("Giờ khám được sửa thành 8 giờ.",service.resolve(store,files(revision)).getFirst().text());
     }
 
+    @Test void editingWholeOcrTextRegeneratesChunksWithoutReopeningThePdf() {
+        UUID old=upload();ready(old);
+        byte[] original=jdbc.queryForObject("SELECT payload FROM KnowledgeDocument WHERE document_id=?",byte[].class,old.toString());
+        String edited="Giờ khám: 08:00\n\nQuầy hướng dẫn: tầng 1";
+        UUID revision=new TransactionTemplate(transactions).execute(s->service.updateText(old,edited,actor).id());
+        assertEquals("RECHUNKING",jdbc.queryForObject("SELECT processing_stage FROM KnowledgeDocument WHERE document_id=?",
+            String.class,revision.toString()));
+        assertEquals(edited,service.extractedText(revision));
+        assertArrayEquals(original,jdbc.queryForObject("SELECT payload FROM KnowledgeDocument WHERE document_id=?",
+            byte[].class,revision.toString()));
+        step(revision);
+        verify(processor).extract(eq("edited.txt"),argThat(bytes->Arrays.equals(bytes,edited.getBytes(StandardCharsets.UTF_8))));
+        ready(revision);
+        assertThrows(ResourceNotFoundException.class,()->service.get(old));
+        assertEquals(2,service.chunks(revision).size());
+    }
+
     @Test void newerTopicWinsWithoutDeletingUnrelatedOldTopic() {
         String hours="1".repeat(64), wheelchair="2".repeat(64);
         when(processor.extract(anyString(),any())).thenAnswer(a->{

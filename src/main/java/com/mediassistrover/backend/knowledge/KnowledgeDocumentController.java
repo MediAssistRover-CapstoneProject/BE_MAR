@@ -78,11 +78,15 @@ public class KnowledgeDocumentController {
     public KnowledgeDocumentService.Document replace(@PathVariable UUID id, @RequestPart("file") MultipartFile file,
             @AuthenticationPrincipal AccountPrincipal actor) { return service.replace(id,file,actor.accountId()); }
 
-    @PutMapping(value="/{id}",consumes=MediaType.MULTIPART_FORM_DATA_VALUE)
+    public record DocumentUpdate(String content) { }
+
+    @PutMapping(value="/{id}",consumes=MediaType.APPLICATION_JSON_VALUE)
     @ResponseStatus(HttpStatus.ACCEPTED)
-    @Operation(summary="Update a document file and reindex all of its chunks as a new revision")
-    public KnowledgeDocumentService.Document update(@PathVariable UUID id, @RequestPart("file") MultipartFile file,
-            @AuthenticationPrincipal AccountPrincipal actor) { return service.replace(id,file,actor.accountId()); }
+    @Operation(summary="Edit the extracted/OCR document text and regenerate all chunks as a new revision")
+    public KnowledgeDocumentService.Document update(@PathVariable UUID id,@RequestBody DocumentUpdate body,
+            @AuthenticationPrincipal AccountPrincipal actor) {
+        return service.updateText(id,body==null?null:body.content(),actor.accountId());
+    }
 
     public record ChunkUpdate(String content) { }
 

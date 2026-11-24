@@ -73,10 +73,22 @@ public class KnowledgeChunkWorker {
             """, (rs,n)->new Work(rs.getString(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getInt(5),rs.getInt(6)),id,token);
         if (work==null) return;
         try {
-            if (work.stage()==null || work.stage().equals("EXTRACTING")) {
-                jdbc.update("UPDATE KnowledgeDocument SET processing_stage='EXTRACTING' WHERE document_id=? AND lease_token=?",id,token);
-                byte[] original=jdbc.queryForObject("SELECT payload FROM KnowledgeDocument WHERE document_id=?",byte[].class,id);
-                var chunks=processor.extract(work.name(), original);
+            if (work.stage()==null || work.stage().equals("EXTRACTING") || work.stage().equals("RECHUNKING")) {
+                boolean editedText=work.stage()!=null && work.stage().equals("RECHUNKING");
+                if (!editedText)
+                    jdbc.update("UPDATE KnowledgeDocument SET processing_stage='EXTRACTING' WHERE document_id=? AND lease_token=?",id,token);
+                byte[] source;
+                String filename;
+                if (editedText) {
+                    String text=jdbc.queryForObject("SELECT extracted_text FROM KnowledgeDocument WHERE document_id=?",String.class,id);
+                    if (text==null) throw new KnowledgePreprocessor.Failure("KNOWLEDGE_ORIGINAL_MISSING");
+                    source=text.getBytes(StandardCharsets.UTF_8);
+                    filename="edited.txt";
+                } else {
+                    source=jdbc.queryForObject("SELECT payload FROM KnowledgeDocument WHERE document_id=?",byte[].class,id);
+                    filename=work.name();
+                }
+                var chunks=processor.extract(filename,source);
                 tx.executeWithoutResult(s -> {
                     if (!lock(id,token)) return;
                     for (int i=0;i<chunks.size();i++) {
@@ -86,10 +98,13 @@ public class KnowledgeChunkWorker {
                             VALUES(?,?,?,?,?,?,'QUEUED')
                             """, UUID.randomUUID().toString(),id,i,chunk.text(),chunk.sha256(),chunk.topicKey());
                     }
-                    jdbc.update("""
-                        UPDATE KnowledgeDocument SET extracted_text=?,processing_stage='INDEXING',status='PROCESSING'
-                        WHERE document_id=?
-                        """,String.join("\n\n",chunks.stream().map(KnowledgePreprocessor.Chunk::text).toList()),id);
+                    if (editedText)
+                        jdbc.update("UPDATE KnowledgeDocument SET processing_stage='INDEXING',status='PROCESSING' WHERE document_id=?",id);
+                    else
+                        jdbc.update("""
+                            UPDATE KnowledgeDocument SET extracted_text=?,processing_stage='INDEXING',status='PROCESSING'
+                            WHERE document_id=?
+                            """,String.join("\n\n",chunks.stream().map(KnowledgePreprocessor.Chunk::text).toList()),id);
                 });
                 release(id,token,null,false);
                 return;

@@ -71,7 +71,7 @@ All `/api/v1/knowledge/documents` endpoints require ADMIN:
 | `GET /api/v1/knowledge/documents/{id}/chunks` | Ordered extracted content and chunk states |
 | `GET /api/v1/knowledge/documents/{id}/extracted-text` | Read the editable extracted/OCR text (plain text) |
 | `POST /api/v1/knowledge/documents/{id}/replace` | Multipart replacement of an active COMPLETED document |
-| `PUT /api/v1/knowledge/documents/{id}` | Update the file and reindex all chunks as a new revision (multipart `file`; returns new document ID) |
+| `PUT /api/v1/knowledge/documents/{id}` | Edit all extracted/OCR text with JSON `{"content":"..."}`; regenerate all chunks and return a new document ID |
 | `PUT /api/v1/knowledge/documents/{id}/chunks/{chunkId}` | Edit one ready v3 chunk with JSON `{"content":"..."}`; returns new document ID |
 | `POST /api/v1/knowledge/documents/{id}/retry` | Reprocess a FAILED v2/v3 document after fixing its cause |
 | `DELETE /api/v1/knowledge/documents/{id}` | Hard-delete the document, its chunks, and pending replacements from BE; queue remote detach |
@@ -86,7 +86,10 @@ transaction. Failed replacements leave the old document usable. Retry does not
 accept CANCELLED or RECONCILIATION_REQUIRED documents.
 Once a replacement is ready, the previous document and its chunks are removed
 from BE in that transaction. Its remote files are queued for detach. Clients
-should poll the new document ID returned by the update endpoint.
+should poll the new document ID returned by the update endpoint. The whole-text
+PUT does not accept a file upload: it feeds the edited extraction through the
+same splitting logic, then indexes the resulting chunks. The separate
+`POST /{id}/replace` endpoint is for uploading a different source file.
 Chunk editing snapshots all current chunks into a new revision, changes the
 selected chunk, and stores the resulting extracted/OCR text. The uploaded PDF,
 DOC or other binary remains available as an immutable reference, so the OCR

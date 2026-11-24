@@ -84,4 +84,30 @@ public class KnowledgeChunkUpdateTest {
         assertEquals("corrected OCR",service.chunks(revision).getFirst().content());
         assertEquals("corrected OCR",service.extractedText(revision));
     }
+
+    @Test void wholeTextEditQueuesRechunkingAndRetryPreservesTheNewText() {
+        UUID old=UUID.randomUUID(),actor=UUID.randomUUID();
+        byte[] original="%PDF- source".getBytes(StandardCharsets.UTF_8);
+        jdbc.update("""
+            INSERT INTO KnowledgeDocument(document_id,vector_store_id,filename,content_type,size_bytes,sha256,
+              status,payload,pipeline_version,active,next_attempt_at,created_at,updated_at,extracted_text)
+            VALUES(?,'vs_test','guide.pdf','application/pdf',?,?,'COMPLETED',?,3,TRUE,
+              UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),'old extracted text')
+            """,old.toString(),original.length,"a".repeat(64),original);
+
+        UUID revision=tx.execute(s->service.updateText(old,"new extracted text",actor).id());
+        assertEquals("RECHUNKING",jdbc.queryForObject("SELECT processing_stage FROM KnowledgeDocument WHERE document_id=?",
+            String.class,revision.toString()));
+        assertEquals("new extracted text",service.extractedText(revision));
+        assertArrayEquals(original,jdbc.queryForObject("SELECT payload FROM KnowledgeDocument WHERE document_id=?",
+            byte[].class,revision.toString()));
+        assertTrue(service.chunks(revision).isEmpty());
+        assertThrows(ConflictException.class,()->tx.execute(s->service.updateText(old,"another text",actor)));
+
+        jdbc.update("UPDATE KnowledgeDocument SET status='FAILED' WHERE document_id=?",revision.toString());
+        tx.execute(s->service.retry(revision));
+        assertEquals("RECHUNKING",jdbc.queryForObject("SELECT processing_stage FROM KnowledgeDocument WHERE document_id=?",
+            String.class,revision.toString()));
+        assertEquals("new extracted text",service.extractedText(revision));
+    }
 }
