@@ -103,6 +103,64 @@
       ],
       "additionalProperties": false
     },
+    "navigation_target": {
+      "type": "object",
+      "properties": {
+        "endpoint_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "endpoint_code": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "endpoint_name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "x_m": {
+          "type": "number"
+        },
+        "y_m": {
+          "type": "number"
+        },
+        "yaw_rad": {
+          "type": "number"
+        },
+        "room_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "fallback_radius_m": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 2.0
+        }
+      },
+      "required": [
+        "endpoint_id",
+        "endpoint_code",
+        "endpoint_name",
+        "x_m",
+        "y_m",
+        "yaw_rad"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": ["room_id"]
+          },
+          "then": {
+            "required": ["fallback_radius_m"]
+          }
+        },
+        {
+          "if": {
+            "required": ["fallback_radius_m"]
+          },
+          "then": {
+            "required": ["room_id"]
+          }
+        }
+      ]
+    },
     "mappingSession": {
       "type": "object",
       "properties": {

@@ -2,6 +2,7 @@ package com.mediassistrover.backend.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.mediassistrover.backend.ai.AiSensingService;
 import com.mediassistrover.backend.dto.workflow.request.WorkflowRequests.*;
 import com.mediassistrover.backend.entity.*;
@@ -65,6 +66,9 @@ public class PatrolWorkflowService {
     private final StaffOperationalScopePolicy staffScope;
     private final MqttWire wire;
     private final ObjectMapper json;
+    private final com.mediassistrover.backend.validation.WorkflowInputValidator inputValidator;
+    private final WorkflowValidationService definitionValidation;
+    private final com.mediassistrover.backend.mqtt.MqttRolloutService rollout;
 
     public record Checkpoint(@NotNull UUID endpointId, UUID zoneId,
                              @NotBlank @Pattern(regexp = "CROWD_DENSITY|RESTRICTED_ZONE|PATROL_FALL") String sensingType,
@@ -92,6 +96,124 @@ public class PatrolWorkflowService {
     }
 
     public record Result(UUID workflowId, UUID mapId, int checkpointCount) { }
+
+    public record PrepareTemplate(@Min(3) @Max(11) int checkpointCount) { }
+    public record TemplateResult(UUID workflowId, int checkpointCount, boolean available) { }
+
+    @Transactional(readOnly = true)
+    public List<TemplateResult> templates(AccountPrincipal actor) {
+        requireAdmin(actor);
+        List<TemplateResult> result = new ArrayList<>();
+        for (int count = 3; count <= 11; count++) {
+            var existing = definitions.findFirstByWorkflowCodeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(
+                    PatrolTemplateDefinition.code(count), WorkflowStatus.PUBLISHED).orElse(null);
+            if (existing != null && (!isTemplate(existing) || existing.getDefinitionHash() == null
+                    || existing.getInputUiJson().path("patrol_template").path("version").asInt() != PatrolTemplateDefinition.VERSION
+                    || existing.getInputUiJson().path("patrol_template").path("checkpointCount").asInt() != count)) existing = null;
+            result.add(new TemplateResult(existing == null ? null : existing.getWorkflowId(), count, existing != null));
+        }
+        return result;
+    }
+
+    @Transactional
+    public TemplateResult prepareTemplate(PrepareTemplate request, AccountPrincipal actor, RequestMetadata metadata) {
+        requireAdmin(actor);
+        PatrolTemplateDefinition.requireCount(request.checkpointCount());
+        // The runtime policy row serializes concurrent preparation before checking the unique code/version.
+        rollout.lockForRuntimeCreation();
+        String code = PatrolTemplateDefinition.code(request.checkpointCount());
+        var existing = definitions.findFirstByWorkflowCodeIgnoreCaseAndStatusAndAcceptsNewJobsTrueOrderByVersionNoDesc(
+                code, WorkflowStatus.PUBLISHED).orElse(null);
+        if (existing != null) {
+            requireTemplateDefinition(existing);
+            return new TemplateResult(existing.getWorkflowId(), request.checkpointCount(), true);
+        }
+        if (definitions.existsByWorkflowCodeIgnoreCaseAndVersionNo(code, 1))
+            throw new BusinessRuleException("This patrol template definition is unavailable; restore its published version");
+        var graph = PatrolTemplateDefinition.graph(json, request.checkpointCount(), code);
+        UUID id = workflows.createGraph(graph, actor.accountId(), metadata).workflow().workflowId();
+        workflows.validate(id, actor.accountId(), metadata);
+        workflows.publish(id, actor.accountId(), metadata);
+        return new TemplateResult(id, request.checkpointCount(), true);
+    }
+
+    public static boolean isTemplate(Workflow workflow) {
+        return isPatrol(workflow) && workflow.getInputUiJson() != null && workflow.getInputUiJson().has("patrol_template");
+    }
+
+    /** Only this field is added by PublishedWorkflowJobService after validating the submitted inputs. */
+    public JsonNode templateJobInputs(Job job) {
+        if (job.getInputJson() == null || !job.getInputJson().isObject())
+            throw new BusinessRuleException("Patrol Job inputs must be a JSON object");
+        ObjectNode inputs = job.getInputJson().deepCopy();
+        inputs.remove("requested_by_account_id");
+        return inputs;
+    }
+
+    /** Freeze catalog authority alongside, without adding authority fields to the caller's input contract. */
+    public void snapshotTemplateRoute(Job job) {
+        if (!isTemplate(job.getWorkflow())) return;
+        ObjectNode context = job.getContextJson() == null ? json.createObjectNode() : job.getContextJson().deepCopy();
+        context.set("patrol_checkpoint_snapshot", templateRouteSnapshot(templateJobInputs(job)));
+        job.setContextJson(context);
+    }
+
+    /** Permanent queued-route validation. Connectivity/localization and competing work belong to readyMap. */
+    public void requireQueuedTemplate(Job job) {
+        if (!isTemplate(job.getWorkflow())) return;
+        JsonNode inputs = templateJobInputs(job);
+        validateSchedule(job.getWorkflow(), job.getRobot(), job.getPriority(), null, inputs);
+        if (job.getMap() == null || !job.getMap().getMapId().equals(requiredUuid(inputs, "map_id"))
+                || !Objects.equals(job.getWorkflowHash(), job.getWorkflow().getDefinitionHash()))
+            throw new BusinessRuleException("Patrol route differs from the Job's frozen map or definition hash");
+        JsonNode frozen = job.getContextJson() == null ? json.missingNode()
+                : job.getContextJson().path("patrol_checkpoint_snapshot");
+        if (!frozen.isObject() || !sameJson(routeAuthority(frozen), routeAuthority(templateRouteSnapshot(inputs))))
+            throw new BusinessRuleException("Patrol checkpoint map, room or ordered endpoint-group authority changed after queuing");
+    }
+
+    private ObjectNode templateRouteSnapshot(JsonNode inputs) {
+        UUID mapId = requiredUuid(inputs, "map_id"); FacilityMap map = requireMap(mapId);
+        var snapshot = json.createObjectNode().put("version", 1).put("map_id", mapId.toString())
+                .put("map_asset_hash", map.getAssetHash()).put("frame_id", map.getFrameId());
+        var targets = snapshot.putArray("checkpoints");
+        for (var checkpoint : templateCheckpoints(inputs)) {
+            requireTemplateCheckpoint(mapId, checkpoint);
+            var slot = targets.addObject();
+            if (checkpoint.endpointGroupId() == null) {
+                slot.put("target_mode", "ENDPOINT");
+                slot.set("endpoint", snapshotEndpoint(endpoints.findById(checkpoint.endpointId()).orElseThrow()));
+            } else {
+                var group = groups.findById(checkpoint.endpointGroupId()).orElseThrow();
+                slot.put("target_mode", "ENDPOINT_GROUP").put("endpoint_group_id", group.getEndpointGroupId().toString())
+                        .put("endpoint_group_name", group.getGroupName()).put("room_id", group.getRoom().getRoomId().toString())
+                        .put("room_name", group.getRoom().getRoomName()).put("fallback_radius_m", group.getFallbackRadiusM());
+                var ordered = slot.putArray("targets");
+                for (var member : members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(checkpoint.endpointGroupId()))
+                    if (member.isActive()) ordered.add(snapshotEndpoint(member.getEndpoint()).put("sequence_no", member.getSequenceNo()));
+            }
+        }
+        return snapshot;
+    }
+
+    private ObjectNode snapshotEndpoint(Endpoint endpoint) {
+        var snapshot = json.createObjectNode().put("endpoint_id", endpoint.getEndpointId().toString())
+                .put("endpoint_code", endpoint.getEndpointCode()).put("endpoint_name", endpoint.getEndpointName())
+                .put("x_m", endpoint.getXM()).put("y_m", endpoint.getYM()).put("yaw_rad", endpoint.getYawRad());
+        if (endpoint.getRoom() != null) snapshot.put("room_id", endpoint.getRoom().getRoomId().toString())
+                .put("room_name", endpoint.getRoom().getRoomName());
+        return snapshot;
+    }
+
+    private JsonNode routeAuthority(JsonNode snapshot) {
+        JsonNode result = snapshot.deepCopy();
+        if (result.isObject()) {
+            ((ObjectNode) result).remove(Set.of("endpoint_code", "endpoint_name", "room_name", "endpoint_group_name"));
+            ((ObjectNode) result).properties().forEach(field -> ((ObjectNode) result).set(field.getKey(), routeAuthority(field.getValue())));
+        } else if (result.isArray()) for (int index = 0; index < result.size(); index++)
+            ((com.fasterxml.jackson.databind.node.ArrayNode) result).set(index, routeAuthority(result.get(index)));
+        return result;
+    }
 
     @Transactional(readOnly = true)
     public GraphCreateRequest preview(Create request, AccountPrincipal actor) {
@@ -196,7 +318,7 @@ public class PatrolWorkflowService {
     }
 
     public static boolean isPatrol(Workflow workflow) {
-        return SERVICE.equals(workflow.getServiceType()) && workflow.getWorkflowCode() != null
+        return workflow != null && SERVICE.equals(workflow.getServiceType()) && workflow.getWorkflowCode() != null
                 && workflow.getWorkflowCode().startsWith(CODE_PREFIX);
     }
 
@@ -211,10 +333,25 @@ public class PatrolWorkflowService {
         if (priority < 0 || priority > 10 || (intervalSec != null && intervalSec < 60)) {
             throw new BusinessRuleException("Patrol priority must be 0..10 and interval must be at least 60 seconds");
         }
-        if (!inputs.isObject() || !inputs.isEmpty()) {
+        if (isTemplate(workflow)) {
+            requireTemplateDefinition(workflow);
+            inputValidator.validate(workflow.getInputSchemaJson(), inputs);
+            UUID mapId = requiredUuid(inputs, "map_id");
+            requireMap(mapId);
+            for (var checkpoint : templateCheckpoints(inputs)) requireTemplateCheckpoint(mapId, checkpoint);
+            return;
+        }
+        if (inputs == null || !inputs.isObject() || !inputs.isEmpty()) {
             throw new BusinessRuleException("Patrol schedule inputTemplateJson must be {}; checkpoints belong to its workflow");
         }
         requireMap(mapId(workflow));
+    }
+
+    /** Future patrol occurrences bind their verified live session at admission, never at schedule creation. */
+    public void validateScheduledRoute(Workflow workflow, Robot robot, int priority, Integer intervalSec, JsonNode inputs) {
+        if (isTemplate(workflow) && inputs != null && inputs.has("navigation_session_id"))
+            throw new BusinessRuleException("Patrol schedule inputs must not pin a navigation_session_id; each run binds its current verified session");
+        validateSchedule(workflow, robot, priority, intervalSec, inputs);
     }
 
     /** Validate durable intent without requiring a connected, idle robot. */
@@ -223,9 +360,11 @@ public class PatrolWorkflowService {
         if (!isPatrol(workflow) || workflow.getSchemaVersion() != 3) {
             throw new BusinessRuleException("Patrol requires a schema 3 patrol definition");
         }
-        FacilityMap map = requireMap(mapId(workflow));
-        var actions = checkpointSteps(workflow, map.getMapId());
-        for (var action : actions) requireCheckpoint(map.getMapId(), action.checkpoint());
+        FacilityMap map = requireMap(isTemplate(workflow) ? requiredUuid(inputs, "map_id") : mapId(workflow));
+        if (!isTemplate(workflow)) {
+            var actions = checkpointSteps(workflow, map.getMapId());
+            for (var action : actions) requireCheckpoint(map.getMapId(), action.checkpoint());
+        }
         return map;
     }
 
@@ -236,10 +375,15 @@ public class PatrolWorkflowService {
 
     /** A queued candidate must exclude itself while rechecking every runtime guard. */
     public FacilityMap readyMap(Workflow workflow, Robot robot, int priority, UUID candidateJobId) {
+        return readyMap(workflow, robot, priority, candidateJobId, workflow.getDefaultInputsJson());
+    }
+
+    public FacilityMap readyMap(Workflow workflow, Robot robot, int priority, UUID candidateJobId, JsonNode inputs) {
         if (robot == null || robot.getStatus() != RobotStatus.IDLE || !mqtt.dispatches(StepType.MOVE)
                 || !mqtt.dispatches(StepType.EXECUTE_SENSING) || !mqtt.manages(robot.getRobotId())) return null;
         UUID robotId = robot.getRobotId();
-        UUID mapId = mapId(workflow);
+        boolean template = isTemplate(workflow);
+        UUID mapId = template ? requiredUuid(inputs, "map_id") : mapId(workflow);
         FacilityMap map = robot.getCurrentMap();
         if (map == null || !mapId.equals(map.getMapId()) || map.getStatus() != MapStatus.ACTIVE
                 || map.getAssetHash() == null || !map.getAssetHash().equalsIgnoreCase(robot.getMapAssetHash())) return null;
@@ -262,6 +406,19 @@ public class PatrolWorkflowService {
                 || link.getHeartbeatJson() == null || !"IDLE".equals(link.getHeartbeatJson().path("status").asText())
                 || !link.getHeartbeatJson().path("activeJobStepId").isNull()
                 || (link.getHelloJson().path("simulation").asBoolean() && !mqtt.isAllowSimulation())) return null;
+        if (template) {
+            validateSchedule(workflow, robot, priority, null, inputs);
+            if (!fallCapable(link)) return null;
+            for (var checkpoint : templateCheckpoints(inputs)) {
+                requireTemplateCheckpoint(mapId, checkpoint);
+                if (checkpoint.endpointGroupId() == null) {
+                    if (!templateEndpointReady(robot, link, mapId, checkpoint.endpointId())) return null;
+                } else for (var member : members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(checkpoint.endpointGroupId())) {
+                    if (member.isActive() && !templateEndpointReady(robot, link, mapId, member.getEndpoint().getEndpointId())) return null;
+                }
+            }
+            return map;
+        }
         var actions = checkpointSteps(workflow, mapId);
         for (var action : actions) {
             var sensing = action.sensing();
@@ -290,6 +447,75 @@ public class PatrolWorkflowService {
     }
 
     private record CheckpointSteps(Checkpoint checkpoint, Step move, Step sensing) { }
+
+    private boolean templateEndpointReady(Robot robot, RobotMqttSession link, UUID mapId, UUID endpointId) {
+        return navigation.ready(robot, link, json.createObjectNode().put("map_id", mapId.toString())
+                .put("endpoint_id", endpointId.toString())) != null;
+    }
+
+    private List<Checkpoint> templateCheckpoints(JsonNode inputs) {
+        List<Checkpoint> result = new ArrayList<>();
+        for (var slot : inputs.path("checkpoints")) result.add(new Checkpoint(
+                slot.hasNonNull("endpoint_id") ? requiredUuid(slot, "endpoint_id") : null,
+                null, FALL_CAPABILITY, slot.hasNonNull("endpoint_group_id") ? requiredUuid(slot, "endpoint_group_id") : null));
+        return result;
+    }
+
+    private void requireTemplateCheckpoint(UUID mapId, Checkpoint checkpoint) {
+        if (checkpoint.endpointGroupId() == null) {
+            requireCheckpoint(mapId, checkpoint);
+            var endpoint = endpoints.findById(checkpoint.endpointId()).orElseThrow();
+            if (endpoint.getRoom() != null && (!endpoint.getRoom().isActive() || endpoint.getRoom().getFloor() == null
+                    || !endpoint.getRoom().getFloor().isActive()
+                    || !endpoint.getRoom().getFloor().getFloorId().equals(endpoint.getMap().getFloor().getFloorId())))
+                throw new BusinessRuleException("Patrol endpoint room/floor is inactive or outside its map");
+            return;
+        }
+        var group = groups.findById(checkpoint.endpointGroupId())
+                .orElseThrow(() -> new BusinessRuleException("Patrol endpoint group not found"));
+        if (!group.isActive() || !group.isAllowFallback() || group.getSelectionPolicy() != SelectionPolicy.PRIORITY
+                || group.getMap() == null || !mapId.equals(group.getMap().getMapId()) || group.getRoom() == null
+                || !group.getRoom().isActive() || group.getRoom().getFloor() == null || !group.getRoom().getFloor().isActive()
+                || !group.getRoom().getFloor().getFloorId().equals(group.getMap().getFloor().getFloorId())
+                || group.getFallbackRadiusM() == null || group.getFallbackRadiusM().signum() <= 0)
+            throw new BusinessRuleException("Patrol fallback group requires an active same-map room and ordered fallback policy");
+        var pair = members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(checkpoint.endpointGroupId()).stream()
+                .filter(EndpointGroupMember::isActive).toList();
+        if (pair.size() != 2 || pair.getFirst().getSequenceNo() != 1 || pair.get(1).getSequenceNo() != 2)
+            throw new BusinessRuleException("Patrol fallback group requires two active members in priority order 1,2");
+        for (var member : pair) {
+            if (member.getMap() == null || !mapId.equals(member.getMap().getMapId()) || member.getEndpoint() == null
+                    || member.getEndpoint().getRoom() == null
+                    || !group.getRoom().getRoomId().equals(member.getEndpoint().getRoom().getRoomId()))
+                throw new BusinessRuleException("Patrol fallback members must belong to their group room/map");
+            requireTemplateCheckpoint(mapId, new Checkpoint(member.getEndpoint().getEndpointId(), null, FALL_CAPABILITY));
+        }
+    }
+
+    private void requireTemplateDefinition(Workflow workflow) {
+        var metadata = workflow.getInputUiJson() == null ? json.missingNode() : workflow.getInputUiJson().path("patrol_template");
+        if (!isTemplate(workflow) || metadata.size() != 2 || !metadata.path("version").isIntegralNumber()
+                || metadata.path("version").asInt() != PatrolTemplateDefinition.VERSION
+                || !metadata.path("checkpointCount").isIntegralNumber())
+            throw new BusinessRuleException("Patrol template metadata is invalid");
+        int count = metadata.path("checkpointCount").asInt();
+        PatrolTemplateDefinition.requireCount(count);
+        if (!PatrolTemplateDefinition.code(count).equals(workflow.getWorkflowCode()) || workflow.getSchemaVersion() != 3
+                || workflow.getGraphVersion() != 3 || workflow.getVersionNo() != 1 || workflow.getDefinitionHash() == null)
+            throw new BusinessRuleException("Patrol template identity differs from its immutable definition");
+        var expected = PatrolTemplateDefinition.graph(json, count, workflow.getWorkflowCode());
+        if (!sameJson(workflow.getInputSchemaJson(), expected.workflow().inputSchemaJson())
+                || !sameJson(workflow.getInputUiJson(), expected.workflow().inputUiJson())
+                || !sameJson(workflow.getDefaultInputsJson(), expected.workflow().defaultInputsJson())
+                || !sameJson(workflow.getOutputMappingJson(), expected.workflow().outputMappingJson())
+                || !sameJson(workflow.getRequiredCapabilitiesJson(), expected.workflow().requiredCapabilitiesJson()))
+            throw new BusinessRuleException("Patrol template inputs differ from the generated definition");
+        requireGeneratedGraph(workflow, expected, steps.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId()));
+        var compiled = definitionValidation.validateAndCompile(workflow);
+        if (!workflow.getDefinitionHash().equals(compiled.definitionHash())
+                || !sameJson(workflow.getCompiledDefinitionJson(), compiled.compiledDefinition()))
+            throw new BusinessRuleException("Patrol template hash differs from its published definition");
+    }
 
     private List<CheckpointSteps> checkpointSteps(Workflow workflow, UUID mapId) {
         var actions = steps.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId());
@@ -326,6 +552,19 @@ public class PatrolWorkflowService {
                 || definition.checkpoints().stream().noneMatch(checkpoint -> checkpoint.endpointGroupId() != null))
             throw new BusinessRuleException("Patrol group definition must retain its fixed checkpoint/map authority");
         var expected = graph(definition, workflow.getWorkflowCode());
+        requireGeneratedGraph(workflow, expected, actions);
+        List<CheckpointSteps> result = new ArrayList<>();
+        for (int index = 0; index < definition.checkpoints().size(); index++) {
+            var checkpoint = definition.checkpoints().get(index); int number = index + 1;
+            String move = checkpoint.endpointGroupId() == null ? "MOVE_" + number : "GROUP_" + number + "_MOVE";
+            Step movement = actions.stream().filter(step -> move.equals(step.getStepCode())).findFirst().orElseThrow();
+            Step sensing = actions.stream().filter(step -> ("SENSE_" + number).equals(step.getStepCode())).findFirst().orElseThrow();
+            result.add(new CheckpointSteps(checkpoint, movement, sensing));
+        }
+        return result;
+    }
+
+    private void requireGeneratedGraph(Workflow workflow, GraphCreateRequest expected, List<Step> actions) {
         var planned = expected.graph().steps();
         if (actions.size() != planned.size() || workflow.getMaxTotalVisits() != expected.workflow().maxTotalVisits()
                 || workflow.getMaxDurationSec() != expected.workflow().maxDurationSec()
@@ -353,15 +592,6 @@ public class PatrolWorkflowService {
                     && intended.defaultTransition() == actual.isDefaultTransition() && intended.terminalStatus() == actual.getTerminalStatus()
                     && sameJson(intended.conditionJson(), actual.getConditionJson()))))
             throw new BusinessRuleException("Patrol group transitions differ from the generated fallback guard");
-        List<CheckpointSteps> result = new ArrayList<>();
-        for (int index = 0; index < definition.checkpoints().size(); index++) {
-            var checkpoint = definition.checkpoints().get(index); int number = index + 1;
-            String move = checkpoint.endpointGroupId() == null ? "MOVE_" + number : "GROUP_" + number + "_MOVE";
-            Step movement = actions.stream().filter(step -> move.equals(step.getStepCode())).findFirst().orElseThrow();
-            Step sensing = actions.stream().filter(step -> ("SENSE_" + number).equals(step.getStepCode())).findFirst().orElseThrow();
-            result.add(new CheckpointSteps(checkpoint, movement, sensing));
-        }
-        return result;
     }
 
     private boolean sameJson(JsonNode left, JsonNode right) {

@@ -30,6 +30,7 @@ public class NavigationTargetService {
     private final Clock clock;
 
     public ArrayNode resolve(JobStep current,UUID groupId) {
+        requirePatrolTemplateGroup(current, groupId);
         Job job=requireServer(current);EndpointGroup group=group(job,groupId);
         List<Endpoint> candidates=new ArrayList<>();
         var orderedMembers=members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(groupId);
@@ -62,6 +63,7 @@ public class NavigationTargetService {
                 .max(Comparator.comparingLong(JobStep::getExecutionSequenceNo)).orElseThrow(()->new BusinessRuleException("SELECT_TARGET requires a selected RESOLVE_TARGETS visit"));
         if(resolved.getResultJson()==null || !resolved.getResultJson().path("data").path("targets").equals(targets)) fail("Targets differ from the BE RESOLVE_TARGETS snapshot");
         EndpointGroup group=group(job,UUID.fromString(resolved.getResolvedInputsJson().path("endpoint_group_id").asText()));
+        requirePatrolTemplateGroup(current, group.getEndpointGroupId());
         // A fresh RESOLVE visit starts a new checkpoint/round, including repeated patrols.
         List<JobNavigationSelection> previous=selections.history(job.getJobId(),group.getEndpointGroupId()).stream()
                 .filter(s->s.getResolveJobStep().getJobStepId().equals(resolved.getJobStepId())).toList();
@@ -113,9 +115,17 @@ public class NavigationTargetService {
         if(!job.isBeOrchestrated() || job.getSchemaVersion()!=3) return;
         String reference=current.getStep().getInputMappingJson().path("endpoint_id").path("$ref").asText();
         var match=java.util.regex.Pattern.compile("^/outputs/([^/]+)/data/endpoint_id$").matcher(reference);
-        UUID requestedGroup=requestedGroup(job,inputs);
+        UUID requestedGroup=requestedGroup(current,inputs);
         if(!match.matches()) {
             if(requestedGroup!=null) fail("Group MOVE must use a committed SELECT_TARGET output directly");
+            if(PatrolWorkflowService.isTemplate(job.getWorkflow())) {
+                JsonNode checkpoint=patrolTemplateCheckpoint(current);
+                if(!checkpoint.path("endpoint_id").asText().equals(inputs.path("endpoint_id").asText()))
+                    fail("Patrol MOVE differs from its frozen checkpoint endpoint");
+                Endpoint endpoint=endpoints.findById(UUID.fromString(inputs.path("endpoint_id").asText())).orElseThrow();
+                if(!usable(endpoint,job) || endpoint.getYawRad()==null) fail("Patrol checkpoint endpoint is no longer usable");
+                requirePatrolSnapshotEndpoint(current,endpoint);
+            }
             return;
         }
         JobStep selector=steps.findByJobId(job.getJobId()).stream().filter(s->s.getSelectedAt()!=null && s.getStatus()==JobStepStatus.SUCCEEDED
@@ -132,6 +142,7 @@ public class NavigationTargetService {
         if(selection.getMoveJobStep()!=null && !selection.getMoveJobStep().getJobStepId().equals(current.getJobStepId())
                 && !stoppedContinuation(selection.getMoveJobStep(),current,job)) fail("Target selection is already bound to another MOVE visit");
         if(!sameTarget(selection.getTargetSnapshotJson(),target(selection.getEndpoint(),selection.getEndpointGroup()))) fail("Selected endpoint changed before MOVE");
+        if(PatrolWorkflowService.isTemplate(job.getWorkflow())) requirePatrolSnapshotEndpoint(current,selection.getEndpoint());
         selection.setMoveJobStep(current);
     }
     private boolean stoppedContinuation(JobStep previous,JobStep current,Job job) {
@@ -220,8 +231,21 @@ public class NavigationTargetService {
         if(group.getFallbackRadiusM()==null || distance>group.getFallbackRadiusM().doubleValue())
             fail("Robot must reach the room's door area before switching to its outside endpoint");
     }
-    private boolean usable(Endpoint e,Job job) {return e.isActive()&&e.isAccessible()&&e.getMap().getMapId().equals(job.getMap().getMapId());}
-    private UUID requestedGroup(Job job,JsonNode inputs) {
+    private boolean usable(Endpoint e,Job job) {return e.isActive()&&e.isAccessible()&&e.getMap().getMapId().equals(job.getMap().getMapId())
+            && (!PatrolWorkflowService.isTemplate(job.getWorkflow()) || e.getRoom()==null || e.getRoom().isActive() && e.getRoom().getFloor()!=null
+                && e.getRoom().getFloor().isActive() && e.getMap().getFloor()!=null
+                && e.getRoom().getFloor().getFloorId().equals(e.getMap().getFloor().getFloorId()));}
+    private UUID requestedGroup(JobStep current,JsonNode inputs) {
+        Job job=current.getJobTask().getJob();
+        if(PatrolWorkflowService.isTemplate(job.getWorkflow())) {
+            JsonNode checkpoint=patrolTemplateCheckpoint(current);
+            if(!checkpoint.hasNonNull("endpoint_group_id")) {
+                if(!current.getStepCodeSnapshot().startsWith("MOVE_")) fail("Patrol direct checkpoint requires its direct MOVE branch");
+                return null;
+            }
+            if(!current.getStepCodeSnapshot().startsWith("GROUP_")) fail("Patrol group checkpoint requires its committed selection branch");
+            return UUID.fromString(checkpoint.path("endpoint_group_id").asText());
+        }
         if(!"ENDPOINT_GROUP".equals(job.getInputJson().path("target_mode").asText())) return null;
         JsonNode group=job.getInputJson().get("endpoint_group_id");
         if(job.getServiceRequest()!=null && job.getServiceRequest().getRequestType()==ServiceRequestType.DELIVERY) {
@@ -232,6 +256,75 @@ public class NavigationTargetService {
         }
         if(group==null || !group.isTextual()) fail("Group target request is missing its canonical destination group");
         try{return UUID.fromString(group.asText());}catch(IllegalArgumentException ex){throw new BusinessRuleException("Destination group must be a UUID");}
+    }
+
+    private void requirePatrolTemplateGroup(JobStep current,UUID groupId) {
+        if(!PatrolWorkflowService.isTemplate(current.getJobTask().getJob().getWorkflow())) return;
+        if(!current.getStepCodeSnapshot().startsWith("GROUP_")
+                || !groupId.toString().equals(patrolTemplateCheckpoint(current).path("endpoint_group_id").asText()))
+            fail("Patrol target group differs from its frozen checkpoint input");
+        var group=groups.findById(groupId).orElseThrow(()->new BusinessRuleException("Patrol endpoint group no longer exists"));
+        JsonNode snapshot=patrolTemplateSnapshot(current);
+        if(group.getRoom()==null || !group.isAllowFallback() || group.getSelectionPolicy()!=SelectionPolicy.PRIORITY
+                || !groupId.toString().equals(snapshot.path("endpoint_group_id").asText())
+                || !group.getRoom().getRoomId().toString().equals(snapshot.path("room_id").asText())
+                || group.getFallbackRadiusM()==null || !snapshot.path("fallback_radius_m").isNumber()
+                || group.getFallbackRadiusM().compareTo(snapshot.path("fallback_radius_m").decimalValue())!=0)
+            fail("Patrol endpoint-group room or fallback policy changed after queuing");
+        var active=members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(groupId).stream().filter(EndpointGroupMember::isActive).toList();
+        if(active.size()!=2 || snapshot.path("targets").size()!=active.size()) fail("Patrol endpoint-group membership changed after queuing");
+        for(int index=0;index<active.size();index++) {
+            var member=active.get(index);JsonNode target=snapshot.path("targets").get(index);
+            if(member.getSequenceNo()!=index+1 || target.path("sequence_no").asInt()!=member.getSequenceNo()
+                    || !target.path("endpoint_id").asText().equals(member.getEndpoint().getEndpointId().toString()))
+                fail("Patrol endpoint-group priority order changed after queuing");
+            requirePatrolSnapshotEndpoint(current,member.getEndpoint());
+        }
+    }
+
+    private JsonNode patrolTemplateCheckpoint(JobStep current) {
+        Job job=current.getJobTask().getJob();
+        if(!Objects.equals(job.getWorkflowHash(),job.getWorkflow().getDefinitionHash()))
+            fail("Patrol template differs from the Job's published definition hash");
+        var match=java.util.regex.Pattern.compile("^(?:CHECKPOINT|GROUP|MOVE|SENSE)_([1-9][0-9]*)(?:_[A-Z]+)?$")
+                .matcher(current.getStepCodeSnapshot());
+        if(!match.matches()) throw new BusinessRuleException("Patrol step does not identify its checkpoint slot");
+        int index=Integer.parseInt(match.group(1))-1;
+        JsonNode slot=job.getInputJson().path("checkpoints").path(index);
+        if(!slot.isObject() || slot.hasNonNull("endpoint_id")==slot.hasNonNull("endpoint_group_id"))
+            fail("Patrol checkpoint must retain exactly one endpoint or endpoint-group authority");
+        return slot;
+    }
+
+    private JsonNode patrolTemplateSnapshot(JobStep current) {
+        patrolTemplateCheckpoint(current);
+        Job job=current.getJobTask().getJob();
+        JsonNode snapshot=job.getContextJson()==null?json.missingNode():job.getContextJson().path("patrol_checkpoint_snapshot");
+        if(!snapshot.isObject() || job.getMap()==null
+                || !job.getMap().getMapId().toString().equals(snapshot.path("map_id").asText())
+                || job.getMap().getAssetHash()==null || !job.getMap().getAssetHash().equalsIgnoreCase(snapshot.path("map_asset_hash").asText())
+                || !Objects.equals(job.getMap().getFrameId(),snapshot.path("frame_id").asText()))
+            fail("Patrol map differs from its frozen checkpoint snapshot");
+        var match=java.util.regex.Pattern.compile("^[A-Z]+_([1-9][0-9]*)(?:_[A-Z]+)?$").matcher(current.getStepCodeSnapshot());
+        if(!match.matches()) throw new BusinessRuleException("Patrol step does not identify its frozen checkpoint");
+        JsonNode slot=snapshot.path("checkpoints").path(Integer.parseInt(match.group(1))-1);
+        if(!slot.isObject())fail("Patrol checkpoint snapshot is missing");
+        return slot;
+    }
+
+    private void requirePatrolSnapshotEndpoint(JobStep current,Endpoint endpoint) {
+        JsonNode slot=patrolTemplateSnapshot(current), expected=slot.path("endpoint");
+        if(slot.path("targets").isArray()) {
+            expected=json.missingNode();
+            for(JsonNode target:slot.path("targets")) if(endpoint.getEndpointId().toString().equals(target.path("endpoint_id").asText())) expected=target;
+        }
+        if(!endpoint.getEndpointId().toString().equals(expected.path("endpoint_id").asText())
+                || !Objects.equals(endpoint.getRoom()==null?null:endpoint.getRoom().getRoomId().toString(),expected.hasNonNull("room_id")?expected.path("room_id").asText():null))
+            fail("Patrol endpoint or room changed after queuing");
+        ObjectNode actual=endpoint(endpoint);
+        for(String field:List.of("x_m","y_m","yaw_rad")) if(!actual.path(field).isNumber() || !expected.path(field).isNumber()
+                || actual.path(field).decimalValue().compareTo(expected.path(field).decimalValue())!=0)
+            fail("Patrol endpoint coordinates changed after queuing");
     }
     public ObjectNode endpoint(Endpoint e) {return json.createObjectNode().put("endpoint_id",e.getEndpointId().toString()).put("endpoint_code",e.getEndpointCode()).put("endpoint_name",e.getEndpointName()).put("x_m",e.getXM()).put("y_m",e.getYM()).put("yaw_rad",e.getYawRad());}
     private ObjectNode target(Endpoint endpoint,EndpointGroup group) {

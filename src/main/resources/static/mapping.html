@@ -344,7 +344,7 @@ async function pollControlReceipts(epoch,observedJob){
   for(const receipt of receipts)await jog.observeReceipt(receipt);
 }
 async function poll(){if(!job||polling)return;polling=true;const epoch=watchEpoch,observedJob=job;try{const state=await api('/api/v1/jobs/'+encodeURIComponent(observedJob)+'/mapping-session?includePreview=false');if(epoch!==watchEpoch)return;session=state.mapping_session_id;lastMappingStatus=state;if(!state.potentially_open)stopMappingStream();renderMotion(state);recovery=state.job_status==='RECOVERY_REQUIRED';mapping=state.state==='MAPPING'&&state.potentially_open&&state.job_status==='RUNNING';autoMapping?.render(state);if(!mapping&&jog.active)await jog.stop('Nhiệm vụ không còn cho phép di chuyển.').catch(()=>{});notice(state.job_status==='RECOVERY_REQUIRED'?'Nhiệm vụ cần khôi phục. Đã khóa nút di chuyển; không tạo thêm nhiệm vụ.':mapping?'Đang quét bản đồ.':'Trạng thái nhiệm vụ: '+state.job_status+' / '+state.state);const p=state.preview;const summary={...state,preview:p?{revision:p.revision,width:p.width,height:p.height,resolution:p.resolution,captured_at:p.captured_at,pose:p.pose}:null};$('state').textContent=JSON.stringify(summary,null,2);buttons();renderMapView(state);await pollControlReceipts(epoch,observedJob);if(epoch!==watchEpoch)return;ensureMappingStream(epoch,observedJob);if(performance.now()-mapStreamLastAt>6000)await picture('mapping-preview.png','mapImage','mapTime',epoch,observedJob);if(!cameraStreaming&&performance.now()-cameraProbeAt>10000){cameraProbeAt=performance.now();picture('camera-preview.jpg','cameraImage','cameraTime',epoch,observedJob).catch(()=>{});}if(epoch!==watchEpoch)return;renderMapView(state);if(state.job_status==='FAILED'){const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));const failed=detail.steps?.find(s=>s.status==='FAILED');if(failed)notice('Nhiệm vụ thất bại tại '+failed.stepCodeSnapshot+': '+(failed.errorCode||'Xem chi tiết nhiệm vụ')+(failed.errorCode==='MAP_UPLOAD_UNAUTHORIZED'?' — upload bị từ chối xác thực; map vẫn giữ trên Pi.':''))}}catch(e){if(epoch!==watchEpoch)return;mapping=false;hideRobot();if(autoMapping?.active)await autoMapping.stop().catch(()=>{});if(jog.active)await jog.stop('Mất kết nối theo dõi nhiệm vụ.').catch(()=>{});buttons();if(e.status===404){try{const detail=await api('/api/v1/jobs/'+encodeURIComponent(job));$('state').textContent=JSON.stringify(detail,null,2);if(['QUEUED','ACCEPTED','RUNNING'].includes(detail.job.status)){notice('Đang chờ Pi mở phiên quét.');return}}catch(lookup){notice(lookup.message)}}notice('UI chưa nhận trạng thái mới: '+e.message);if(e.status===401||e.status===403){stopMappingStream();clearImage('mapImage','mapTime','Cần đăng nhập lại.');}else{$('mapTime').textContent='Đang giữ ảnh cuối; chờ trạng thái mới từ BE.';renderMapView(lastMappingStatus);}}finally{polling=false}}
-async function watch(){if(autoMapping?.active)await autoMapping.stop().catch(()=>{});if(jog.active)await jog.stop().catch(()=>{});if(timer)clearInterval(timer);job=$('job').value.trim();if(!job){notice('Cần jobId.');return}stopMappingStream();watchEpoch++;jog.resetReceipts();resetSavedMap();lastMappingStatus=null;saveIntent=null;session='';mapping=false;recovery=false;clearImage('mapImage','mapTime','Đang chờ map của phiên mới.');$('mapGeometry').textContent='Đang chờ kích thước map mới.';clearImage('cameraImage','cameraTime','Đang chờ ảnh của phiên mới.');buttons();poll();timer=setInterval(poll,1000)}
+async function watch(){if(autoMapping?.active)await autoMapping.stop().catch(()=>{});if(jog.active)await jog.stop().catch(()=>{});if(timer)clearInterval(timer);job=$('job').value.trim();if(!job){notice('Cần jobId.');return}stopMappingStream();watchEpoch++;jog.resetReceipts();resetSavedMap();lastMappingStatus=null;saveIntent=null;session='';mapping=false;recovery=false;clearImage('mapImage','mapTime','Đang chờ map của phiên mới.');$('mapGeometry').textContent='Đang chờ kích thước map mới.';clearImage('cameraImage','cameraTime','Đang chờ ảnh của phiên mới.');buttons();syncWatchedConnectionJob(watchEpoch,job);poll();timer=setInterval(poll,1000)}
 async function control(x,z){if(!session)throw Error('Chưa có phiên quét.');return api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-control',{mappingSessionId:session,linearX:x,angularZ:z,durationMs:900,controlSessionId,controlSequence:++controlSequence,requestedAt:new Date().toISOString()},false,{timeoutMs:x===0&&z===0?15000:1200,keepalive:x===0&&z===0})}
 function jogVelocity(directionX,directionZ,speed,turn){if(!Number.isFinite(speed)||speed<0||speed>.30||!Number.isFinite(turn)||turn<0||turn>1.0)throw Error('Tốc độ không hợp lệ.');return [Math.sign(directionX)*speed,Math.sign(directionZ)*turn]}
 document.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>{if(busy||!mapping||jog.active||autoMapping?.owned)return;try{const [x,z]=jogVelocity(Number(b.dataset.x),Number(b.dataset.z),Number($('jogSpeed').value),Number($('jogTurnSpeed').value));jog.start(x,z,Number($('jogSeconds').value)*1000)}catch(e){notice(e.message)}});
@@ -373,7 +373,7 @@ async function requestSaveMap(){
   }finally{busy=false;buttons()}
 }
 $('save').onclick=()=>requestSaveMap().catch(e=>notice(e.message));
-$('create').onclick=async()=>{if(busy)return;busy=true;buttons();try{const result=await api('/api/v1/mapping-jobs',{workflowId:$('workflow').value.trim(),robotId:$('robot').value.trim(),floorId:$('floor').value.trim(),mapName:$('mapName').value.trim()});$('job').value=result.jobId;notice('Đã tạo '+result.jobCode);watch()}catch(e){notice(e.message)}finally{busy=false;buttons()}};
+$('create').onclick=async()=>{if(busy)return;busy=true;buttons();try{const result=await api('/api/v1/mapping-jobs',{workflowId:$('workflow').value.trim(),robotId:$('robot').value.trim(),floorId:$('floor').value.trim(),mapName:$('mapName').value.trim()});$('job').value=result.jobId;selectConnectionValue('mappingJobChoice',result.jobId,result.jobCode);refreshConnectionData();notice('Đã tạo '+result.jobCode);watch()}catch(e){notice(e.message)}finally{busy=false;buttons()}};
 $('recover').onclick=async()=>{busy=true;buttons();try{
   if(jog.active)await jog.stop();
   const pending=await api('/api/v1/jobs/'+encodeURIComponent(job)+'/mapping-recovery');
@@ -423,7 +423,7 @@ function setWorkflowField(field,id,label){
   if(control.tagName==='SELECT'&&![...control.options].some(option=>option.value===id))control.add(new Option(label||id,id));
   control.value=id;
 }
-$('prepareMapping').onclick=async()=>{const b=$('prepareMapping');b.disabled=true;try{await prepareWorkflow('mapping-workflow.json','WF_MAPPING','workflow');notice('Workflow quét và lưu đã sẵn sàng.')}catch(e){notice(e.message)}finally{b.disabled=false}};
+$('prepareMapping').onclick=async()=>{const b=$('prepareMapping');b.disabled=true;try{await prepareWorkflow('mapping-workflow.json','WF_MAPPING','workflow');refreshConnectionData();notice('Workflow quét và lưu đã sẵn sàng.')}catch(e){notice(e.message)}finally{b.disabled=false}};
 $('prepareVoiceNavigation').onclick=async()=>{const b=$('prepareVoiceNavigation');b.disabled=true;try{await prepareWorkflow('voice-navigation-workflow.json','WF_VOICE_ENDPOINT_V1','voiceNavigationWorkflow',true);notice('Workflow voice đã sẵn sàng. Robot mời đi theo trước khi MOVE và báo khi đã tới nơi.')}catch(e){notice(e.message)}finally{b.disabled=false}};
 </script>
 <script src="/map-navigation.js?v=20261124-room-endpoints"></script>
@@ -437,16 +437,11 @@ autoMapping=MappingAutonomy.mount({
 });buttons();
 </script>
 <script src="/robot-test-workflow.js?v=20261117-speed"></script>
-<script src="/published-workflow-runner.js?v=20261122-dropdowns"></script>
-<script src="/patrol-workflow-builder.js?v=20261124-endpoint-groups"></script>
+<script src="/published-workflow-runner.js?v=20261125-patrol-templates"></script>
+<script src="/patrol-workflow-builder.js?v=20261125-patrol-templates"></script>
 <script src="/endpoint-group-editor.js?v=20261124-room-pair"></script>
 <script>
-let workflowRunner,publishedRunner;
-const savedMapNavigation=SavedMapNavigation.mount({element:document.getElementById('mapNavigation'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,isMappingActive:()=>mapping||jog.active,getSavedMapId:()=>document.getElementById('savedMapId').value,isWorkflowActive:()=>workflowRunner?.isActive()||publishedRunner?.isActive()||false,refreshWorkflowState:()=>Promise.all([workflowRunner?.refresh(),publishedRunner?.refresh()]),onContextChange:()=>{workflowRunner?.refreshContext();publishedRunner?.refreshContext()}});
-publishedRunner=PublishedWorkflowRunner.mount({element:document.getElementById('publishedWorkflowRunner'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,getNavigation:()=>savedMapNavigation.state,isMappingActive:()=>mapping||jog.active,onCreated:(result,workflow)=>{if(workflow.serviceType==='MAPPING'){$('job').value=result.jobId;watch().catch(error=>notice(error.message))}}});
-workflowRunner=RobotTestWorkflow.mount({element:document.getElementById('robotTestWorkflow'),getToken:()=>document.getElementById('token').value,getRobotId:()=>document.getElementById('robot').value,getNavigation:()=>savedMapNavigation.state,isMappingActive:()=>mapping||jog.active});
-PatrolWorkflowBuilder.mount({element:$('patrolWorkflowBuilder'),getToken:()=>$('token').value,getNavigation:()=>savedMapNavigation.state,onPublished:async result=>{await publishedRunner.selectWorkflow(result.workflowId);}});
-EndpointGroupEditor.mount({element:$('endpointGroupEditor'),getToken:()=>$('token').value,getNavigation:()=>savedMapNavigation.state});
+let workflowRunner,publishedRunner,patrolBuilder,savedMapNavigation;
 const connectionCatalog=RobotDataCatalog.create({getToken:()=>$('token').value});
 let connectionEpoch=0,selectedConnectionRobot=$('robot').value;
 function fillConnectionSelect(id,rows,placeholder){
@@ -457,37 +452,86 @@ function fillConnectionSelect(id,rows,placeholder){
   else if(current){const missing=new Option('Đã chọn trước · không còn trong danh sách: '+current,current);missing.disabled=true;control.add(missing);control.value=current;}
   else control.value='';
 }
+function selectConnectionValue(id,value,label){
+  if(!value)return;
+  const control=$(id);
+  if(![...control.options].some(option=>option.value===value))control.add(new Option(label||value,value));
+  control.value=value;
+}
+function refreshConnectionData(){connectionCatalog.invalidate();return loadConnectionData();}
+async function mappingWorkflowHistory(current,onRows){
+  for(let page=0;page<100;page++){
+    const data=await api('/api/v1/admin/workflows?includeDeleted=true&page='+page+'&size=100',undefined,false,{timeoutMs:15000});
+    if(!current())return;
+    if(!Array.isArray(data?.content))throw Error('Danh sách workflow trả về không đúng định dạng.');
+    onRows(data.content.filter(row=>String(row.serviceType).toUpperCase()==='MAPPING'));
+    if(data.last===true||data.content.length===0||Number.isInteger(data.totalPages)&&page+1>=data.totalPages||data.totalPages==null&&data.content.length<100)return;
+  }
+  throw Error('Chưa tải đủ lịch sử workflow sau 10.000 mục.');
+}
 async function loadConnectionData(){
   const epoch=++connectionEpoch,token=$('token').value;
+  if(!token.trim()){$('connectionDataStatus').textContent='Dán access token rồi tải danh sách.';$('loadConnectionData').disabled=false;return;}
+  const current=()=>epoch===connectionEpoch&&token===$('token').value;
+  const errors=[],counts={},mappingIds=new Set();let jobRows=[],remaining=5;
   $('connectionDataStatus').textContent='Đang tải danh sách…';$('loadConnectionData').disabled=true;
-  try{
-    const results=await Promise.allSettled([connectionCatalog.robots(),connectionCatalog.floors(),connectionCatalog.workflows('MAPPING'),connectionCatalog.jobs()]);
-    if(epoch!==connectionEpoch||token!==$('token').value)return;
-    const errors=[];
-    const apply=(index,id,label,filter=()=>true)=>{
-      const result=results[index];
-      if(result.status==='fulfilled')fillConnectionSelect(id,result.value.filter(filter),label);
-      else errors.push(label+': '+result.reason.message);
-    };
-    apply(0,'robot','Chọn robot',row=>row.raw.status!=='RETIRED');
-    apply(1,'floor','Chọn tầng',row=>row.raw.active!==false);
-    apply(2,'workflow','Chọn workflow quét');
-    if(results[3].status==='fulfilled'&&results[2].status==='fulfilled'){
-      const ids=new Set(results[2].value.map(row=>row.id));
-      fillConnectionSelect('mappingJobChoice',results[3].value.filter(row=>ids.has(row.raw.workflowId)&&(!selectedConnectionRobot||row.raw.robotId===selectedConnectionRobot)),'Chọn nhiệm vụ quét');
-    }else if(results[3].status==='rejected')errors.push('Nhiệm vụ: '+results[3].reason.message);
-    $('connectionDataStatus').textContent=errors.length?errors.join('\n'):'Đã tải dữ liệu. Chọn robot, tầng và workflow quét theo tên.';
-  }catch(error){if(epoch===connectionEpoch)$('connectionDataStatus').textContent=error.message;}
-  finally{if(epoch===connectionEpoch)$('loadConnectionData').disabled=false;}
+  function status(){
+    if(!current())return;
+    const summary=Object.entries(counts).map(([label,count])=>count+' '+label).join(' · ');
+    $('connectionDataStatus').textContent=[(remaining?'Đang tải danh sách… ':'Đã tải dữ liệu. ')+summary,counts['tầng']===0?'Chưa có tầng đang bật.':'',...errors].filter(Boolean).join('\n');
+    $('loadConnectionData').disabled=remaining>0;
+  }
+  function applyJobs(){
+    const rows=jobRows.filter(row=>mappingIds.has(String(row.raw.workflowId).toLowerCase())&&(!selectedConnectionRobot||row.raw.robotId===selectedConnectionRobot));
+    fillConnectionSelect('mappingJobChoice',rows,'Chọn nhiệm vụ quét');counts['nhiệm vụ quét']=rows.length;
+  }
+  function addWorkflows(rows){for(const row of rows)if(row.workflowId)mappingIds.add(String(row.workflowId).toLowerCase());applyJobs();status();}
+  async function load(label,read,apply){
+    try{const rows=await read();if(current())apply(rows);}
+    catch(error){if(current())errors.push(label+': '+error.message);}
+    finally{remaining--;status();}
+  }
+  await Promise.all([
+    load('Robot',()=>connectionCatalog.robots(),rows=>{rows=rows.filter(row=>row.raw.status!=='RETIRED');fillConnectionSelect('robot',rows,'Chọn robot');counts['robot']=rows.length;}),
+    load('Tầng',()=>connectionCatalog.floors(),rows=>{rows=rows.filter(row=>row.raw.active!==false);fillConnectionSelect('floor',rows,'Chọn tầng');counts['tầng']=rows.length;}),
+    load('Workflow quét',()=>connectionCatalog.workflows('MAPPING'),rows=>{fillConnectionSelect('workflow',rows,'Chọn workflow quét');counts['workflow quét']=rows.length;addWorkflows(rows.map(row=>row.raw));}),
+    load('Nhiệm vụ',()=>connectionCatalog.jobs(selectedConnectionRobot),rows=>{jobRows=rows;applyJobs();}),
+    load('Lịch sử workflow quét',()=>mappingWorkflowHistory(current,addWorkflows),()=>{})
+  ]);
 }
-$('loadConnectionData').onclick=()=>{connectionCatalog.invalidate();loadConnectionData();};
-$('token').addEventListener('change',()=>{connectionCatalog.invalidate();connectionEpoch++;if($('token').value.trim())loadConnectionData();});
+async function syncWatchedConnectionJob(epoch,observedJob){
+  const token=$('token').value;
+  try{
+    const detail=await api('/api/v1/jobs/'+encodeURIComponent(observedJob));
+    if(epoch!==watchEpoch||observedJob!==job||token!==$('token').value)return;
+    const record=detail.job;if(!record||record.jobId!==observedJob)return;
+    selectedConnectionRobot=record.robotId||'';
+    selectConnectionValue('robot',record.robotId);
+    selectConnectionValue('workflow',record.workflowId);
+    selectConnectionValue('floor',record.inputJson?.floor_id);
+    if(record.inputJson?.map_name)$('mapName').value=record.inputJson.map_name;
+    selectConnectionValue('mappingJobChoice',record.jobId,[record.jobCode,record.status].filter(Boolean).join(' · '));
+    refreshConnectionData();
+  }catch(error){if(epoch===watchEpoch&&token===$('token').value)$('connectionDataStatus').textContent='Chưa tải được thông tin nhiệm vụ: '+error.message;}
+}
+$('loadConnectionData').onclick=refreshConnectionData;
+$('token').addEventListener('change',refreshConnectionData);
 $('robot').addEventListener('change',()=>{
-  if(mapping||jog.active||workflowRunner?.isActive()||publishedRunner?.isActive()){
+  if(mapping||jog.active||workflowRunner?.isActive()||publishedRunner?.isActive()||patrolBuilder?.isActive()){
     $('robot').value=selectedConnectionRobot;notice('Kết thúc hoặc ngừng theo dõi nhiệm vụ hiện tại trước khi đổi robot.');return;
   }
-  selectedConnectionRobot=$('robot').value;connectionCatalog.invalidate();loadConnectionData();
+  selectedConnectionRobot=$('robot').value;refreshConnectionData();
 });
 $('mappingJobChoice').onchange=()=>{if($('mappingJobChoice').value)$('job').value=$('mappingJobChoice').value;};
+function mountOptional(id,component,options){
+  try{if(typeof component?.mount!=='function')throw Error('Không tải được thành phần.');return component.mount(options);}
+  catch(error){$(id).textContent='Chưa tải được mục này. Tải lại trang để thử lại.';console.error(id,error);return null;}
+}
+savedMapNavigation=mountOptional('mapNavigation',globalThis.SavedMapNavigation,{element:$('mapNavigation'),getToken:()=>$('token').value,getRobotId:()=>$('robot').value,isMappingActive:()=>mapping||jog.active,getSavedMapId:()=>$('savedMapId').value,isWorkflowActive:()=>workflowRunner?.isActive()||publishedRunner?.isActive()||patrolBuilder?.isActive()||false,refreshWorkflowState:()=>Promise.all([workflowRunner?.refresh(),publishedRunner?.refresh()]),onContextChange:()=>{workflowRunner?.refreshContext();publishedRunner?.refreshContext();patrolBuilder?.refreshContext();}});
+publishedRunner=mountOptional('publishedWorkflowRunner',globalThis.PublishedWorkflowRunner,{element:$('publishedWorkflowRunner'),getToken:()=>$('token').value,getRobotId:()=>$('robot').value,getNavigation:()=>savedMapNavigation?.state,isMappingActive:()=>mapping||jog.active,onCreated:(result,workflow)=>{if(workflow.serviceType==='MAPPING'){$('job').value=result.jobId;selectConnectionValue('mappingJobChoice',result.jobId);refreshConnectionData();watch().catch(error=>notice(error.message))}}});
+workflowRunner=mountOptional('robotTestWorkflow',globalThis.RobotTestWorkflow,{element:$('robotTestWorkflow'),getToken:()=>$('token').value,getRobotId:()=>$('robot').value,getNavigation:()=>savedMapNavigation?.state,isMappingActive:()=>mapping||jog.active});
+patrolBuilder=mountOptional('patrolWorkflowBuilder',globalThis.PatrolWorkflowBuilder,{element:$('patrolWorkflowBuilder'),getToken:()=>$('token').value,getRobotId:()=>$('robot').value,getNavigation:()=>savedMapNavigation?.state,isMappingActive:()=>mapping||jog.active,isWorkflowActive:()=>workflowRunner?.isActive()||publishedRunner?.isPendingSubmission()||false,onRun:async(id,inputs)=>{if(!publishedRunner)throw Error('Mục chạy workflow chưa sẵn sàng. Tải lại trang.');return publishedRunner.runWorkflow(id,inputs);}});
+mountOptional('endpointGroupEditor',globalThis.EndpointGroupEditor,{element:$('endpointGroupEditor'),getToken:()=>$('token').value,getNavigation:()=>savedMapNavigation?.state});
+if($('token').value.trim())loadConnectionData();
 </script>
 </html>

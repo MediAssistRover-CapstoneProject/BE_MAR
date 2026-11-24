@@ -98,7 +98,7 @@ public class JobExecutionServiceImpl implements JobExecutionService {
         FacilityMap map=null;
         if(move) {
             UUID selectedMap=inputUuid(input,"map_id");
-            if(patrolRun && !selectedMap.toString().equals(workflow.getDefaultInputsJson().path("map_id").asText()))
+            if(patrolRun && !PatrolWorkflowService.isTemplate(workflow) && !selectedMap.toString().equals(workflow.getDefaultInputsJson().path("map_id").asText()))
                 throw new BusinessRuleException("Patrol checkpoints belong to the workflow map; create a patrol for the other map");
             map=mapRepository.findById(selectedMap).orElseThrow(()->new ResourceNotFoundException("Map not found"));
             if(map.getStatus()!=MapStatus.ACTIVE)throw new BusinessRuleException("MOVE requires an ACTIVE map");
@@ -107,13 +107,22 @@ public class JobExecutionServiceImpl implements JobExecutionService {
                 throw new BusinessRuleException("Navigation session differs from workflow inputs");
             navigationSessions.pinReadyContextForLockedRoute(robotId,sessionId,selectedMap);
             if(patrolRun) {
-                patrol.validateSchedule(workflow,robot,rank,null,objectMapper.createObjectNode());
-                if(patrol.readyMap(workflow,robot,rank)==null)
-                    throw new BusinessRuleException("PATROL_NOT_READY: robot must be idle with matching map, fresh sensors and no pending incident or job");
+                boolean template=PatrolWorkflowService.isTemplate(workflow);
+                if(template) {
+                    patrol.queuedMap(workflow,robot,rank,null,input);
+                } else {
+                    patrol.validateSchedule(workflow,robot,rank,null,objectMapper.createObjectNode());
+                    if(patrol.readyMap(workflow,robot,rank)==null)
+                        throw new BusinessRuleException("PATROL_NOT_READY: robot must be idle with matching map, fresh sensors and no pending incident or job");
+                }
             }
             input.put("navigation_session_id",sessionId.toString());
         }
-        return create(workflow,null,null,robot,map,rank,input,null,null);
+        Job created=create(workflow,null,null,robot,map,rank,input,null,null);
+        if(patrolRun && map!=null)((ObjectNode)created.getContextJson()).put("patrol_map_asset_hash",map.getAssetHash())
+                .put("patrol_map_frame_id",map.getFrameId());
+        if(PatrolWorkflowService.isTemplate(workflow))patrol.snapshotTemplateRoute(created);
+        return created;
     }
     private UUID inputUuid(JsonNode input,String key) {
         try{return UUID.fromString(input.path(key).asText());}
@@ -217,8 +226,10 @@ public class JobExecutionServiceImpl implements JobExecutionService {
                     || !workflow.isAcceptsNewJobs() || schedule.getRobot() == null) return null;
             Robot robot = robotRepository.findByIdForUpdate(schedule.getRobot().getRobotId()).orElse(null);
             FacilityMap map;
+            var frozenInput = inputSnapshots.forWorkflow(workflow, input);
             try {
-                map = patrol.queuedMap(workflow, robot, schedule.getPriority(), schedule.getIntervalSec(), input);
+                map = patrol.queuedMap(workflow, robot, schedule.getPriority(), schedule.getIntervalSec(),
+                        PatrolWorkflowService.isTemplate(workflow) ? frozenInput : input);
             } catch (BusinessRuleException | ResourceNotFoundException error) {
                 log.warn("Patrol schedule {} unavailable: {}", schedule.getScheduleId(), error.getMessage());
                 return null;
@@ -226,9 +237,10 @@ public class JobExecutionServiceImpl implements JobExecutionService {
             // Serialize on the robot: recurring schedules coalesce into its existing patrol intent.
             if (jobRepository.existsNonterminalPatrol(robot.getRobotId())) return null;
             Job job = create(workflow, null, schedule, robot, map, schedule.getPriority(),
-                    inputSnapshots.forWorkflow(workflow, input), fireAt, "DEFAULT");
+                    frozenInput, fireAt, "DEFAULT");
             ((ObjectNode) job.getContextJson()).put("patrol_map_asset_hash", map.getAssetHash())
                     .put("patrol_map_frame_id", map.getFrameId());
+            if(PatrolWorkflowService.isTemplate(workflow))patrol.snapshotTemplateRoute(job);
             return job;
         }
         if (workflow.getStatus() != WorkflowStatus.PUBLISHED || !workflow.isAcceptsNewJobs()) {

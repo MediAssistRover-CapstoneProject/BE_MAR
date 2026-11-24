@@ -40,6 +40,7 @@ public class WorkflowOrchestratorService {
     private final StaffDutyService staffDuty;
     private final JobSuspensionService suspension;
     private final RobotTaskArbitrationService arbitration;
+    private final PatrolWorkflowService patrol;
     private final DeliveryReleasePolicy deliveryRelease;
 
     @Transactional
@@ -60,6 +61,17 @@ public class WorkflowOrchestratorService {
         }
         if (job.getStatus()==JobStatus.QUEUED) {
             if (job.getRobot()==null) return; // assign-robot will wake the same durable work
+            if (PatrolWorkflowService.isTemplate(job.getWorkflow())) {
+                try {
+                    patrol.requireQueuedTemplate(job);
+                } catch (BusinessRuleException | com.mediassistrover.backend.exception.ResourceNotFoundException invalidRoute) {
+                    job.setErrorCode("PATROL_ROUTE_INVALIDATED");
+                    job.setFailureReason(invalidRoute.getMessage());
+                    job.setStopStatus(JobStopStatus.NOT_REQUIRED);
+                    finish(job,TerminalStatus.FAILED);
+                    return;
+                }
+            }
             if (!arbitration.canStart(job)) return;
             Robot robot=robots.findByIdForUpdate(job.getRobot().getRobotId()).orElseThrow();
             if (robot.getStatus()!=RobotStatus.IDLE) return;

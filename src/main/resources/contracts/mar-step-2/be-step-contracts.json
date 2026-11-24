@@ -602,7 +602,7 @@
             "targets": {
               "type": "array",
               "items": {
-                "$ref": "common.schema.json#/$defs/endpoint"
+                "$ref": "common.schema.json#/$defs/navigation_target"
               }
             },
             "index": {
@@ -1435,7 +1435,7 @@
         "targets": {
           "type": "array",
           "items": {
-            "$ref": "common.schema.json#/$defs/endpoint"
+            "$ref": "common.schema.json#/$defs/navigation_target"
           }
         }
       },
@@ -1451,7 +1451,12 @@
           "type": "boolean"
         },
         "target": {
-          "$ref": "common.schema.json#/$defs/endpoint"
+          "$ref": "common.schema.json#/$defs/navigation_target"
+        },
+        "arrival_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
         },
         "endpoint_id": {
           "type": "string",

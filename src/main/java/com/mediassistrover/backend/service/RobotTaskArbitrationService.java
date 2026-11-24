@@ -26,7 +26,7 @@ public class RobotTaskArbitrationService {
     private final AlertRepository alerts;
     private final PatrolWorkflowService patrol;
 
-    /** Caller already owns the selected job row and robot lock; this method is read-only. */
+    /** Caller owns the Job row; a scheduled template pins its verified live session on admission. */
     public boolean canStart(Job candidate) {
         if (candidate.getRobot() == null || candidate.getStatus() != JobStatus.QUEUED) return false;
         UUID robotId = candidate.getRobot().getRobotId();
@@ -52,12 +52,25 @@ public class RobotTaskArbitrationService {
         if (!JobOccupancyPolicy.patrol(candidate)) return true;
         if (suspension.hasHolds(candidate)) return false;
         try {
-            var map = patrol.readyMap(candidate.getWorkflow(), robot, candidate.getPriority(), candidate.getJobId());
+            var map = PatrolWorkflowService.isTemplate(candidate.getWorkflow())
+                    ? patrol.readyMap(candidate.getWorkflow(), robot, candidate.getPriority(), candidate.getJobId(), patrol.templateJobInputs(candidate))
+                    : patrol.readyMap(candidate.getWorkflow(), robot, candidate.getPriority(), candidate.getJobId());
             if (map == null || candidate.getMap() == null || !map.getMapId().equals(candidate.getMap().getMapId())) return false;
             var context = candidate.getContextJson();
-            return context == null || !context.hasNonNull("patrol_map_asset_hash")
+            boolean mapUnchanged = context == null || !context.hasNonNull("patrol_map_asset_hash")
                     || map.getAssetHash().equalsIgnoreCase(context.path("patrol_map_asset_hash").asText())
                     && map.getFrameId().equals(context.path("patrol_map_frame_id").asText());
+            if (!mapUnchanged) return false;
+            if (PatrolWorkflowService.isTemplate(candidate.getWorkflow())
+                    && !candidate.getInputJson().hasNonNull("navigation_session_id")) {
+                // Schedules choose destinations ahead of time; pin their current, verified session only at admission.
+                var session = navigation.current(robotId);
+                if (session == null) return false;
+                navigation.requireReadyContext(robotId, session.getSessionId(), map.getMapId());
+                ((com.fasterxml.jackson.databind.node.ObjectNode) candidate.getInputJson())
+                        .put("navigation_session_id", session.getSessionId().toString());
+            }
+            return true;
         } catch (com.mediassistrover.backend.exception.BusinessRuleException
                  | com.mediassistrover.backend.exception.ResourceNotFoundException unavailable) {
             return false;

@@ -49,6 +49,7 @@ public class SecurityConfig {
                                 "/published-workflow-runner.js",
                                 "/robot-data-selectors.js",
                                 "/patrol-workflow-builder.js",
+                                "/endpoint-group-editor.js",
                                 "/delivery-qr.html",
                                 "/delivery-qr.js",
                                 "/media-call.html",
