@@ -179,7 +179,7 @@ public class FaceAuthService {
             return json.createObjectNode().put("verified",true).put("reason","MATCH");
         });
     }
-    private String safeReason(String r){return Set.of("NO_FACE","MULTIPLE_FACES","LOW_QUALITY","NO_MATCH").contains(r)?r:"FACE_AI_UNAVAILABLE";}
+    private String safeReason(String r){return Set.of("NO_FACE","MULTIPLE_FACES","LOW_QUALITY","NO_MATCH","FACE_OUTSIDE_FRAME").contains(r)?r:"FACE_AI_UNAVAILABLE";}
     private FaceAuthSession requireScan(Job job,JobStep step,StaffProfile p,Scan scan){
         if(!step.getJobStepId().equals(scan.authJobStepId()))fail("FACE_WRONG_STEP");
         var v=sessions.findById(scan.sessionId()).orElseThrow(()->new BusinessRuleException("FACE_SESSION_MISSING"));

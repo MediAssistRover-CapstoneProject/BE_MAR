@@ -98,6 +98,12 @@ class FaceAuthServiceTest {
         when(ai.call(any(),any())).thenAnswer(i->json.createObjectNode().put("matched",false).put("modelVersion",profile.getFaceModelVersion()).put("reason","NO_MATCH"));
         assertFalse(face.verify(job.getJobId(),scan,device).path("verified").asBoolean());verifyNoInteractions(verifications,completer);assertNull(session.getUsedAt());
     }
+    @Test void faceOutsideGuideDoesNotGrant(){
+        when(ai.call(any(),any())).thenAnswer(i->json.createObjectNode().put("matched",false).put("modelVersion",profile.getFaceModelVersion()).put("reason","FACE_OUTSIDE_FRAME"));
+        var result=face.verify(job.getJobId(),scan,device);
+        assertFalse(result.path("verified").asBoolean());assertEquals("FACE_OUTSIDE_FRAME",result.path("reason").asText());
+        verifyNoInteractions(verifications,completer);assertNull(session.getUsedAt());
+    }
     @Test void expiredSessionNeverCallsAi(){session.setExpiresAt(clock.instant());rejectBeforeAi();}
     @Test void cancelledJobNeverCallsAi(){job.setCancelRequestedAt(clock.instant());rejectBeforeAi();}
     @Test void unapprovedAvatarNeverCallsAi(){profile.setFaceStatus("PENDING");rejectBeforeAi();}
