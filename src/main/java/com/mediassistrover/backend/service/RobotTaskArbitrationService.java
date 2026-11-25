@@ -25,6 +25,8 @@ public class RobotTaskArbitrationService {
     private final NavigationSessionService navigation;
     private final AlertRepository alerts;
     private final PatrolWorkflowService patrol;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.beans.factory.ObjectProvider<RobotBatteryPolicyService> batteryPolicy;
 
     /** Caller owns the Job row; a scheduled template pins its verified live session on admission. */
     public boolean canStart(Job candidate) {
@@ -33,6 +35,7 @@ public class RobotTaskArbitrationService {
         // Caller owns the Job row; serialize admission on the Robot before checking all owners.
         Robot robot=robots.findByIdForUpdate(robotId).orElse(null);
         if(robot==null || robot.getStatus()!=RobotStatus.IDLE)return false;
+        if(!RobotBatteryPolicyService.isReturn(candidate) && batteryPolicy!=null && batteryPolicy.getObject().foregroundBlocked(robotId))return false;
         if(candidate.getInputJson()!=null && candidate.getInputJson().hasNonNull("navigation_session_id")) {
             if(candidate.getMap()==null)return false;
             try {
@@ -113,8 +116,12 @@ public class RobotTaskArbitrationService {
     }
 
     public boolean robotEventHeld(UUID robotId) {
+        return robotSafetyHeld(robotId) || !voices.findByRobotRobotIdAndStatus(robotId, VoiceInteractionStatus.ACTIVE).isEmpty();
+    }
+
+    /** Voice is cancellable by the battery policy; these independent safety sources are not. */
+    public boolean robotSafetyHeld(UUID robotId) {
         return media.findByActiveRobotId(robotId).filter(s -> s.getMode() == MediaSession.Mode.ASSIST).isPresent()
-                || !voices.findByRobotRobotIdAndStatus(robotId, VoiceInteractionStatus.ACTIVE).isEmpty()
                 || !incidents.findByRobotRobotIdAndStatusInAndArchivedAtIsNull(robotId, OPEN_INCIDENTS).isEmpty()
                 || alerts.existsActiveRestrictedByRobotId(robotId);
     }

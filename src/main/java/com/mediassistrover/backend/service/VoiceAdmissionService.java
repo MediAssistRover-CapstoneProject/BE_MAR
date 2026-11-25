@@ -28,6 +28,8 @@ public class VoiceAdmissionService {
     private final MqttSessionRegistry registry;
     private final VoiceInteractionLeaseService leases;
     private final Clock clock;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.beans.factory.ObjectProvider<RobotBatteryPolicyService> batteryPolicy;
 
     public record Availability(boolean wakeAllowed, boolean conversationReady, UUID patrolJobId,
                                String state, String reason, int leaseSeconds) { }
@@ -39,7 +41,9 @@ public class VoiceAdmissionService {
         UUID patrol=patrols.isEmpty()?null:patrols.getFirst().getJobId();
         String blocked=null;
         var link=links.findById(robot.getRobotId()).orElse(null);
-        if(link==null || !registry.fresh(link) || link.getHeartbeatJson()==null
+        var battery=batteryPolicy==null?null:batteryPolicy.getIfAvailable();
+        if(battery!=null && battery.foregroundBlocked(robot.getRobotId()))blocked="BATTERY_RETURN_REQUIRED";
+        else if(link==null || !registry.fresh(link) || link.getHeartbeatJson()==null
                 || !Set.of(RobotStatus.IDLE,RobotStatus.BUSY).contains(robot.getStatus()))blocked="ROBOT_NOT_CONNECTED";
         else if(!incidents.findByRobotRobotIdAndStatusInAndArchivedAtIsNull(robot.getRobotId(),
                 List.of(EmergencyIncidentStatus.OPEN,EmergencyIncidentStatus.ACKNOWLEDGED,EmergencyIncidentStatus.IN_PROGRESS)).isEmpty())blocked="INCIDENT_ACTIVE";

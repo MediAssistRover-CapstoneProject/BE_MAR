@@ -21,7 +21,11 @@ public class MqttDurablePublisher {
     public void command(UUID id) { afterCommit(()->publishCommand(id)); }
     @org.springframework.transaction.event.TransactionalEventListener(phase=org.springframework.transaction.event.TransactionPhase.AFTER_COMMIT)
     public void queued(CommandQueued event){record(()->{
-        if(event.initial()==null)publishCommand(event.commandId());else publishPreparedCommand(event.initial());
+        if(event.initial()==null)publishCommand(event.commandId());
+        else if(transport.connected()) {
+            var checked=plans.prepared(event.initial());
+            if(checked!=null)publishPreparedCommand(checked);
+        }
     });}
     private void publishCommand(UUID id) {
         if (!transport.connected()) return;

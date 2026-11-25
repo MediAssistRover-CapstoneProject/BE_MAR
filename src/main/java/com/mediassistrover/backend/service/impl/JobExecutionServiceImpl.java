@@ -39,6 +39,42 @@ public class JobExecutionServiceImpl implements JobExecutionService {
     private final PatrolWorkflowService patrol;
     private final com.mediassistrover.backend.service.RobotTaskArbitrationService arbitration;
     private final com.mediassistrover.backend.validation.WorkflowInputValidator workflowInputs;
+    private final ServiceRequestRepository batteryRequests;
+    private final org.springframework.beans.factory.ObjectProvider<com.mediassistrover.backend.service.RobotBatteryPolicyService> batteryPolicy;
+
+    @Override public Job createForBatteryReturn(UUID workflowId,Robot robot,FacilityMap map,JsonNode inputs,UUID episodeId) {
+        return batteryJob(workflowId,robot,map,inputs,episodeId,false);
+    }
+    @Override public Job createForBatteryWarning(UUID workflowId,Robot robot,JsonNode inputs,UUID episodeId) {
+        return batteryJob(workflowId,robot,null,inputs,episodeId,true);
+    }
+    private Job batteryJob(UUID workflowId,Robot robot,FacilityMap map,JsonNode inputs,UUID episodeId,boolean warning) {
+        var policy=rollout.lockForRuntimeCreation();rollout.requireSchema(policy,3);
+        Workflow workflow=workflowRepository.findById(workflowId).orElseThrow(()->new ResourceNotFoundException("Battery workflow not found"));
+        String expected=warning?com.mediassistrover.backend.service.BatteryReturnWorkflowService.WARNING_CODE:com.mediassistrover.backend.service.BatteryReturnWorkflowService.CODE;
+        if(!expected.equalsIgnoreCase(workflow.getWorkflowCode())
+                || !"AUTO_CHARGING".equals(workflow.getServiceType()) || workflow.getSchemaVersion()!=3
+                || workflow.getStatus()!=WorkflowStatus.PUBLISHED || !workflow.isAcceptsNewJobs())
+            throw new BusinessRuleException("Battery return requires the reviewed system workflow");
+        Robot locked=robotRepository.findByIdForUpdate(robot.getRobotId()).orElseThrow();
+        if(locked.getStatus()!=RobotStatus.IDLE)throw new BusinessRuleException("Battery return requires an idle robot with confirmed physical stop");
+        ensureNoActive(locked);
+        if(!warning) {
+            if(map==null || map.getStatus()!=MapStatus.ACTIVE)throw new BusinessRuleException("Battery return requires ACTIVE map");
+            navigationSessions.requireReadyContext(locked.getRobotId(),inputUuid(inputs,"navigation_session_id"),map.getMapId());
+        }
+        workflowInputs.validate(workflow.getInputSchemaJson(),inputs);
+        Instant now=clock.instant();
+        String prefix=warning?"BATTERY_WARNING:":"BATTERY_RETURN:";
+        ServiceRequest request=batteryRequests.findByIdempotencyKey(prefix+locked.getRobotId()+":"+episodeId).orElseGet(()->
+                batteryRequests.saveAndFlush(ServiceRequest.builder().requestedRobot(locked).requestCode((warning?"WARN-":"CHARGE-")+episodeId.toString().substring(0,20))
+                        .requestType(ServiceRequestType.AUTO_CHARGING).sourceType(RequestSourceType.SYSTEM).priority(100)
+                        .status(ServiceRequestStatus.SUBMITTED).requestDataJson(inputs.deepCopy()).requestedAt(now)
+                        .idempotencyKey(prefix+locked.getRobotId()+":"+episodeId).build()));
+        var existing=jobRepository.findByServiceRequestServiceRequestId(request.getServiceRequestId());
+        if(!existing.isEmpty())return existing.getFirst();
+        return create(workflow,request,null,locked,map,100,inputs,null,null,true);
+    }
 
     @Override public Job createForPublished(UUID workflowId,UUID robotId,UUID mapId,UUID sessionId,JsonNode inputs,Integer priority) {
         var policy=rollout.lockForRuntimeCreation();
@@ -252,6 +288,11 @@ public class JobExecutionServiceImpl implements JobExecutionService {
     }
 
     private Job create(Workflow workflow,ServiceRequest request,Schedule schedule,Robot robot,FacilityMap map,int priority,JsonNode input,Instant fireAt,String itemKey){
+        return create(workflow,request,schedule,robot,map,priority,input,fireAt,itemKey,false);
+    }
+    private Job create(Workflow workflow,ServiceRequest request,Schedule schedule,Robot robot,FacilityMap map,int priority,JsonNode input,Instant fireAt,String itemKey,boolean batteryReturn){
+        if(!batteryReturn && robot!=null && batteryPolicy.getObject().foregroundBlocked(robot.getRobotId()))
+            throw new BusinessRuleException("BATTERY_POLICY_ACTIVE: return/recovery must settle before accepting new foreground work");
         if(robot!=null && !readiness.acceptsRobot(workflow,robot))throw new BusinessRuleException("Selected robot does not support this workflow transport; enrolled MQTT robots require schema 3");
         readiness.requireReady(workflow);if(robot!=null && workflow.getSchemaVersion()==2 && mqttProperties.manages(robot.getRobotId()))throw new BusinessRuleException("Enrolled MQTT robots require a schema 3 workflow; do not switch active Job transport");Instant now=Instant.now(clock);Job job=jobRepository.saveAndFlush(Job.builder().workflow(workflow).serviceRequest(request).schedule(schedule).robot(robot).map(map).assignedStaffAccount(request!=null&&request.getRequestedByAccount()!=null&&request.getRequestedByAccount().getRole()==Role.STAFF?request.getRequestedByAccount():null).jobCode("JOB-"+UUID.randomUUID().toString().replace("-","").substring(0,20).toUpperCase(Locale.ROOT)).status(JobStatus.QUEUED).priority(priority).inputJson(input).contextJson(objectMapper.createObjectNode()).workflowHash(workflow.getDefinitionHash()).protocolVersion(1).schemaVersion(workflow.getSchemaVersion()).graphVersion(workflow.getGraphVersion()).beOrchestrated(workflow.getSchemaVersion()==3).scheduleFireAt(fireAt).scheduleItemKey(itemKey).dispatchCommandId(robot==null||workflow.getSchemaVersion()==3?null:UUID.randomUUID()).dispatchExpiresAt(robot==null||workflow.getSchemaVersion()==3?null:now.plusSeconds(60)).queuedAt(now).scheduledAt(fireAt).build());
         Map<UUID,JobTask> runtimeTasks=new HashMap<>();for(Task task:taskRepository.findByWorkflowWorkflowIdOrderBySequenceNoAsc(workflow.getWorkflowId())){JobTask jt=jobTaskRepository.save(JobTask.builder().job(job).task(task).sequenceNo(task.getSequenceNo()).taskNameSnapshot(task.getTaskName()).configSnapshotJson(copy(task.getConfigJson())).status(JobTaskStatus.PENDING).build());runtimeTasks.put(task.getTaskId(),jt);}jobTaskRepository.flush();

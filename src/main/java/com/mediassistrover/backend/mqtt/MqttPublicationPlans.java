@@ -31,7 +31,27 @@ public class MqttPublicationPlans {
     private final MqttRolloutService rollout;
     private final com.mediassistrover.backend.validation.StepExecutionPolicy executionPolicy;
     private final com.mediassistrover.backend.service.RobotTaskArbitrationService arbitration;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.beans.factory.ObjectProvider<com.mediassistrover.backend.service.RobotBatteryPolicyService> batteryPolicy;
     public record Publication(UUID id,UUID robotId,UUID sessionId,JsonNode payload) { }
+    /** Revalidate a queued first send without rebuilding the frozen MOVE profile or counting a retry. */
+    @Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRES_NEW,isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public Publication prepared(Publication snapshot) {
+        var initial=commands.findById(snapshot.id()).orElse(null);if(initial==null)return null;
+        Job job=jobs.lockById(initial.getJobId()).orElseThrow();robots.findByIdForUpdate(initial.getRobotId()).orElseThrow();
+        var command=commands.lock(snapshot.id()).orElseThrow();
+        entityManager.refresh(command,jakarta.persistence.LockModeType.PESSIMISTIC_WRITE);
+        if(!"EXECUTE_STEP".equals(command.getCommandType()) || !"PUBLISHING".equals(command.getState())
+                || command.getSendAttempts()!=1 || !snapshot.robotId().equals(command.getRobotId())
+                || !snapshot.payload().equals(command.getPayloadJson()) || !command.getExpiresAt().isAfter(clock.instant()))return null;
+        JobStep action=steps.findById(command.getJobStepId()).orElseThrow();boolean cleanup=action.isMappingCleanup();
+        if(job.getStatus()!=JobStatus.RUNNING && !(cleanup && job.getStatus()==JobStatus.CANCELLED && job.stopOutstanding()))return null;
+        if(!cleanup && (job.getCancelRequestedAt()!=null || action.getInterruptionReason()!=null
+                || arbitration.patrolPublicationBlocked(job)))return null;
+        var battery=batteryPolicy==null?null:batteryPolicy.getIfAvailable();
+        if(!cleanup && battery!=null && battery.publicationBlocked(job))return null;
+        return snapshot;
+    }
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.REQUIRES_NEW,isolation=org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public Publication command(UUID id) {
         RobotCommandOutbox initial=commands.findById(id).orElseThrow();
@@ -43,6 +63,8 @@ public class MqttPublicationPlans {
         // No new patrol execution may slip through while an interruption callback
         // waits for this Job lock. Stop commands remain publishable.
         if(!cancel && !cleanup && arbitration.patrolPublicationBlocked(job))return null;
+        var battery=batteryPolicy==null?null:batteryPolicy.getIfAvailable();
+        if(!cancel && !cleanup && battery!=null && battery.publicationBlocked(job))return null;
         if(!cancel && !cleanup && !rollout.dispatchAllowed())return null;
         if(!properties.manages(command.getRobotId()) || !cancel && !cleanup && (!properties.isDispatchEnabled()
                 || !properties.getEnabledStepTypes().contains(command.getPayloadJson().path("step").path("stepType").asText())))return null;

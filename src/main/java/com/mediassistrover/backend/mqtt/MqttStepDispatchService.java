@@ -33,6 +33,8 @@ public class MqttStepDispatchService {
     private final MqttRolloutService rollout;
     private final com.mediassistrover.backend.service.NavigationSessionService navigationSessions;
     private final org.springframework.context.ApplicationEventPublisher updates;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.beans.factory.ObjectProvider<com.mediassistrover.backend.service.RobotBatteryPolicyService> batteryPolicy;
 
     public void requireActionSupported(Step step) {
         if(!executionPolicy.requiresMqtt(step))throw new BusinessRuleException("Step is backend-owned and cannot use MQTT dispatch");
@@ -81,6 +83,8 @@ public class MqttStepDispatchService {
         scope.validate(step.getStep(),business,job);
         if (job.getRobot()==null || !properties.manages(job.getRobot().getRobotId())) throw new BusinessRuleException("Robot is not enrolled for MQTT");
         robots.findByIdForUpdate(job.getRobot().getRobotId()).orElseThrow();
+        var battery=batteryPolicy==null?null:batteryPolicy.getIfAvailable();
+        if(!step.isMappingCleanup() && battery!=null && battery.publicationBlocked(job))return;
         RobotMqttSession session=sessions.lock(job.getRobot().getRobotId()).orElse(null);
         if (!registry.fresh(session)) return;
         if(commissioning && !HardwareCommissioningWorkflow.piSupportsUnlock(session.getHelloJson()))
@@ -123,6 +127,11 @@ public class MqttStepDispatchService {
         inputs.validatePiParams(step.getStep(),params);
         UUID commandId=UUID.randomUUID();Instant now=Instant.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
         Instant expiresAt = now.plusSeconds(properties.getCommandTtlSec());
+        Instant batteryDeadline=battery==null?null:battery.commandDeadline(job);
+        if(batteryDeadline!=null) {
+            if(!batteryDeadline.isAfter(now))return;
+            if(batteryDeadline.isBefore(expiresAt))expiresAt=batteryDeadline;
+        }
         if (unlock && !commissioning) {
             Instant grantExpiry = Instant.parse(params.path("authorization").path("valid_until").asText());
             if (!grantExpiry.isAfter(now)) throw new BusinessRuleException("UNLOCK authorization has expired");
@@ -149,7 +158,8 @@ public class MqttStepDispatchService {
             }
         }
         contracts.command(command);
-        // Prepared first publication bypasses plans.command(). Record START/SAVE
+        // Record START/SAVE before the prepared first publication. Its final
+        // battery/cancellation check does not rebuild the navigation profile.
         // lifecycle in this same commit before the Pi can emit its heartbeat.
         // Non-mapping steps return immediately; no extra MOVE round trip.
         mapping.publishing(step);
@@ -157,8 +167,9 @@ public class MqttStepDispatchService {
                 .operationKey(step.getOperationKey()).navigationProfileHash(profileHash).aiProfileSnapshotJson(aiProfile).payloadJson(command).expiresAt(expiresAt).state("PUBLISHING").sendAttempts(1).lastPublishAt(now).createdAt(now).build());
         // All scope, profile, rollout, robot and TTL checks above are held by
         // this transaction. This commit is the first publication-attempt boundary;
-        // send its immutable snapshot AFTER commit rather than repeat those same
-        // cloud reads in a second transaction. Replays/retries still use plans.command.
+        // send its immutable snapshot AFTER commit, rechecking battery and stop
+        // authority if intent changed while it waited in the receipt queue.
+        // Replays/retries still use plans.command.
         updates.publishEvent(new MqttDurablePublisher.CommandQueued(commandId,
             new MqttPublicationPlans.Publication(commandId,session.getRobotId(),session.getTransportSessionId(),command.deepCopy())));
     }
