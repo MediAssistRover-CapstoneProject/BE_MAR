@@ -7,9 +7,29 @@ import org.springframework.stereotype.Component;
 public class MqttContractValidator {
     private final FixedContractSchemaValidator schemas=new FixedContractSchemaValidator();
     public void live(JsonNode node) { schemas.validateRoot("mapping-live.schema.json",node); }
-    public void inbound(JsonNode node) { schemas.validateRoot("mqtt-pi-message.schema.json",node); }
+    public void inbound(JsonNode node) {
+        JsonNode baseline=node;
+        JsonNode started="COMMAND_ACK".equals(node.path("messageType").asText())
+                ? node.path("payload").path("start") : "STEP_STARTED".equals(node.path("messageType").asText())
+                    ? node.path("payload") : null;
+        if(started!=null && "MOVE".equals(started.path("stepType").asText()) && started.path("resolvedInputs").has("path_search")) {
+            GroupPathSearchPolicy.validate(started.path("resolvedInputs").get("path_search"));
+            baseline=node.deepCopy();
+            JsonNode copied="COMMAND_ACK".equals(node.path("messageType").asText())
+                    ? baseline.path("payload").path("start") : baseline.path("payload");
+            ((com.fasterxml.jackson.databind.node.ObjectNode)copied.path("resolvedInputs")).remove("path_search");
+        }
+        schemas.validateRoot("mqtt-pi-message.schema.json",baseline);
+    }
     public void command(JsonNode node) {
-        schemas.validateRoot("mqtt-command.schema.json",node);
+        JsonNode baseline=node;
+        if("EXECUTE_STEP".equals(node.path("commandType").asText()) && "MOVE".equals(node.path("step").path("stepType").asText())
+                && node.path("step").path("params").has("path_search")) {
+            GroupPathSearchPolicy.validate(node.path("step").path("params").get("path_search"));
+            baseline=node.deepCopy();
+            ((com.fasterxml.jackson.databind.node.ObjectNode)baseline.path("step").path("params")).remove("path_search");
+        }
+        schemas.validateRoot("mqtt-command.schema.json",baseline);
         if (node.path("commissioningUnlock").asBoolean()) {
             JsonNode step=node.path("step"), params=step.path("params");
             if (!"CONTROL_HARDWARE".equals(step.path("stepType").asText())

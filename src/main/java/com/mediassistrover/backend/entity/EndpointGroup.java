@@ -1,6 +1,7 @@
 package com.mediassistrover.backend.entity;
 
 import com.mediassistrover.backend.enums.SelectionPolicy;
+import com.mediassistrover.backend.enums.EndpointFallbackTrigger;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.UuidGenerator;
@@ -21,6 +22,11 @@ public class EndpointGroup {
     @Builder.Default
     @Column(name = "fallback_radius_m", nullable = false, precision = 5, scale = 3)
     private BigDecimal fallbackRadiusM = new BigDecimal("0.75");
+    @Builder.Default
+    @Enumerated(EnumType.STRING) @Column(name = "fallback_trigger", nullable = false, length = 32)
+    private EndpointFallbackTrigger fallbackTrigger = EndpointFallbackTrigger.NEAR_DOOR_OBSTRUCTION;
+    @Builder.Default @Column(name = "path_search_budget_sec", nullable = false)
+    private int pathSearchBudgetSec = 10;
     @Column(name = "group_code", nullable = false, length = 64) private String groupCode;
     @Column(name = "group_name", nullable = false, length = 160) private String groupName;
     @Enumerated(EnumType.STRING) @Column(name = "selection_policy", nullable = false, length = 32) private SelectionPolicy selectionPolicy;

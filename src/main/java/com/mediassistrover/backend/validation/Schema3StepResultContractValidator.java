@@ -140,10 +140,38 @@ final class Schema3StepResultContractValidator {
             case "COMMIT_MAP_ARTIFACT" -> "COMMIT_MAP_ARTIFACTData";
             default -> throw new BusinessRuleException("Unknown DATA_SERVICE key: " + key);
         };
-        schemas.validate("be-step-contracts.json", definition, data);
+        schemas.validate("be-step-contracts.json", definition, navigationDataBaseline(key,data));
         if ("QUERY_HOSPITAL_INFORMATION".equals(key) && data.path("count").intValue() != data.path("items").size()) invalid("count does not match items");
         if ("SELECT_TARGET".equals(key) && data.path("has_target").asBoolean()) same(data, data.path("target"), "endpoint_id");
         if ("CHECK_TARGET".equals(key) && data.path("is_valid").asBoolean()) same(input, data.path("endpoint"), "endpoint_id");
+    }
+    /** BE navigation metadata extends server outputs only; retain the immutable Pi catalog/hash. */
+    private JsonNode navigationDataBaseline(String key,JsonNode data) {
+        if(!Set.of("RESOLVE_TARGETS","SELECT_TARGET").contains(key) || !data.isObject())return data;
+        com.fasterxml.jackson.databind.node.ObjectNode baseline=data.deepCopy();
+        if("RESOLVE_TARGETS".equals(key)) {
+            for(JsonNode target:baseline.path("targets")) stripPathPolicy(target);
+        } else {
+            if(data.has("checkpoint_status") || data.has("reason")) {
+                if(!data.path("has_target").isBoolean() || data.path("has_target").asBoolean()
+                        || !"BLOCKED".equals(data.path("checkpoint_status").asText())
+                        || !"ALL_ENDPOINTS_UNREACHABLE".equals(data.path("reason").asText())
+                        || data.has("endpoint_id") || data.has("target") || data.has("arrival_text"))
+                    invalid("Invalid exhausted endpoint-group result");
+                baseline.remove(java.util.List.of("checkpoint_status","reason"));
+            }
+            stripPathPolicy(baseline.path("target"));
+        }
+        return baseline;
+    }
+    private void stripPathPolicy(JsonNode target) {
+        if(!target.has("fallback_trigger") && !target.has("path_search_budget_sec"))return;
+        if(!target.isObject() || !"ON_PATH_UNAVAILABLE".equals(target.path("fallback_trigger").asText())
+                || !target.path("path_search_budget_sec").isIntegralNumber()
+                || !target.path("path_search_budget_sec").canConvertToInt()
+                || target.path("path_search_budget_sec").asInt()<5 || target.path("path_search_budget_sec").asInt()>30)
+            invalid("Invalid target path-search policy");
+        ((com.fasterxml.jackson.databind.node.ObjectNode)target).remove(java.util.List.of("fallback_trigger","path_search_budget_sec"));
     }
     private void uniqueItems(JsonNode items) {
         Set<String> codes = new HashSet<>();

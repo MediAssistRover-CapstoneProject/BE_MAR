@@ -12,18 +12,24 @@ import java.util.List;
 
 /** A bounded, route-independent patrol round. All destination authority comes from frozen Job inputs. */
 final class PatrolTemplateDefinition {
-    static final int VERSION = 1;
-    static final String CODE_PREFIX = "WF_PATROL_TEMPLATE_V1_";
+    static final int VERSION = 2;
+    static final String CODE_PREFIX = "WF_PATROL_TEMPLATE_V2_";
     private PatrolTemplateDefinition() { }
 
     static String code(int count) { requireCount(count); return CODE_PREFIX + count; }
+    static String code(int count,int version) { requireCount(count); return "WF_PATROL_TEMPLATE_V"+version+"_"+count; }
 
     static void requireCount(int count) {
         if (count < 3 || count > 11) throw new BusinessRuleException("Patrol templates require 3..11 checkpoints");
     }
 
     static GraphCreateRequest graph(ObjectMapper json, int count, String code) {
+        return graph(json,count,code,VERSION);
+    }
+
+    static GraphCreateRequest graph(ObjectMapper json, int count, String code, int version) {
         requireCount(count);
+        if(version!=1 && version!=VERSION) throw new BusinessRuleException("Unsupported patrol template version");
         List<GraphStepRequest> actions = new ArrayList<>();
         List<GraphTransitionRequest> routes = new ArrayList<>();
         for (int index = 0; index < count; index++) {
@@ -47,7 +53,8 @@ final class PatrolTemplateDefinition {
             success(routes, direct, sense); failures(routes, direct);
             EndpointGroupWorkflowSupport.append(json, actions, routes, "PATROL", group,
                     ref(json, path + "/endpoint_group_id"), ref(json, "/inputs/map_id"), "PATROL", .25,
-                    60, 2, sense, TerminalStatus.FAILED);
+                    60, 2, sense, TerminalStatus.FAILED, version>=2,
+                    number==count ? null : "CHECKPOINT_"+(number+1));
             // Keep the shared group's committed SELECT_TARGET reference, while speed remains a Job input.
             for (int position = 0; position < actions.size(); position++) {
                 var action = actions.get(position);
@@ -79,7 +86,7 @@ final class PatrolTemplateDefinition {
         choices.addObject().putArray("required").add("endpoint_id");
         choices.addObject().putArray("required").add("endpoint_group_id");
         var ui = json.createObjectNode();
-        ui.putObject("patrol_template").put("version", VERSION).put("checkpointCount", count);
+        ui.putObject("patrol_template").put("version", version).put("checkpointCount", count);
         var defaults = json.createObjectNode().put("patrol_repeat_count", 1).put("max_speed_mps", .25);
         int duration = actions.stream().mapToInt(action -> action.timeoutSec() * action.maxVisits()).sum() + 300;
         var workflow = new WorkflowUpsertRequest(code, 1, "Tuần tra " + count + " điểm", "PATROL",

@@ -20,6 +20,14 @@ public final class EndpointGroupWorkflowSupport {
                                 List<GraphTransitionRequest> routes, String task, String prefix,
                                 JsonNode groupId, JsonNode mapId, String moveMode, double speed,
                                 int timeout, int maxCandidates, String onReached, TerminalStatus failure) {
+        return append(json,steps,routes,task,prefix,groupId,mapId,moveMode,speed,timeout,maxCandidates,onReached,failure,false,null);
+    }
+
+    public static Branch append(ObjectMapper json, List<GraphStepRequest> steps,
+                                List<GraphTransitionRequest> routes, String task, String prefix,
+                                JsonNode groupId, JsonNode mapId, String moveMode, double speed,
+                                int timeout, int maxCandidates, String onReached, TerminalStatus failure,
+                                boolean skipBlockedCheckpoint, String onBlocked) {
         if (maxCandidates < 1 || maxCandidates > MAX_CANDIDATES)
             throw new IllegalArgumentException("Endpoint group candidate budget must be 1.." + MAX_CANDIDATES);
         String resolve = prefix + "_RESOLVE", init = prefix + "_INIT", select = prefix + "_SELECT";
@@ -50,7 +58,8 @@ public final class EndpointGroupWorkflowSupport {
         route(routes, select, has, TransitionOutcome.SUCCESS, null, 1, true, null);
         route(routes, has, move, TransitionOutcome.SUCCESS,
                 condition(json, "/result/value", true), 1, false, null);
-        route(routes, has, null, TransitionOutcome.SUCCESS, null, 2, true, failure);
+        route(routes, has, skipBlockedCheckpoint ? onBlocked : null, TransitionOutcome.SUCCESS, null, 2, true,
+                skipBlockedCheckpoint ? onBlocked==null ? TerminalStatus.SUCCEEDED : null : failure);
         route(routes, move, onReached, TransitionOutcome.SUCCESS, null, 1, true,
                 onReached == null ? TerminalStatus.SUCCEEDED : null);
         route(routes, move, next, TransitionOutcome.FAILURE,

@@ -22,7 +22,7 @@ import java.util.*;
 @Slf4j
 @ConditionalOnProperty(name="app.operations.scheduler-enabled", havingValue="true", matchIfMissing=true)
 public class PatrolInterruptionReconciler {
-    private static final Set<String> EVENT_SOURCES = Set.of("VOICE", "MEDIA", "INCIDENT", "RESTRICTED_ALERT");
+    private static final Set<String> EVENT_SOURCES = Set.of("VOICE", "MEDIA", "INCIDENT", "RESTRICTED_ALERT", "FALL_OBSERVATION");
     private static final List<EmergencyIncidentStatus> OPEN_INCIDENTS = List.of(
             EmergencyIncidentStatus.OPEN, EmergencyIncidentStatus.ACKNOWLEDGED, EmergencyIncidentStatus.IN_PROGRESS);
     private final JobRepository jobs;
@@ -31,6 +31,8 @@ public class PatrolInterruptionReconciler {
     private final MediaSessionRepository media;
     private final EmergencyIncidentRepository incidents;
     private final AlertRepository alerts;
+    @org.springframework.beans.factory.annotation.Autowired private FallObservationRepository fallObservations;
+    @org.springframework.beans.factory.annotation.Autowired private java.time.Clock clock;
     private final JobSuspensionService suspensions;
     private final PlatformTransactionManager transactions;
 
@@ -75,6 +77,9 @@ public class PatrolInterruptionReconciler {
                     .forEach(row -> expected.add(new Source("INCIDENT", row.getIncidentId())));
             alerts.findActiveRestrictedByRobotId(robotId)
                     .forEach(row -> expected.add(new Source("RESTRICTED_ALERT", row.getAlertId())));
+            if(fallObservations!=null)fallObservations.findByJobIdAndStateIn(jobId,com.mediassistrover.backend.entity.FallObservation.ACTIVE)
+                    .stream().filter(row->row.active(clock.instant()))
+                    .forEach(row->expected.add(new Source("FALL_OBSERVATION",row.getObservationId())));
             for (Source source : expected) suspensions.request(job, source.type(), source.id());
             for (var hold : holds.findByJobJobIdOrderByCreatedAt(jobId)) {
                 if (hold.getReleasedAt() == null && EVENT_SOURCES.contains(hold.getSource())

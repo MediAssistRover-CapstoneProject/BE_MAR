@@ -40,6 +40,11 @@ public class AlertServiceImpl implements AlertService {
             recipients = responder != null && responder.getRole() == Role.STAFF
                     && responder.getStatus() == AccountStatus.ACTIVE && !responder.isMustChangePassword()
                     ? List.of(responder) : List.of();
+            if (recipients.isEmpty() && incident.isSuspectedFall()) {
+                // An unassigned fall must remain visible even when no SOS shift is checked in.
+                recipients = accountRepository.findByStatusAndRoleInOrderByAccountCodeAsc(
+                        AccountStatus.ACTIVE,List.of(Role.ADMIN)).stream().filter(account->!account.isMustChangePassword()).toList();
+            }
         } else {
             List<Account> eligible = accountRepository.findByStatusAndRoleInOrderByAccountCodeAsc(
                     AccountStatus.ACTIVE, List.of(Role.ADMIN, Role.STAFF));

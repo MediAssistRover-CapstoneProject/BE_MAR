@@ -54,6 +54,9 @@ public class StepInputContractValidator {
         // The current authorization handler reads purpose from the definition,
         // never from client data.
         if (step.getStepType() == StepType.AUTHENTICATE) {
+            if (step.getWorkflow() != null && step.getWorkflow().getSchemaVersion() == 3
+                    && step.getParamsJson().has("method") && !step.getParamsJson().path("method").isTextual())
+                fail(step,"method","must be a fixed QR_CODE or FACE_VERIFICATION handler in paramsJson");
             if (!step.getParamsJson().path("method").equals(merged.path("method"))) fail(step,"method","cannot override authentication method");
             text(
                     step,
@@ -170,13 +173,10 @@ public class StepInputContractValidator {
                 fields(
                         s,
                         n,
-                        Set.of(
-                                "map_id",
-                                "endpoint_id",
-                                "mode",
-                                "max_speed_mps"
-                        )
+                        pi ? Set.of("map_id", "endpoint_id", "mode", "max_speed_mps", "path_search")
+                                : Set.of("map_id", "endpoint_id", "mode", "max_speed_mps")
                 );
+                if(n.has("path_search")) GroupPathSearchPolicy.validate(n.get("path_search"));
 
                 uuid(
                         s,
@@ -669,13 +669,15 @@ public class StepInputContractValidator {
                         s,
                         n,
                         "method",
-                        Set.of(
-                                "QR_CODE", "FACE_VERIFICATION",
-                                "STAFF_CONFIRMATION"
-                        ),
+                        modern ? Set.of("QR_CODE", "FACE_VERIFICATION")
+                                : Set.of("QR_CODE", "FACE_VERIFICATION", "STAFF_CONFIRMATION"),
                         false,
                         template
                 );
+
+                if (modern && required && "FACE_VERIFICATION".equals(n.path("method").asText())
+                        && !"DELIVERY_RECEIVER".equals(n.path("purpose").asText()))
+                    fail(s,"purpose","FACE_VERIFICATION is supported only for DELIVERY_RECEIVER");
 
                 uuid(
                         s,

@@ -40,7 +40,14 @@ public final class FacilityResponses {
             Instant createdAt, Instant updatedAt) { }
     public record EndpointGroupResponse(UUID endpointGroupId, UUID mapId, String groupCode, String groupName,
             SelectionPolicy selectionPolicy, boolean allowFallback, String description, boolean active,
-            Instant createdAt, Instant updatedAt, UUID roomId, BigDecimal fallbackRadiusM) {
+            Instant createdAt, Instant updatedAt, UUID roomId, BigDecimal fallbackRadiusM,
+            EndpointFallbackTrigger fallbackTrigger, int pathSearchBudgetSec) {
+        public EndpointGroupResponse(UUID endpointGroupId, UUID mapId, String groupCode, String groupName,
+                SelectionPolicy selectionPolicy, boolean allowFallback, String description, boolean active,
+                Instant createdAt, Instant updatedAt, UUID roomId, BigDecimal fallbackRadiusM) {
+            this(endpointGroupId, mapId, groupCode, groupName, selectionPolicy, allowFallback, description,
+                    active, createdAt, updatedAt, roomId, fallbackRadiusM, EndpointFallbackTrigger.NEAR_DOOR_OBSTRUCTION, 10);
+        }
         public EndpointGroupResponse(UUID endpointGroupId, UUID mapId, String groupCode, String groupName,
                 SelectionPolicy selectionPolicy, boolean allowFallback, String description, boolean active,
                 Instant createdAt, Instant updatedAt) {

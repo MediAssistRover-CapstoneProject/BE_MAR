@@ -213,7 +213,7 @@ public class FacilityServiceImpl implements FacilityService {
         EndpointGroup group=EndpointGroup.builder().groupCode(r.groupCode()).groupName(r.groupName())
                 .selectionPolicy(SelectionPolicy.PRIORITY).allowFallback(true).active(true).build();
         bindGroup(group,new EndpointGroupRequest(r.mapId(),r.groupCode(),r.groupName(),SelectionPolicy.PRIORITY,
-                true,null,true,r.roomId(),r.fallbackRadiusM()));
+                true,null,true,r.roomId(),r.fallbackRadiusM(),r.fallbackTrigger(),r.pathSearchBudgetSec()));
         for(Endpoint candidate:List.of(primary,fallback)){
             ensureMemberScope(group,candidate);
             if(!candidate.isActive()||!candidate.isAccessible())throw new BusinessRuleException("Room pair endpoints must be active and accessible");
@@ -301,6 +301,10 @@ public class FacilityServiceImpl implements FacilityService {
             if(!room.getFloor().getFloorId().equals(map.getFloor().getFloorId()))throw new BusinessRuleException("Room and endpoint group map must belong to the same floor");
         }
         e.setMap(map);e.setRoom(room);e.setFallbackRadiusM(radius);
+        if(r.pathSearchBudgetSec()<5 || r.pathSearchBudgetSec()>30)throw new BusinessRuleException("Path search budget must be between 5 and 30 seconds");
+        if(r.fallbackTrigger()==com.mediassistrover.backend.enums.EndpointFallbackTrigger.ON_PATH_UNAVAILABLE
+                && !r.allowFallback())throw new BusinessRuleException("Path-unavailable fallback requires allowFallback");
+        e.setFallbackTrigger(r.fallbackTrigger());e.setPathSearchBudgetSec(r.pathSearchBudgetSec());
         if(e.getEndpointGroupId()!=null){
             List<EndpointGroupMember> memberships=memberRepository.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(e.getEndpointGroupId());
             for(EndpointGroupMember membership:memberships)ensureMemberScope(e,membership.getEndpoint());

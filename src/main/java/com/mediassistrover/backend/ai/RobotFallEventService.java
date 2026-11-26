@@ -33,10 +33,14 @@ public class RobotFallEventService {
     public record Request(@NotNull UUID eventId, @NotNull UUID monitoringSessionId, @NotNull Instant detectedAt,
                           @NotNull @DecimalMin("0") @DecimalMax("1") BigDecimal confidence,
                           @NotBlank @Size(max = 100) String algorithm, @NotNull DetectionKind detectionKind,
-                          PatientLocation patientLocation, boolean visualReview) {
+                          PatientLocation patientLocation, boolean visualReview, UUID observationId) {
+        public Request(UUID eventId, UUID monitoringSessionId, Instant detectedAt, BigDecimal confidence,
+                       String algorithm, DetectionKind detectionKind, PatientLocation patientLocation, boolean visualReview) {
+            this(eventId, monitoringSessionId, detectedAt, confidence, algorithm, detectionKind, patientLocation, visualReview, null);
+        }
         public Request(UUID eventId, UUID monitoringSessionId, Instant detectedAt, BigDecimal confidence,
                        String algorithm, DetectionKind detectionKind, PatientLocation patientLocation) {
-            this(eventId, monitoringSessionId, detectedAt, confidence, algorithm, detectionKind, patientLocation, false);
+            this(eventId, monitoringSessionId, detectedAt, confidence, algorithm, detectionKind, patientLocation, false, null);
         }
     }
     public record Result(UUID detectionEventId, UUID incidentId, boolean duplicate) { }
@@ -54,6 +58,7 @@ public class RobotFallEventService {
     private final RuntimeSettingService settings;
     private final MqttWire wire;
     private final Clock clock;
+    @org.springframework.beans.factory.annotation.Autowired private FallObservationService observations;
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public Result record(Request request, DevicePrincipal device, RequestMetadata metadata) {
@@ -69,6 +74,7 @@ public class RobotFallEventService {
                 .put("detected_at", request.detectedAt().toString()).put("confidence", request.confidence())
                 .put("algorithm", request.algorithm()).put("detection_kind", request.detectionKind().name());
         if (request.visualReview()) payload.put("visual_review", true);
+        if (request.observationId() != null) payload.put("observation_id",request.observationId().toString());
         if (request.patientLocation() != null) payload.set("patient_location_candidate", PatrolFallEventService.patientPayload(request.patientLocation(), wire));
         var replay = receipts.duplicateContinuousFall(request.eventId(), robot, payload);
         if (replay.isPresent()) {
@@ -111,9 +117,13 @@ public class RobotFallEventService {
                 robot.getRobotId(), EmergencyIncident.SUSPECTED_FALL_TYPE).orElse(null);
         long cooldown = settings.getLong("fall.continuous-alert-cooldown-seconds", 30, 1, 300);
         double distanceM = settings.getLong("fall.continuous-dedup-distance-cm", 100, 20, 300) / 100.;
-        if (coalesces(previous, patient, map, now, cooldown, distanceM)) {
+        boolean sameObservation=request.observationId()==null || previous!=null && previous.getDetectionEvent()!=null
+                && previous.getDetectionEvent().getEventPayloadJson()!=null
+                && request.observationId().toString().equals(previous.getDetectionEvent().getEventPayloadJson().path("observation_id").asText());
+        if (sameObservation && coalesces(previous, patient, map, now, cooldown, distanceM)) {
             var result = new Result(previous.getDetectionEvent().getDetectionEventId(), previous.getIncidentId(), true);
             remember(request, robot, payload, result);
+            if(request.observationId()!=null)observations.incidentCommitted(request.observationId(),robot.getRobotId(),request.monitoringSessionId(),request.detectedAt(),previous);
             return result;
         }
         if (detections.existsById(request.eventId())) throw new ConflictException("Detection event ID already exists");
@@ -154,12 +164,15 @@ public class RobotFallEventService {
                 x, y, request.detectedAt(), RequestSourceType.DETECTOR, data, "CONTINUOUS_FALL_REVIEW_REQUESTED", metadata));
         var result = new Result(request.eventId(), incident.incident().getIncidentId(), false);
         remember(request, robot, payload, result);
+        if(request.observationId()!=null)observations.incidentCommitted(request.observationId(),robot.getRobotId(),request.monitoringSessionId(),request.detectedAt(),incident.incident());
         return result;
     }
 
     static boolean coalesces(EmergencyIncident previous, PatientLocation patient, FacilityMap map,
                               Instant now, long cooldown, double maximumDistanceM) {
         if (previous == null || previous.getDetectionEvent() == null || previous.getMap() == null
+                || previous.getStatus()!=EmergencyIncidentStatus.OPEN && previous.getStatus()!=EmergencyIncidentStatus.ACKNOWLEDGED
+                    && previous.getStatus()!=EmergencyIncidentStatus.IN_PROGRESS
                 || !map.getMapId().equals(previous.getMap().getMapId()) || previous.getOccurredAt() == null
                 || !previous.getOccurredAt().isAfter(now.minusSeconds(cooldown))) return false;
         // A review may remain OPEN for hours; that must not hide a later patient in another location.

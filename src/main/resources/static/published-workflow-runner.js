@@ -74,7 +74,11 @@
     }
     return {groups:[...groups.values()].sort((a,b)=>a.number-b.number).map(group=>{
       const selected=group.steps.find(step=>step.jobStepId===detail.job?.selectedJobStepId),visited=group.steps.filter(step=>step.selectedAt||step.startedAt||step.endedAt||!['PENDING','NOT_VISITED'].includes(step.status)),latest=visited[visited.length-1]||group.steps[0];
-      return {...group,current:!!selected&&!TERMINAL.has(detail.job?.status),latest:selected||latest,binding:detail.job?.inputJson?.checkpoints?.[group.number-1],snapshot:detail.job?.contextJson?.patrol_checkpoint_snapshot?.checkpoints?.[group.number-1]};
+      const recentSelection=visited.slice().reverse().find(step=>step.stepCodeSnapshot==='GROUP_'+group.number+'_SELECT');
+      const blocked=recentSelection?.resultJson?.data?.checkpoint_status==='BLOCKED'
+        && ['GROUP_'+group.number+'_SELECT','GROUP_'+group.number+'_HAS'].includes((selected||latest)?.stepCodeSnapshot);
+      return {...group,current:!!selected&&!TERMINAL.has(detail.job?.status),latest:selected||latest,checkpointStatus:blocked?'BLOCKED':null,
+        binding:detail.job?.inputJson?.checkpoints?.[group.number-1],snapshot:detail.job?.contextJson?.patrol_checkpoint_snapshot?.checkpoints?.[group.number-1]};
     }),other};
   }
   function mount(options){
@@ -382,7 +386,8 @@
         for(const group of grouped.groups){
           const item=document.createElement('li'),title=document.createElement('strong'),latest=group.latest;
           const phase=latest.stepTypeSnapshot==='EXECUTE_SENSING'?'quan sát':latest.stepTypeSnapshot==='MOVE'?'di chuyển':'điều phối';
-          title.textContent='Điểm '+group.number+' · '+latest.status+' · '+phase+(group.current?' · hiện tại':'');item.append(title);
+          title.textContent=group.checkpointStatus==='BLOCKED'?'Điểm '+group.number+' · Bị chặn ở cả hai điểm · Đã bỏ qua'
+            :'Điểm '+group.number+' · '+latest.status+' · '+phase+(group.current?' · hiện tại':'');item.append(title);
           const destination=document.createElement('small'),binding=group.binding;
           const frozen=group.snapshot;
           destination.textContent=frozen?.target_mode==='ENDPOINT_GROUP'?'Nhóm '+frozen.endpoint_group_name+' · '+(frozen.targets||[]).map(point=>point.endpoint_name||point.endpoint_code).join(' → '):frozen?.endpoint?.endpoint_name||frozen?.endpoint?.endpoint_code||(binding?.endpoint_group_id?'Nhóm hai điểm cùng phòng · '+binding.endpoint_group_id:binding?.endpoint_id?'Endpoint · '+binding.endpoint_id:'Đi tới điểm → quan sát tại điểm');item.append(destination);

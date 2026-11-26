@@ -35,6 +35,7 @@ public class JobSuspensionService {
     private final EmergencyIncidentRepository incidents;
     private final MediaSessionRepository media;
     private final AlertRepository alerts;
+    @org.springframework.beans.factory.annotation.Autowired private FallObservationRepository fallObservations;
 
     public boolean isPatrol(Job job) {
         return job!=null && job.isBeOrchestrated() && job.getSchemaVersion()==3 && job.getWorkflow()!=null
@@ -128,6 +129,7 @@ public class JobSuspensionService {
         if(!incidents.findByRobotRobotIdAndStatusInAndArchivedAtIsNull(robot.getRobotId(),
                 List.of(EmergencyIncidentStatus.OPEN,EmergencyIncidentStatus.ACKNOWLEDGED,EmergencyIncidentStatus.IN_PROGRESS)).isEmpty())return "INCIDENT_ACTIVE";
         if(alerts.existsActiveRestrictedByRobotId(robot.getRobotId()))return "RESTRICTED_REVIEW_ACTIVE";
+        if(fallObservations!=null && fallObservations.existsByJobIdAndStateInAndExpiresAtAfter(job.getJobId(),FallObservation.ACTIVE,clock.instant()))return "FALL_OBSERVATION_ACTIVE";
         if(jobs.findByRobotRobotIdAndStatusIn(robot.getRobotId(),List.of(JobStatus.QUEUED,JobStatus.ACCEPTED,JobStatus.RUNNING,JobStatus.SUSPENDING,JobStatus.RECOVERY_REQUIRED))
                 .stream().anyMatch(other->!other.getJobId().equals(job.getJobId())))return "FOREGROUND_JOB_PENDING";
         if(jobs.existsHigherPriorityQueuedForMap(job.getMap()==null?null:job.getMap().getMapId(),job.getPriority()))return "HIGHER_PRIORITY_JOB_PENDING";

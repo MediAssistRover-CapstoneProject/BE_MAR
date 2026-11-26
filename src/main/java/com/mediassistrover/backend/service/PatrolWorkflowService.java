@@ -188,6 +188,8 @@ public class PatrolWorkflowService {
                 slot.put("target_mode", "ENDPOINT_GROUP").put("endpoint_group_id", group.getEndpointGroupId().toString())
                         .put("endpoint_group_name", group.getGroupName()).put("room_id", group.getRoom().getRoomId().toString())
                         .put("room_name", group.getRoom().getRoomName()).put("fallback_radius_m", group.getFallbackRadiusM());
+                if(group.getFallbackTrigger()==EndpointFallbackTrigger.ON_PATH_UNAVAILABLE)
+                    slot.put("fallback_trigger",group.getFallbackTrigger().name()).put("path_search_budget_sec",group.getPathSearchBudgetSec());
                 var ordered = slot.putArray("targets");
                 for (var member : members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(checkpoint.endpointGroupId()))
                     if (member.isActive()) ordered.add(snapshotEndpoint(member.getEndpoint()).put("sequence_no", member.getSequenceNo()));
@@ -222,7 +224,8 @@ public class PatrolWorkflowService {
         for (Checkpoint checkpoint : request.checkpoints()) {
             requireCheckpoint(request.mapId(), checkpoint);
         }
-        return graph(request, CODE_PREFIX + wire.canonicalHash(json.valueToTree(request))
+        boolean grouped=request.checkpoints().stream().anyMatch(checkpoint->checkpoint.endpointGroupId()!=null);
+        return graph(request, CODE_PREFIX + (grouped?"V2_":"") + wire.canonicalHash(json.valueToTree(request))
                 .substring(0, 32).toUpperCase(Locale.ROOT));
     }
 
@@ -245,6 +248,10 @@ public class PatrolWorkflowService {
     }
 
     GraphCreateRequest graph(Create request, String code) {
+        return graph(request,code,true);
+    }
+
+    private GraphCreateRequest graph(Create request, String code, boolean skipBlockedCheckpoint) {
         if (request.checkpoints() == null || request.checkpoints().isEmpty() || request.checkpoints().size() > 5)
             throw new BusinessRuleException("Patrol requires 1..5 checkpoints");
         int repeats = request.repeatCount() == null ? 1 : request.repeatCount();
@@ -273,7 +280,9 @@ public class PatrolWorkflowService {
                 EndpointGroupWorkflowSupport.append(json, actions, edges, TASK, "GROUP_" + number,
                         json.getNodeFactory().textNode(checkpoint.endpointGroupId().toString()),
                         json.getNodeFactory().textNode(request.mapId().toString()), SERVICE, speed, moveTimeout,
-                        2, "SENSE_" + number, TerminalStatus.FAILED);
+                        2, "SENSE_" + number, TerminalStatus.FAILED, skipBlockedCheckpoint,
+                        index+1==request.checkpoints().size() ? null
+                            : request.checkpoints().get(index+1).endpointGroupId()==null ? "MOVE_"+(number+1) : "GROUP_"+(number+1)+"_RESOLVE");
                 candidateMoves += 2;
             }
             var sensing = json.createObjectNode().put("sensing_type", checkpoint.sensingType()).put("window_sec", window);
@@ -295,7 +304,10 @@ public class PatrolWorkflowService {
         int duration = candidateMoves * moveTimeout + request.checkpoints().size() * (window + 10) + 300;
         boolean grouped = request.checkpoints().stream().anyMatch(checkpoint -> checkpoint.endpointGroupId() != null);
         var ui = json.createObjectNode();
-        if (grouped) ui.set("patrol_definition", json.valueToTree(request));
+        if (grouped) {
+            ui.set("patrol_definition", json.valueToTree(request));
+            if(skipBlockedCheckpoint) ui.put("patrol_group_exhaustion","SKIP_CHECKPOINT");
+        }
         var workflow = new WorkflowUpsertRequest(code, 1, request.name(), SERVICE,
                 "Finite patrol with one sensing window after each successful MOVE", schema, ui,
                 defaults, json.createObjectNode(), json.createArrayNode(), duration,
@@ -495,15 +507,16 @@ public class PatrolWorkflowService {
     private void requireTemplateDefinition(Workflow workflow) {
         var metadata = workflow.getInputUiJson() == null ? json.missingNode() : workflow.getInputUiJson().path("patrol_template");
         if (!isTemplate(workflow) || metadata.size() != 2 || !metadata.path("version").isIntegralNumber()
-                || metadata.path("version").asInt() != PatrolTemplateDefinition.VERSION
+                || (metadata.path("version").asInt()!=1 && metadata.path("version").asInt()!=PatrolTemplateDefinition.VERSION)
                 || !metadata.path("checkpointCount").isIntegralNumber())
             throw new BusinessRuleException("Patrol template metadata is invalid");
         int count = metadata.path("checkpointCount").asInt();
         PatrolTemplateDefinition.requireCount(count);
-        if (!PatrolTemplateDefinition.code(count).equals(workflow.getWorkflowCode()) || workflow.getSchemaVersion() != 3
+        int version=metadata.path("version").asInt();
+        if (!PatrolTemplateDefinition.code(count,version).equals(workflow.getWorkflowCode()) || workflow.getSchemaVersion() != 3
                 || workflow.getGraphVersion() != 3 || workflow.getVersionNo() != 1 || workflow.getDefinitionHash() == null)
             throw new BusinessRuleException("Patrol template identity differs from its immutable definition");
-        var expected = PatrolTemplateDefinition.graph(json, count, workflow.getWorkflowCode());
+        var expected = PatrolTemplateDefinition.graph(json, count, workflow.getWorkflowCode(),version);
         if (!sameJson(workflow.getInputSchemaJson(), expected.workflow().inputSchemaJson())
                 || !sameJson(workflow.getInputUiJson(), expected.workflow().inputUiJson())
                 || !sameJson(workflow.getDefaultInputsJson(), expected.workflow().defaultInputsJson())
@@ -551,7 +564,8 @@ public class PatrolWorkflowService {
                 || definition.checkpoints().stream().anyMatch(Objects::isNull)
                 || definition.checkpoints().stream().noneMatch(checkpoint -> checkpoint.endpointGroupId() != null))
             throw new BusinessRuleException("Patrol group definition must retain its fixed checkpoint/map authority");
-        var expected = graph(definition, workflow.getWorkflowCode());
+        var expected = graph(definition, workflow.getWorkflowCode(),
+                "SKIP_CHECKPOINT".equals(workflow.getInputUiJson().path("patrol_group_exhaustion").asText()));
         requireGeneratedGraph(workflow, expected, actions);
         List<CheckpointSteps> result = new ArrayList<>();
         for (int index = 0; index < definition.checkpoints().size(); index++) {

@@ -78,11 +78,13 @@ public class NavigationTargetService {
                     || !command.getJobId().equals(job.getJobId())
                     || job.getRobot()==null || !command.getRobotId().equals(job.getRobot().getRobotId()))
                 fail("Fallback requires PATH_UNAVAILABLE and committed physical stop evidence");
+            if(group.getFallbackTrigger()==EndpointFallbackTrigger.ON_PATH_UNAVAILABLE)
+                requirePathUnavailable(attempted);
         }
         ObjectNode result=json.createObjectNode().put("has_target",false);
         if(!targets.isArray() || index<0) fail("Targets/index are invalid");
         if(index!=(previous.isEmpty()?0:previous.getFirst().getTargetIndex()+1)) fail("Candidate index must advance once through the frozen target order");
-        if(index>=targets.size()) return result;
+        if(index>=targets.size()) return result.put("checkpoint_status","BLOCKED").put("reason","ALL_ENDPOINTS_UNREACHABLE");
         UUID endpointId=UUID.fromString(targets.get(index).path("endpoint_id").asText());
         if(previous.stream().anyMatch(p->p.getEndpoint().getEndpointId().equals(endpointId))) fail("Endpoint was already attempted in this Job/group");
         Endpoint candidate=endpoints.findById(endpointId).orElseThrow(()->new BusinessRuleException("Selected endpoint no longer exists"));
@@ -90,7 +92,8 @@ public class NavigationTargetService {
             fail("Selected endpoint is outside the active accessible group/map");
         if(group.getRoom()!=null) {
             if(!sameRoom(candidate,group)) fail("Selected endpoint differs from the requested room");
-            if(!previous.isEmpty()) requireDoorObstruction(previous.getFirst(),candidate,group);
+            if(!previous.isEmpty() && group.getFallbackTrigger()!=EndpointFallbackTrigger.ON_PATH_UNAVAILABLE)
+                requireDoorObstruction(previous.getFirst(),candidate,group);
         }
         ObjectNode canonical=target(candidate,group);
         if(!sameTarget(canonical,targets.get(index))) fail("Endpoint changed after RESOLVE_TARGETS; do not reinterpret a frozen target");
@@ -144,6 +147,15 @@ public class NavigationTargetService {
         if(!sameTarget(selection.getTargetSnapshotJson(),target(selection.getEndpoint(),selection.getEndpointGroup()))) fail("Selected endpoint changed before MOVE");
         if(PatrolWorkflowService.isTemplate(job.getWorkflow())) requirePatrolSnapshotEndpoint(current,selection.getEndpoint());
         selection.setMoveJobStep(current);
+        EndpointGroup selectedGroup=selection.getEndpointGroup();
+        if(selectedGroup.isAllowFallback() && selectedGroup.getFallbackTrigger()==EndpointFallbackTrigger.ON_PATH_UNAVAILABLE) {
+            if(current.getTimeoutSecSnapshot()<selectedGroup.getPathSearchBudgetSec()+5)
+                fail("MOVE timeout must leave at least five seconds after its path-search budget for stopping/reporting");
+            // Minted by BE, never accepted from the workflow/client. Selection survives a stopped patrol continuation.
+            ((ObjectNode)inputs).putObject("path_search").put("budget_sec",selectedGroup.getPathSearchBudgetSec())
+                    .put("max_recovery_attempts",1).put("selection_id",selection.getSelectionId().toString())
+                    .put("fallback_trigger",selectedGroup.getFallbackTrigger().name());
+        }
     }
     private boolean stoppedContinuation(JobStep previous,JobStep current,Job job) {
         if(!JobOccupancyPolicy.patrol(job) || !previous.getJobStepId().equals(current.getResumedFromJobStepId())
@@ -214,6 +226,24 @@ public class NavigationTargetService {
         return endpoint.getRoom()!=null && endpoint.getRoom().getRoomId().equals(group.getRoom().getRoomId());
     }
     /** Infrastructure failures never authorize substituting a room's destination. */
+    private void requirePathUnavailable(JobStep attempted) {
+        JsonNode error=attempted.getErrorDetailsJson();
+        JsonNode evidence=error==null?json.missingNode():error.path("details").path("navigationFailure");
+        boolean obstacle="OBSTACLE_BLOCKED".equals(evidence.path("category").asText())
+                && Set.of("NAV_GATE_BLOCKED","BRAKING_OBSTACLE","LIDAR_BRAKING_STOP","TURN_ENVELOPE_BLOCKED",
+                        "REAR_OBSTACLE","LIVE_ROUTE_OBSTACLE").contains(evidence.path("obstacleReason").asText());
+        boolean planner="PATH_UNAVAILABLE".equals(evidence.path("category").asText())
+                && "PLANNER_NO_PATH".equals(evidence.path("obstacleReason").asText());
+        if(!(obstacle||planner) || !evidence.path("recoveryExhausted").asBoolean()
+                || !evidence.path("poseFresh").asBoolean() || !evidence.path("scanFresh").asBoolean()
+                || !evidence.path("tfFresh").asBoolean()
+                || !attempted.getResolvedInputsJson().path("endpoint_id").asText().equals(evidence.path("endpointId").asText()))
+            fail("Fallback requires a validated unavailable path with fresh pose, scan and TF");
+        for(String field:List.of("xM","yM","yawRad"))
+            if(!evidence.path("pose").path(field).isNumber() || !Double.isFinite(evidence.path("pose").path(field).asDouble()))
+                fail("Fallback path evidence pose is invalid");
+    }
+
     private void requireDoorObstruction(JobNavigationSelection previous,Endpoint next,EndpointGroup group) {
         JsonNode error=previous.getMoveJobStep().getErrorDetailsJson();
         JsonNode evidence=error==null?json.missingNode():error.path("details").path("navigationFailure");
@@ -271,6 +301,10 @@ public class NavigationTargetService {
                 || group.getFallbackRadiusM()==null || !snapshot.path("fallback_radius_m").isNumber()
                 || group.getFallbackRadiusM().compareTo(snapshot.path("fallback_radius_m").decimalValue())!=0)
             fail("Patrol endpoint-group room or fallback policy changed after queuing");
+        if(!Objects.equals(group.getFallbackTrigger().name(),snapshot.path("fallback_trigger").asText("NEAR_DOOR_OBSTRUCTION"))
+                || group.getFallbackTrigger()==EndpointFallbackTrigger.ON_PATH_UNAVAILABLE
+                    && group.getPathSearchBudgetSec()!=snapshot.path("path_search_budget_sec").asInt())
+            fail("Patrol endpoint-group path policy changed after queuing");
         var active=members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(groupId).stream().filter(EndpointGroupMember::isActive).toList();
         if(active.size()!=2 || snapshot.path("targets").size()!=active.size()) fail("Patrol endpoint-group membership changed after queuing");
         for(int index=0;index<active.size();index++) {
@@ -330,6 +364,8 @@ public class NavigationTargetService {
     private ObjectNode target(Endpoint endpoint,EndpointGroup group) {
         ObjectNode result=endpoint(endpoint);
         if(group.getRoom()!=null) result.put("room_id",group.getRoom().getRoomId().toString()).put("fallback_radius_m",group.getFallbackRadiusM());
+        if(group.getFallbackTrigger()==EndpointFallbackTrigger.ON_PATH_UNAVAILABLE)
+            result.put("fallback_trigger",group.getFallbackTrigger().name()).put("path_search_budget_sec",group.getPathSearchBudgetSec());
         return result;
     }
     private BigDecimal distance(Endpoint e,RobotLocationHistory p) {BigDecimal x=e.getXM().subtract(p.getXM()),y=e.getYM().subtract(p.getYM());return x.multiply(x).add(y.multiply(y));}
@@ -337,6 +373,8 @@ public class NavigationTargetService {
         if(!a.isObject() || !b.isObject() || a.size()!=b.size())return false;
         for(String field:List.of("endpoint_id","endpoint_code","endpoint_name"))if(!a.path(field).equals(b.path(field)))return false;
         if(!a.path("room_id").equals(b.path("room_id")))return false;
+        if(!a.path("fallback_trigger").equals(b.path("fallback_trigger"))
+                || !a.path("path_search_budget_sec").equals(b.path("path_search_budget_sec")))return false;
         if(a.has("fallback_radius_m") && (!b.path("fallback_radius_m").isNumber()
                 || a.path("fallback_radius_m").decimalValue().compareTo(b.path("fallback_radius_m").decimalValue())!=0))return false;
         // MySQL JSON normalizes decimal scales; compare business coordinates, not Jackson numeric node classes.

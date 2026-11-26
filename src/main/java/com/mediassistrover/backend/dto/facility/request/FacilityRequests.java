@@ -2,6 +2,7 @@ package com.mediassistrover.backend.dto.facility.request;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.mediassistrover.backend.enums.EndpointType;
+import com.mediassistrover.backend.enums.EndpointFallbackTrigger;
 import com.mediassistrover.backend.enums.SelectionPolicy;
 import com.mediassistrover.backend.enums.ZoneType;
 import jakarta.validation.constraints.*;
@@ -109,9 +110,19 @@ public final class FacilityRequests {
             String description,
             boolean active,
             UUID roomId,
-            @DecimalMin("0.1") @DecimalMax("2.0") BigDecimal fallbackRadiusM) {
+            @DecimalMin("0.1") @DecimalMax("2.0") BigDecimal fallbackRadiusM,
+            EndpointFallbackTrigger fallbackTrigger,
+            @Min(5) @Max(30) Integer pathSearchBudgetSec) {
         public EndpointGroupRequest {
             if (fallbackRadiusM == null) fallbackRadiusM = new BigDecimal("0.75");
+            if (fallbackTrigger == null) fallbackTrigger = EndpointFallbackTrigger.NEAR_DOOR_OBSTRUCTION;
+            if (pathSearchBudgetSec == null) pathSearchBudgetSec = 10;
+        }
+        public EndpointGroupRequest(UUID mapId, String groupCode, String groupName,
+                SelectionPolicy selectionPolicy, boolean allowFallback, String description, boolean active,
+                UUID roomId, BigDecimal fallbackRadiusM) {
+            this(mapId, groupCode, groupName, selectionPolicy, allowFallback, description, active,
+                    roomId, fallbackRadiusM, null, null);
         }
         public EndpointGroupRequest(UUID mapId, String groupCode, String groupName,
                 SelectionPolicy selectionPolicy, boolean allowFallback, String description, boolean active) {
@@ -127,9 +138,18 @@ public final class FacilityRequests {
             @NotNull UUID primaryEndpointId,
             @NotNull UUID fallbackEndpointId,
             @DecimalMin("0.1") @DecimalMax("2.0") BigDecimal fallbackRadiusM,
-            boolean setAsRoomDefault) {
+            boolean setAsRoomDefault,
+            EndpointFallbackTrigger fallbackTrigger,
+            @Min(5) @Max(30) Integer pathSearchBudgetSec) {
         public RoomEndpointPairRequest {
             if (fallbackRadiusM == null) fallbackRadiusM = new BigDecimal("0.75");
+            if (fallbackTrigger == null) fallbackTrigger = EndpointFallbackTrigger.NEAR_DOOR_OBSTRUCTION;
+            if (pathSearchBudgetSec == null) pathSearchBudgetSec = 10;
+        }
+        public RoomEndpointPairRequest(UUID mapId, UUID roomId, String groupCode, String groupName,
+                UUID primaryEndpointId, UUID fallbackEndpointId, BigDecimal fallbackRadiusM, boolean setAsRoomDefault) {
+            this(mapId, roomId, groupCode, groupName, primaryEndpointId, fallbackEndpointId,
+                    fallbackRadiusM, setAsRoomDefault, null, null);
         }
     }
 

@@ -121,6 +121,8 @@ public class MqttStepDispatchService {
         if (!commands.findByRobotIdAndStateIn(session.getRobotId(),List.of("PENDING","PUBLISHING","PUBLISHED","ACKNOWLEDGED","STARTED","RECOVERY_REQUIRED")).isEmpty())
             throw new BusinessRuleException("Robot already has an unresolved Pi command");
         ObjectNode params=((ObjectNode)step.getResolvedInputsJson()).deepCopy();
+        if(params.has("path_search") && !hasCapability(session.getHelloJson(),"group-path-budget-v1"))
+            throw new BusinessRuleException("Grouped path-search policy requires Pi group-path-budget-v1 capability");
         // Metadata permitted in BE templates is never sent as GPIO/authorization or unrelated business data.
         if ("CONTROL_HARDWARE".equals(step.getStepTypeSnapshot())) {params.remove(List.of("maxAttempts","service_request_id"));
             if ("LOCK".equals(params.path("action").asText())) params.put("action","LOCK_COMPARTMENT");}

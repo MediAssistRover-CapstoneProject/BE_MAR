@@ -34,6 +34,8 @@ public class PatrolInterruptionEvents {
     private final MediaSessionRepository media;
     private final EmergencyIncidentRepository incidents;
     private final AlertRepository alerts;
+    @org.springframework.beans.factory.annotation.Autowired private FallObservationRepository fallObservations;
+    @org.springframework.beans.factory.annotation.Autowired private java.time.Clock clock;
     private static final Set<EmergencyIncidentStatus> OPEN_INCIDENTS=Set.of(
             EmergencyIncidentStatus.OPEN,EmergencyIncidentStatus.ACKNOWLEDGED,EmergencyIncidentStatus.IN_PROGRESS);
 
@@ -81,6 +83,8 @@ public class PatrolInterruptionEvents {
                     && row.getDetectionEvent().getRobot()!=null
                     && event.robotId().equals(row.getDetectionEvent().getRobot().getRobotId())
                     && com.mediassistrover.backend.ai.RestrictedIntrusionAlertService.isReviewOpen(row)).isPresent();
+            case "FALL_OBSERVATION" -> fallObservations.findById(event.sourceId()).filter(row->
+                    event.robotId().equals(row.getRobotId()) && row.active(clock.instant())).isPresent();
             default -> throw new IllegalArgumentException("Unsupported patrol event source");
         };
     }
