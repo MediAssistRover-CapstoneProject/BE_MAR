@@ -208,7 +208,17 @@ jobs:
             "s3://${BUCKET}/releases/${GITHUB_SHA}.sha256" \
             --only-show-errors
 
-          echo "JAR UPLOAD SUCCESS"
+          PROCESSOR="scripts/knowledge/process_document.py"
+          test -s "$PROCESSOR"
+          sha256sum "$PROCESSOR" | awk '{print $1}' > processor.sha256
+          aws s3 cp "$PROCESSOR" \
+            "s3://${BUCKET}/releases/${GITHUB_SHA}.processor.py" \
+            --only-show-errors
+          aws s3 cp processor.sha256 \
+            "s3://${BUCKET}/releases/${GITHUB_SHA}.processor.sha256" \
+            --only-show-errors
+
+          echo "JAR AND KNOWLEDGE PROCESSOR UPLOAD SUCCESS"
 
       # ========================================
       # 9. DEPLOY TO EC2 USING SSM
@@ -221,8 +231,25 @@ jobs:
           set -euo pipefail
 
           CMD=$(cat <<EOF
+          set -e
+          processor=\$(sed -n 's/^KNOWLEDGE_PROCESSOR=//p' /etc/mediassistrover/backend.env | tail -n 1)
+          case "\$processor" in
+            /opt/mediassistrover/knowledge/*/scripts/knowledge/process_document.py) ;;
+            *) echo "Invalid knowledge processor path"; exit 1 ;;
+          esac
+          test -f "\$processor"
+          aws s3 cp "s3://${BUCKET}/releases/${GITHUB_SHA}.processor.py" "\$processor.next" --only-show-errors
+          expected=\$(aws s3 cp "s3://${BUCKET}/releases/${GITHUB_SHA}.processor.sha256" - --only-show-errors | tr -d '\r\n')
+          actual=\$(sha256sum "\$processor.next" | awk '{print \$1}')
+          if [ "\$expected" != "\$actual" ]; then echo "Knowledge processor checksum mismatch"; rm -f "\$processor.next"; exit 1; fi
+          cp -p "\$processor" "\$processor.previous"
+          chmod --reference="\$processor" "\$processor.next"
+          chown --reference="\$processor" "\$processor.next"
+          mv -f "\$processor.next" "\$processor"
           bash /usr/local/bin/mar-deploy.sh ${BUCKET} ${GITHUB_SHA} || {
             rc=\$?
+            cp -p "\$processor.previous" "\$processor"
+            systemctl restart mar-backend || true
             echo "=== DEPLOY DIAGNOSTICS ==="
             echo "--- Deployment script runtime targets ---"
             grep -nE 'systemctl|journalctl|nohup|java|\.log|SERVICE|APP_DIR' /usr/local/bin/mar-deploy.sh || true
