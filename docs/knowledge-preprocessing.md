@@ -92,6 +92,9 @@ should poll the new document ID returned by the update endpoint. The whole-text
 PUT does not accept a file upload: it feeds the edited extraction through the
 same splitting logic, then indexes the resulting chunks. The separate
 `POST /{id}/replace` endpoint is for uploading a different source file.
+Whole-text PUT accepts a ready v2 or v3 document when its original file payload
+is retained; the edited revision is always v3. If the source file is missing,
+it returns `KNOWLEDGE_ORIGINAL_FILE_MISSING` and the file must be replaced.
 Chunk editing snapshots all current chunks into a new revision, changes the
 selected chunk, and stores the resulting extracted/OCR text. The uploaded PDF,
 DOC or other binary remains available as an immutable reference, so the OCR

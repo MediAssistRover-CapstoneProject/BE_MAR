@@ -137,4 +137,41 @@ public class KnowledgeChunkUpdateTest {
         UUID revision=tx.execute(s->service.updateText(old,"Địa chỉ mới\n\nGiờ làm việc",actor).id());
         assertEquals("Địa chỉ mới\n\nGiờ làm việc",service.extractedText(revision));
     }
+
+    @Test void readyV2DocumentCanBeEditedIntoV3WhileOriginalStaysAvailable() {
+        UUID old=UUID.randomUUID(),actor=UUID.randomUUID();
+        byte[] original="%PDF- retained source".getBytes(StandardCharsets.UTF_8);
+        jdbc.update("""
+            INSERT INTO KnowledgeDocument(document_id,vector_store_id,filename,content_type,size_bytes,sha256,
+              status,payload,pipeline_version,active,next_attempt_at,created_at,updated_at)
+            VALUES(?,'vs_test','old.pdf','application/pdf',?,?,'COMPLETED',?,2,TRUE,
+              UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))
+            """,old.toString(),original.length,"a".repeat(64),original);
+        jdbc.update("""
+            INSERT INTO KnowledgeDocumentChunk(chunk_id,document_id,ordinal_no,content,sha256,status,active)
+            VALUES(?,?,0,'Địa chỉ cũ',?,'COMPLETED',TRUE)
+            """,UUID.randomUUID().toString(),old.toString(),"b".repeat(64));
+
+        UUID revision=tx.execute(s->service.updateText(old,"Địa chỉ mới",actor).id());
+        assertEquals("COMPLETED",service.get(old).status());
+        assertEquals("PROCESSING",service.get(revision).status());
+        assertEquals(3,jdbc.queryForObject("SELECT pipeline_version FROM KnowledgeDocument WHERE document_id=?",
+            Integer.class,revision.toString()));
+        assertEquals("Địa chỉ mới",service.extractedText(revision));
+        assertArrayEquals(original,jdbc.queryForObject("SELECT payload FROM KnowledgeDocument WHERE document_id=?",
+            byte[].class,revision.toString()));
+    }
+
+    @Test void missingOriginalFileHasASeparateConflictCode() {
+        UUID old=UUID.randomUUID();
+        jdbc.update("""
+            INSERT INTO KnowledgeDocument(document_id,vector_store_id,filename,content_type,size_bytes,sha256,
+              status,pipeline_version,active,next_attempt_at,created_at,updated_at,extracted_text)
+            VALUES(?,'vs_test','old.pdf','application/pdf',0,?,'COMPLETED',2,TRUE,
+              UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),'Địa chỉ cũ')
+            """,old.toString(),"a".repeat(64));
+        ConflictException error=assertThrows(ConflictException.class,()->tx.execute(s->
+            service.updateText(old,"Địa chỉ mới",UUID.randomUUID())));
+        assertEquals("KNOWLEDGE_ORIGINAL_FILE_MISSING",error.getMessage());
+    }
 }

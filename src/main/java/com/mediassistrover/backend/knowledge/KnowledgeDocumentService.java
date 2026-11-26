@@ -110,9 +110,11 @@ public class KnowledgeDocumentService {
                 rs.getString(5),rs.getBoolean(6),rs.getString(7)),old);
         if (source.isEmpty()) throw new ResourceNotFoundException("Knowledge document not found");
         Source original=source.getFirst();
-        if (!original.active() || !original.status().equals("COMPLETED") || original.pipelineVersion()!=3
-                || original.bytes()==null)
-            throw new ConflictException("KNOWLEDGE_TEXT_UPDATE_REQUIRES_READY_V3_DOCUMENT");
+        if (!original.active() || !original.status().equals("COMPLETED")
+                || original.pipelineVersion()<2 || original.pipelineVersion()>3)
+            throw new ConflictException("KNOWLEDGE_TEXT_UPDATE_REQUIRES_READY_INDEXED_DOCUMENT");
+        if (original.bytes()==null)
+            throw new ConflictException("KNOWLEDGE_ORIGINAL_FILE_MISSING");
         String currentText=extractedTextOrRecover(old,original.extractedText());
         if (content.equals(currentText)) throw new BusinessRuleException("KNOWLEDGE_TEXT_UNCHANGED");
         requireNoPendingReplacement(old);
