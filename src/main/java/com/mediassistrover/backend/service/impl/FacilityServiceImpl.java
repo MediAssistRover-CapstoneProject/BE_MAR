@@ -302,8 +302,6 @@ public class FacilityServiceImpl implements FacilityService {
         }
         e.setMap(map);e.setRoom(room);e.setFallbackRadiusM(radius);
         if(r.pathSearchBudgetSec()<5 || r.pathSearchBudgetSec()>30)throw new BusinessRuleException("Path search budget must be between 5 and 30 seconds");
-        if(r.fallbackTrigger()==com.mediassistrover.backend.enums.EndpointFallbackTrigger.ON_PATH_UNAVAILABLE
-                && !r.allowFallback())throw new BusinessRuleException("Path-unavailable fallback requires allowFallback");
         e.setFallbackTrigger(r.fallbackTrigger());e.setPathSearchBudgetSec(r.pathSearchBudgetSec());
         if(e.getEndpointGroupId()!=null){
             List<EndpointGroupMember> memberships=memberRepository.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(e.getEndpointGroupId());

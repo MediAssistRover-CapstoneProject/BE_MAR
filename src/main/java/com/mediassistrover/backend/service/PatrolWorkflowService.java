@@ -188,8 +188,7 @@ public class PatrolWorkflowService {
                 slot.put("target_mode", "ENDPOINT_GROUP").put("endpoint_group_id", group.getEndpointGroupId().toString())
                         .put("endpoint_group_name", group.getGroupName()).put("room_id", group.getRoom().getRoomId().toString())
                         .put("room_name", group.getRoom().getRoomName()).put("fallback_radius_m", group.getFallbackRadiusM());
-                if(group.getFallbackTrigger()==EndpointFallbackTrigger.ON_PATH_UNAVAILABLE)
-                    slot.put("fallback_trigger",group.getFallbackTrigger().name()).put("path_search_budget_sec",group.getPathSearchBudgetSec());
+                slot.put("fallback_trigger",group.getFallbackTrigger().name()).put("path_search_budget_sec",group.getPathSearchBudgetSec());
                 var ordered = slot.putArray("targets");
                 for (var member : members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(checkpoint.endpointGroupId()))
                     if (member.isActive()) ordered.add(snapshotEndpoint(member.getEndpoint()).put("sequence_no", member.getSequenceNo()));

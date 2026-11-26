@@ -110,12 +110,14 @@ public final class FacilityRequests {
             String description,
             boolean active,
             UUID roomId,
+            @io.swagger.v3.oas.annotations.media.Schema(deprecated = true,
+                    description = "Compatibility metadata only; fallback uses the path search budget.")
             @DecimalMin("0.1") @DecimalMax("2.0") BigDecimal fallbackRadiusM,
             EndpointFallbackTrigger fallbackTrigger,
             @Min(5) @Max(30) Integer pathSearchBudgetSec) {
         public EndpointGroupRequest {
             if (fallbackRadiusM == null) fallbackRadiusM = new BigDecimal("0.75");
-            if (fallbackTrigger == null) fallbackTrigger = EndpointFallbackTrigger.NEAR_DOOR_OBSTRUCTION;
+            if (fallbackTrigger == null) fallbackTrigger = EndpointFallbackTrigger.ON_PATH_UNAVAILABLE;
             if (pathSearchBudgetSec == null) pathSearchBudgetSec = 10;
         }
         public EndpointGroupRequest(UUID mapId, String groupCode, String groupName,
@@ -137,13 +139,15 @@ public final class FacilityRequests {
             @NotBlank @Size(max = 160) String groupName,
             @NotNull UUID primaryEndpointId,
             @NotNull UUID fallbackEndpointId,
+            @io.swagger.v3.oas.annotations.media.Schema(deprecated = true,
+                    description = "Compatibility metadata only; fallback uses the path search budget.")
             @DecimalMin("0.1") @DecimalMax("2.0") BigDecimal fallbackRadiusM,
             boolean setAsRoomDefault,
             EndpointFallbackTrigger fallbackTrigger,
             @Min(5) @Max(30) Integer pathSearchBudgetSec) {
         public RoomEndpointPairRequest {
             if (fallbackRadiusM == null) fallbackRadiusM = new BigDecimal("0.75");
-            if (fallbackTrigger == null) fallbackTrigger = EndpointFallbackTrigger.NEAR_DOOR_OBSTRUCTION;
+            if (fallbackTrigger == null) fallbackTrigger = EndpointFallbackTrigger.ON_PATH_UNAVAILABLE;
             if (pathSearchBudgetSec == null) pathSearchBudgetSec = 10;
         }
         public RoomEndpointPairRequest(UUID mapId, UUID roomId, String groupCode, String groupName,

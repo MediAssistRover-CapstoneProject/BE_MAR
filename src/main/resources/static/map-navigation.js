@@ -185,7 +185,7 @@
         <small>Đặt điểm mới: bấm trên vùng sàn đã quét, kéo rồi thả để chọn hướng. Chọn endpoint trong danh sách để sửa; thêm MOVE ở phần workflow để chạy.</small>
         <label>Mã endpoint<input id="navPointCode" maxlength="64" placeholder="DEMO_POINT_A"></label>
         <label>Tên endpoint<input id="navPointName" maxlength="160" placeholder="Điểm trước cửa phòng"></label>
-        <label>Loại endpoint<select id="navPointType"><option value="WAYPOINT">Waypoint — điểm đến</option><option value="PARK">Parking — vị trí đỗ / khởi tạo</option><option value="CHARGER">Manual Charger — vị trí sạc thủ công</option><option value="STAGING" hidden>Staging — điểm chờ cũ</option></select></label>
+        <label>Loại endpoint<select id="navPointType"><option value="WAYPOINT">Waypoint — điểm đến</option><option value="PARK">Parking — vị trí đỗ / khởi tạo</option><option value="CHARGER">Manual Charger — vị trí sạc thủ công</option></select></label>
         <label>Zone gắn với endpoint<select id="navPointZone"><option value="">Không gắn zone</option></select></label>
         <label>Phòng của endpoint<select id="navPointRoom"><option value="">Không gắn phòng</option></select></label>
         <small>Điểm trong phòng và điểm đến dự phòng ngoài cửa cùng gán một phòng để tạo nhóm dự phòng.</small>

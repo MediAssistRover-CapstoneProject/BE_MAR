@@ -6,7 +6,7 @@
   const UUID=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
   function policyRequest(values){
     const fallbackTrigger=values.fallbackTrigger??'ON_PATH_UNAVAILABLE';
-    if(!['ON_PATH_UNAVAILABLE','NEAR_DOOR_OBSTRUCTION'].includes(fallbackTrigger))throw Error('Chọn cách chuyển sang điểm dự phòng.');
+    if(fallbackTrigger!=='ON_PATH_UNAVAILABLE')throw Error('Chính sách điểm dự phòng không còn được hỗ trợ. Tải lại cấu hình BE mới.');
     const raw=values.pathSearchBudgetSec??10,pathSearchBudgetSec=Number(raw);
     if(raw===''||!Number.isInteger(pathSearchBudgetSec)||pathSearchBudgetSec<5||pathSearchBudgetSec>30)
       throw Error('Thời gian tìm đường phải là số nguyên từ 5 đến 30 giây.');
@@ -17,7 +17,7 @@
       ||group.selectionPolicy!=='PRIORITY')throw Error('Chọn nhóm hai điểm thuộc cùng một phòng.');
     const policy=policyRequest(values);
     return {mapId:group.mapId,groupCode:group.groupCode,groupName:group.groupName,selectionPolicy:group.selectionPolicy,
-      allowFallback:policy.fallbackTrigger==='ON_PATH_UNAVAILABLE'?true:!!group.allowFallback,description:group.description??null,
+      allowFallback:!!group.allowFallback,description:group.description??null,
       active:!!group.active,roomId:group.roomId,fallbackRadiusM:group.fallbackRadiusM??.75,...policy};
   }
   function pairRequest(values,endpoints){
@@ -31,9 +31,7 @@
     }
     const groupCode=String(values.groupCode||'').trim(),groupName=String(values.groupName||'').trim();
     if(!groupCode||groupCode.length>64||!groupName||groupName.length>160)throw Error('Nhập mã nhóm (tối đa 64 ký tự) và tên nhóm (tối đa 160 ký tự).');
-    const fallbackRadiusM=Number(values.fallbackRadiusM);
-    if(values.fallbackRadiusM===''||!Number.isFinite(fallbackRadiusM)||fallbackRadiusM<.1||fallbackRadiusM>2)
-      throw Error('Bán kính điểm ngoài cửa phải từ 0,1 đến 2 m.');
+    const fallbackRadiusM=values.fallbackRadiusM??.75;
     return {mapId:values.mapId,roomId:values.roomId,groupCode,groupName,primaryEndpointId:values.primaryEndpointId,
       fallbackEndpointId:values.fallbackEndpointId,fallbackRadiusM,setAsRoomDefault:!!values.setAsRoomDefault,...policyRequest(values)};
   }
@@ -49,16 +47,14 @@
       <label>Tên nhóm<input id="roomPairName" maxlength="160" placeholder="Ví dụ: Điểm đến phòng 01"></label>
       <label>1. Điểm chính bên trong<select id="roomPairPrimary"><option value="">Chọn phòng trước</option></select></label>
       <label>2. Điểm đến dự phòng ngoài cửa<select id="roomPairFallback"><option value="">Chọn phòng trước</option></select></label>
-      <label>Chuyển sang điểm dự phòng khi<select id="roomPairTrigger"><option value="ON_PATH_UNAVAILABLE">Không tìm được đường sau thời gian đã chọn</option><option value="NEAR_DOOR_OBSTRUCTION">Bị chặn khi đã tới gần cửa (cách cũ)</option></select></label>
       <label>Thời gian tìm đường cho mỗi điểm (giây)<input id="roomPairBudget" type="number" min="5" max="30" step="1" value="10"></label>
-      <label>Bán kính gần cửa, chỉ dùng cho cách cũ (m)<input id="roomPairRadius" type="number" min="0.1" max="2" step="0.05" value="0.75"></label>
       <label><input id="roomPairDefault" type="checkbox" checked style="width:auto"> Dùng nhóm này làm điểm đến mặc định của phòng</label></div>
       <small id="roomPairPolicyHint">Robot ưu tiên điểm 1. Nếu không tìm được đường trong 10 giây, robot dừng xác nhận rồi thử điểm 2. Lỗi cảm biến hoặc mất định vị không tự chuyển điểm.</small>
       <button id="roomPairSave" type="button" disabled>Lưu nhóm hai điểm</button>
       <p id="roomPairStatus" role="status" style="white-space:pre-line">Tải danh sách bằng token ADMIN ở đầu trang. Chưa có thay đổi nào được lưu.</p>
-      <h3>Đổi cách chuyển điểm cho nhóm đã lưu</h3><label>Nhóm hai điểm cùng phòng<select id="roomPairExisting"><option value="">Chọn nhóm đã lưu</option></select></label>
-      <small>Chọn nhóm để xem cấu hình hiện tại. Chỉnh cách chuyển điểm và thời gian ở phía trên, rồi bấm cập nhật khi không có nhiệm vụ đang dùng nhóm. Không đổi hai endpoint hoặc điểm mặc định của phòng.</small>
-      <button id="roomPairApplyPolicy" type="button" disabled>Cập nhật cách chuyển điểm cho nhóm đã chọn</button>
+      <h3>Đổi thời gian tìm đường cho nhóm đã lưu</h3><label>Nhóm hai điểm cùng phòng<select id="roomPairExisting"><option value="">Chọn nhóm đã lưu</option></select></label>
+      <small>Chọn nhóm để xem ngân sách hiện tại. Chỉnh thời gian ở phía trên, rồi bấm cập nhật khi không có nhiệm vụ đang dùng nhóm. Không đổi endpoint, quyền dùng điểm dự phòng hoặc điểm mặc định của phòng.</small>
+      <button id="roomPairApplyPolicy" type="button" disabled>Cập nhật thời gian cho nhóm đã chọn</button>
       <h3>Nhóm endpoint trên map đã chọn</h3><div id="roomPairList" style="overflow-x:auto"></div>`;
     const $=id=>host.querySelector('#'+id);
     const state={maps:[],rooms:[],endpoints:[],groups:[],members:[],token:'',busy:false,loading:false,generation:0,closed:false};
@@ -100,7 +96,7 @@
       if(!groups.length){list.textContent=mapId?'Chưa có nhóm trên map này.':'Chọn map để xem nhóm.';return;}
       const table=document.createElement('table');table.style.cssText='border-collapse:collapse;width:100%;font-size:14px';
       const header=table.createTHead().insertRow();
-      for(const label of ['Nhóm','Phòng','Thứ tự endpoint','Cách chuyển điểm','Thời gian tìm đường','Bán kính gần cửa','Trạng thái']){const cell=document.createElement('th');cell.textContent=label;cell.style.cssText='text-align:left;padding:8px;border-bottom:1px solid #bbb';header.append(cell);}
+      for(const label of ['Nhóm','Phòng','Thứ tự endpoint','Thời gian tìm đường','Trạng thái']){const cell=document.createElement('th');cell.textContent=label;cell.style.cssText='text-align:left;padding:8px;border-bottom:1px solid #bbb';header.append(cell);}
       for(const group of groups){
         const room=state.rooms.find(row=>row.roomId===group.roomId);
         const members=state.members.filter(row=>row.endpointGroupId===group.endpointGroupId).sort((a,b)=>a.sequenceNo-b.sequenceNo);
@@ -109,9 +105,7 @@
           return member.sequenceNo+'. '+(endpoint?.endpointCode||member.endpointId)+(member.active?'':' (tắt)');
         }).join(' → ')||'Chưa có thành viên';
         const values=[group.groupName+' · '+group.groupCode,room?(room.roomCode+' · '+room.roomName+(room.defaultEndpointGroupId===group.endpointGroupId?' (mặc định)':'')):'Nhóm chung',
-          points,group.fallbackTrigger==='ON_PATH_UNAVAILABLE'?'Không tìm được đường':'Bị chặn gần cửa (cách cũ)',
-          group.fallbackTrigger==='ON_PATH_UNAVAILABLE'?String(group.pathSearchBudgetSec??10)+' giây / điểm':'—',
-          group.roomId&&group.fallbackTrigger!=='ON_PATH_UNAVAILABLE'?Number(group.fallbackRadiusM??.75).toLocaleString('vi-VN')+' m':'Không áp dụng',
+          points,String(group.pathSearchBudgetSec??10)+' giây / điểm',
           (group.active?'Đang bật':'Đã tắt')+' · '+group.selectionPolicy+(group.allowFallback?' · dự phòng':'')];
         const row=table.insertRow();for(const value of values){const cell=row.insertCell();cell.textContent=value;cell.style.cssText='padding:8px;border-bottom:1px solid #ddd;vertical-align:top';}
       }
@@ -124,12 +118,7 @@
       $('roomPairSave').disabled=locked||!$('roomPairMap').value||!$('roomPairRoom').value||!$('roomPairPrimary').value||!$('roomPairFallback').value;
       $('roomPairExisting').disabled=locked;
       $('roomPairApplyPolicy').disabled=locked||!$('roomPairExisting').value;
-      $('roomPairRadius').disabled=locked||$('roomPairTrigger').value==='ON_PATH_UNAVAILABLE';
-      $('roomPairBudget').disabled=locked||$('roomPairTrigger').value!=='ON_PATH_UNAVAILABLE';
-      const onPath=$('roomPairTrigger').value==='ON_PATH_UNAVAILABLE';
-      $('roomPairPolicyHint').textContent=onPath
-        ?'Robot ưu tiên điểm 1. Nếu không tìm được đường trong '+$('roomPairBudget').value+' giây, robot dừng xác nhận rồi thử điểm 2. Lỗi cảm biến hoặc mất định vị không tự chuyển điểm.'
-        :'Robot chỉ thử điểm 2 khi có bằng chứng lối vào bị chặn, đã dừng và đang trong bán kính gần điểm ngoài cửa. Thời gian tìm đường phía trên không áp dụng cho cách cũ.';
+      $('roomPairPolicyHint').textContent='Robot ưu tiên điểm 1. Nếu không tìm được đường trong '+$('roomPairBudget').value+' giây, robot dừng xác nhận rồi thử điểm 2. Lỗi cảm biến hoặc mất định vị không tự chuyển điểm.';
     }
     function endpoints(){
       const rows=state.endpoints.filter(row=>row.mapId===$('roomPairMap').value&&row.roomId===$('roomPairRoom').value&&row.active&&row.accessible);
@@ -163,8 +152,8 @@
       let body;try{
         if(state.token!==token())throw Error('Token đã đổi. Tải lại danh sách trước khi lưu.');
         body=pairRequest({mapId:$('roomPairMap').value,roomId:$('roomPairRoom').value,groupCode:$('roomPairCode').value,groupName:$('roomPairName').value,
-          primaryEndpointId:$('roomPairPrimary').value,fallbackEndpointId:$('roomPairFallback').value,fallbackRadiusM:$('roomPairRadius').value,setAsRoomDefault:$('roomPairDefault').checked,
-          fallbackTrigger:$('roomPairTrigger').value,pathSearchBudgetSec:$('roomPairBudget').value},state.endpoints);
+          primaryEndpointId:$('roomPairPrimary').value,fallbackEndpointId:$('roomPairFallback').value,setAsRoomDefault:$('roomPairDefault').checked,
+          pathSearchBudgetSec:$('roomPairBudget').value},state.endpoints);
       }catch(error){say(error.message);return;}
       state.busy=true;controls();say('Đang lưu nhóm và hai endpoint…');
       try{
@@ -183,16 +172,16 @@
       let policy;try{
         if(state.token!==token())throw Error('Token đã đổi. Tải lại danh sách trước khi cập nhật.');
         if(!state.groups.some(group=>group.endpointGroupId===id&&group.mapId===mapId))throw Error('Chọn nhóm trên map hiện tại.');
-        policy=policyRequest({fallbackTrigger:$('roomPairTrigger').value,pathSearchBudgetSec:$('roomPairBudget').value});
+        policy=policyRequest({pathSearchBudgetSec:$('roomPairBudget').value});
       }catch(error){say(error.message);return;}
-      state.busy=true;controls();say('Đang cập nhật cách chuyển điểm của nhóm đã chọn…');
+      state.busy=true;controls();say('Đang cập nhật thời gian tìm đường của nhóm đã chọn…');
       try{
         // Read current catalog fields before PUT so the policy button does not replay an old name/status.
         const group=await api('/api/v1/endpoint-groups/'+encodeURIComponent(id)+'?includeDeleted=true',context);
         if(group.mapId!==mapId)throw Error('Nhóm đã đổi map. Tải lại danh sách trước khi cập nhật.');
         const result=await api('/api/v1/endpoint-groups/'+encodeURIComponent(id),context,updatePolicyRequest(group,policy),'PUT');
         const index=state.groups.findIndex(row=>row.endpointGroupId===id);if(index>=0)state.groups[index]=result;
-        renderList();say('Đã cập nhật cách chuyển điểm cho nhóm '+result.groupName+'. Tạo nhiệm vụ mới để dùng cấu hình vừa đổi.');
+        renderList();say('Đã cập nhật thời gian tìm đường cho nhóm '+result.groupName+'. Tạo nhiệm vụ mới để dùng cấu hình vừa đổi.');
       }catch(error){say(error.message+' Nếu kết nối gián đoạn, tải lại danh sách để kiểm tra kết quả.');}
       finally{state.busy=false;controls();}
     }
@@ -200,10 +189,10 @@
     $('roomPairUseMap').onclick=()=>{const mapId=options.getNavigation?.()?.meta?.map_id;if(!mapId){say('Mở bản đồ ở mục dẫn đường hoặc chọn map từ danh sách.');return;}load(mapId);};
     $('roomPairMap').onchange=()=>rooms();$('roomPairRoom').onchange=endpoints;
     $('roomPairPrimary').onchange=endpoints;$('roomPairFallback').onchange=endpoints;$('roomPairSave').onclick=save;
-    $('roomPairTrigger').onchange=controls;$('roomPairBudget').oninput=controls;
+    $('roomPairBudget').oninput=controls;
     $('roomPairExisting').onchange=()=>{
       const group=state.groups.find(row=>row.endpointGroupId===$('roomPairExisting').value);
-      if(group){$('roomPairTrigger').value=group.fallbackTrigger||'NEAR_DOOR_OBSTRUCTION';$('roomPairBudget').value=group.pathSearchBudgetSec??10;$('roomPairRadius').value=group.fallbackRadiusM??.75;}
+      if(group)$('roomPairBudget').value=group.pathSearchBudgetSec??10;
       controls();
     };
     $('roomPairApplyPolicy').onclick=updatePolicy;

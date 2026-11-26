@@ -24,7 +24,7 @@ public class EndpointGroup {
     private BigDecimal fallbackRadiusM = new BigDecimal("0.75");
     @Builder.Default
     @Enumerated(EnumType.STRING) @Column(name = "fallback_trigger", nullable = false, length = 32)
-    private EndpointFallbackTrigger fallbackTrigger = EndpointFallbackTrigger.NEAR_DOOR_OBSTRUCTION;
+    private EndpointFallbackTrigger fallbackTrigger = EndpointFallbackTrigger.ON_PATH_UNAVAILABLE;
     @Builder.Default @Column(name = "path_search_budget_sec", nullable = false)
     private int pathSearchBudgetSec = 10;
     @Column(name = "group_code", nullable = false, length = 64) private String groupCode;

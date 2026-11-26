@@ -1,4 +1,4 @@
 package com.mediassistrover.backend.enums;
 
-/** Existing groups keep their near-door restriction until explicitly opted in. */
-public enum EndpointFallbackTrigger { NEAR_DOOR_OBSTRUCTION, ON_PATH_UNAVAILABLE }
+/** Switch within the group only after a validated unavailable path and confirmed stop. */
+public enum EndpointFallbackTrigger { ON_PATH_UNAVAILABLE }

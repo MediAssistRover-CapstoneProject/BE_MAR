@@ -8,6 +8,5 @@ public enum EndpointType {
     /** Arrival point for manual charging; MOVE does not confirm electrical charging. */
     CHARGER,
     /** Regular parking position; may be used as an operator-confirmed AMCL seed. */
-    PARK,
-    STAGING
+    PARK
 }

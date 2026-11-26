@@ -78,8 +78,7 @@ public class NavigationTargetService {
                     || !command.getJobId().equals(job.getJobId())
                     || job.getRobot()==null || !command.getRobotId().equals(job.getRobot().getRobotId()))
                 fail("Fallback requires PATH_UNAVAILABLE and committed physical stop evidence");
-            if(group.getFallbackTrigger()==EndpointFallbackTrigger.ON_PATH_UNAVAILABLE)
-                requirePathUnavailable(attempted);
+            requirePathUnavailable(attempted);
         }
         ObjectNode result=json.createObjectNode().put("has_target",false);
         if(!targets.isArray() || index<0) fail("Targets/index are invalid");
@@ -92,8 +91,6 @@ public class NavigationTargetService {
             fail("Selected endpoint is outside the active accessible group/map");
         if(group.getRoom()!=null) {
             if(!sameRoom(candidate,group)) fail("Selected endpoint differs from the requested room");
-            if(!previous.isEmpty() && group.getFallbackTrigger()!=EndpointFallbackTrigger.ON_PATH_UNAVAILABLE)
-                requireDoorObstruction(previous.getFirst(),candidate,group);
         }
         ObjectNode canonical=target(candidate,group);
         if(!sameTarget(canonical,targets.get(index))) fail("Endpoint changed after RESOLVE_TARGETS; do not reinterpret a frozen target");
@@ -148,7 +145,7 @@ public class NavigationTargetService {
         if(PatrolWorkflowService.isTemplate(job.getWorkflow())) requirePatrolSnapshotEndpoint(current,selection.getEndpoint());
         selection.setMoveJobStep(current);
         EndpointGroup selectedGroup=selection.getEndpointGroup();
-        if(selectedGroup.isAllowFallback() && selectedGroup.getFallbackTrigger()==EndpointFallbackTrigger.ON_PATH_UNAVAILABLE) {
+        if(selectedGroup.isAllowFallback()) {
             if(current.getTimeoutSecSnapshot()<selectedGroup.getPathSearchBudgetSec()+5)
                 fail("MOVE timeout must leave at least five seconds after its path-search budget for stopping/reporting");
             // Minted by BE, never accepted from the workflow/client. Selection survives a stopped patrol continuation.
@@ -244,23 +241,6 @@ public class NavigationTargetService {
                 fail("Fallback path evidence pose is invalid");
     }
 
-    private void requireDoorObstruction(JobNavigationSelection previous,Endpoint next,EndpointGroup group) {
-        JsonNode error=previous.getMoveJobStep().getErrorDetailsJson();
-        JsonNode evidence=error==null?json.missingNode():error.path("details").path("navigationFailure");
-        if(!"OBSTACLE_BLOCKED".equals(evidence.path("category").asText())
-                || !evidence.path("recoveryExhausted").asBoolean() || !evidence.path("poseFresh").asBoolean()
-                || !evidence.path("scanFresh").asBoolean() || !evidence.path("tfFresh").asBoolean()
-                || !previous.getEndpoint().getEndpointId().toString().equals(evidence.path("endpointId").asText())
-                || !Set.of("NAV_GATE_BLOCKED","BRAKING_OBSTACLE","LIDAR_BRAKING_STOP","TURN_ENVELOPE_BLOCKED","REAR_OBSTACLE","LIVE_ROUTE_OBSTACLE")
-                    .contains(evidence.path("obstacleReason").asText()))
-            fail("Room fallback requires fresh obstacle evidence after navigation recovery is exhausted");
-        JsonNode pose=evidence.path("pose");
-        for(String field:List.of("xM","yM","yawRad"))
-            if(!pose.path(field).isNumber() || !Double.isFinite(pose.path(field).asDouble())) fail("Fallback obstacle pose is invalid");
-        double distance=Math.hypot(pose.path("xM").asDouble()-next.getXM().doubleValue(),pose.path("yM").asDouble()-next.getYM().doubleValue());
-        if(group.getFallbackRadiusM()==null || distance>group.getFallbackRadiusM().doubleValue())
-            fail("Robot must reach the room's door area before switching to its outside endpoint");
-    }
     private boolean usable(Endpoint e,Job job) {return e.isActive()&&e.isAccessible()&&e.getMap().getMapId().equals(job.getMap().getMapId())
             && (!PatrolWorkflowService.isTemplate(job.getWorkflow()) || e.getRoom()==null || e.getRoom().isActive() && e.getRoom().getFloor()!=null
                 && e.getRoom().getFloor().isActive() && e.getMap().getFloor()!=null
@@ -301,10 +281,11 @@ public class NavigationTargetService {
                 || group.getFallbackRadiusM()==null || !snapshot.path("fallback_radius_m").isNumber()
                 || group.getFallbackRadiusM().compareTo(snapshot.path("fallback_radius_m").decimalValue())!=0)
             fail("Patrol endpoint-group room or fallback policy changed after queuing");
-        if(!Objects.equals(group.getFallbackTrigger().name(),snapshot.path("fallback_trigger").asText("NEAR_DOOR_OBSTRUCTION"))
-                || group.getFallbackTrigger()==EndpointFallbackTrigger.ON_PATH_UNAVAILABLE
-                    && group.getPathSearchBudgetSec()!=snapshot.path("path_search_budget_sec").asInt())
-            fail("Patrol endpoint-group path policy changed after queuing");
+        if(!snapshot.has("fallback_trigger") || !snapshot.has("path_search_budget_sec"))
+            fail("Patrol endpoint-group snapshot uses a retired fallback policy; create a new Job");
+        if(!Objects.equals(group.getFallbackTrigger().name(),snapshot.path("fallback_trigger").asText())
+                || group.getPathSearchBudgetSec()!=snapshot.path("path_search_budget_sec").asInt())
+            fail("Patrol endpoint-group path policy changed after queuing; create a new Job");
         var active=members.findByEndpointGroupEndpointGroupIdOrderBySequenceNo(groupId).stream().filter(EndpointGroupMember::isActive).toList();
         if(active.size()!=2 || snapshot.path("targets").size()!=active.size()) fail("Patrol endpoint-group membership changed after queuing");
         for(int index=0;index<active.size();index++) {
@@ -364,8 +345,7 @@ public class NavigationTargetService {
     private ObjectNode target(Endpoint endpoint,EndpointGroup group) {
         ObjectNode result=endpoint(endpoint);
         if(group.getRoom()!=null) result.put("room_id",group.getRoom().getRoomId().toString()).put("fallback_radius_m",group.getFallbackRadiusM());
-        if(group.getFallbackTrigger()==EndpointFallbackTrigger.ON_PATH_UNAVAILABLE)
-            result.put("fallback_trigger",group.getFallbackTrigger().name()).put("path_search_budget_sec",group.getPathSearchBudgetSec());
+        result.put("fallback_trigger",group.getFallbackTrigger().name()).put("path_search_budget_sec",group.getPathSearchBudgetSec());
         return result;
     }
     private BigDecimal distance(Endpoint e,RobotLocationHistory p) {BigDecimal x=e.getXM().subtract(p.getXM()),y=e.getYM().subtract(p.getYM());return x.multiply(x).add(y.multiply(y));}
