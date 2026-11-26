@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.nio.charset.StandardCharsets;
 import java.time.*;
@@ -230,6 +231,7 @@ class PublishedWorkflowJobServiceTest {
         final JobStepRepository steps=mock(JobStepRepository.class);
         final OrchestrationWorkService wakeups=mock(OrchestrationWorkService.class);
         final PatrolWorkflowService patrol=mock(PatrolWorkflowService.class);
+        final RobotBatteryPolicyService batteryPolicy=mock(RobotBatteryPolicyService.class);
         final Workflow definition;
         final Robot robot=Robot.builder().robotId(robotId).status(RobotStatus.BUSY).build();
         ExecutionFixture(String type,String code) {
@@ -264,6 +266,10 @@ class PublishedWorkflowJobServiceTest {
             fields.put("jobStepRepository",steps);fields.put("clock",clock);fields.put("objectMapper",new com.fasterxml.jackson.databind.ObjectMapper());
             fields.put("eventRepository",mock(JobEventRepository.class));fields.put("wakeups",wakeups);
             fields.put("patrol",patrol);
+            @SuppressWarnings("unchecked")
+            ObjectProvider<RobotBatteryPolicyService> batteryProvider=mock(ObjectProvider.class);
+            when(batteryProvider.getObject()).thenReturn(batteryPolicy);
+            fields.put("batteryPolicy",batteryProvider);
             fields.put("deliveryEvents",mock(org.springframework.context.ApplicationEventPublisher.class));
             fields.forEach((name,value)->ReflectionTestUtils.setField(executor,name,value));
         }
