@@ -111,9 +111,10 @@ public class KnowledgeDocumentService {
         if (source.isEmpty()) throw new ResourceNotFoundException("Knowledge document not found");
         Source original=source.getFirst();
         if (!original.active() || !original.status().equals("COMPLETED") || original.pipelineVersion()!=3
-                || original.bytes()==null || original.extractedText()==null)
+                || original.bytes()==null)
             throw new ConflictException("KNOWLEDGE_TEXT_UPDATE_REQUIRES_READY_V3_DOCUMENT");
-        if (content.equals(original.extractedText())) throw new BusinessRuleException("KNOWLEDGE_TEXT_UNCHANGED");
+        String currentText=extractedTextOrRecover(old,original.extractedText());
+        if (content.equals(currentText)) throw new BusinessRuleException("KNOWLEDGE_TEXT_UNCHANGED");
         requireNoPendingReplacement(old);
         Upload upload=new Upload(original.filename(),original.contentType(),original.bytes(),sha256(original.bytes()));
         Document revision=create(upload,actor,documentId);
@@ -192,10 +193,34 @@ public class KnowledgeDocumentService {
     }
 
     public String extractedText(UUID id) {
-        get(id);
+        Document document=get(id);
         String text=jdbc.queryForObject("SELECT extracted_text FROM KnowledgeDocument WHERE document_id=?",String.class,id.toString());
-        if (text==null) throw new ConflictException("KNOWLEDGE_EXTRACTION_NOT_READY");
-        return text;
+        if (text==null && !document.status().equals("COMPLETED"))
+            throw new ConflictException("KNOWLEDGE_EXTRACTION_NOT_READY");
+        return extractedTextOrRecover(id.toString(),text);
+    }
+
+    private String extractedTextOrRecover(String documentId,String stored) {
+        if (stored!=null) return stored;
+        // V68 added extracted_text after some v3 documents were already indexed.
+        // Their ordered chunks preserve the normalized OCR text used by voice.
+        List<String> pieces=jdbc.queryForList("""
+            SELECT content FROM KnowledgeDocumentChunk
+            WHERE document_id=? AND status IN ('COMPLETED','DETACHED') ORDER BY ordinal_no
+            """,String.class,documentId);
+        if (pieces.isEmpty()) throw new ConflictException("KNOWLEDGE_EXTRACTION_NOT_READY");
+        String recovered=String.join("\n\n",pieces);
+        if (recovered.length()>3_000_000) throw new ConflictException("KNOWLEDGE_TEXT_LIMIT");
+        int written=jdbc.update("""
+            UPDATE KnowledgeDocument SET extracted_text=?
+            WHERE document_id=? AND extracted_text IS NULL AND status='COMPLETED'
+            """,recovered,documentId);
+        if (written==0) {
+            String latest=jdbc.queryForObject("SELECT extracted_text FROM KnowledgeDocument WHERE document_id=?",
+                String.class,documentId);
+            if (latest!=null) return latest;
+        }
+        return recovered;
     }
 
     @Transactional

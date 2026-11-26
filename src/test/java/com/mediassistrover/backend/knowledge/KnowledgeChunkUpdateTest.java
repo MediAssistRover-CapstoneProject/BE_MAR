@@ -110,4 +110,31 @@ public class KnowledgeChunkUpdateTest {
             String.class,revision.toString()));
         assertEquals("new extracted text",service.extractedText(revision));
     }
+
+    @Test void completedDocumentFromBeforeOcrColumnCanRecoverTextAndBeEdited() {
+        UUID old=UUID.randomUUID(),actor=UUID.randomUUID();
+        byte[] original="%PDF- historic".getBytes(StandardCharsets.UTF_8);
+        jdbc.update("""
+            INSERT INTO KnowledgeDocument(document_id,vector_store_id,filename,content_type,size_bytes,sha256,
+              status,payload,pipeline_version,active,next_attempt_at,created_at,updated_at)
+            VALUES(?,'vs_test','old.pdf','application/pdf',?,?,'COMPLETED',?,3,TRUE,
+              UTC_TIMESTAMP(6),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))
+            """,old.toString(),original.length,"a".repeat(64),original);
+        jdbc.update("""
+            INSERT INTO KnowledgeDocumentChunk(chunk_id,document_id,ordinal_no,content,sha256,status,active)
+            VALUES(?,?,0,'Địa chỉ cũ',?,'COMPLETED',TRUE)
+            """,UUID.randomUUID().toString(),old.toString(),"b".repeat(64));
+        jdbc.update("""
+            INSERT INTO KnowledgeDocumentChunk(chunk_id,document_id,ordinal_no,content,sha256,status,active)
+            VALUES(?,?,1,'Giờ làm việc',?,'DETACHED',FALSE)
+            """,UUID.randomUUID().toString(),old.toString(),"c".repeat(64));
+
+        assertEquals("Địa chỉ cũ\n\nGiờ làm việc",service.extractedText(old));
+        assertEquals("Địa chỉ cũ\n\nGiờ làm việc",jdbc.queryForObject(
+            "SELECT extracted_text FROM KnowledgeDocument WHERE document_id=?",String.class,old.toString()));
+        assertEquals(1,new KnowledgeSearchService(jdbc,"vs_test").documents("Địa chỉ cũ",0,20).totalElements());
+        jdbc.update("UPDATE KnowledgeDocument SET extracted_text=NULL WHERE document_id=?",old.toString());
+        UUID revision=tx.execute(s->service.updateText(old,"Địa chỉ mới\n\nGiờ làm việc",actor).id());
+        assertEquals("Địa chỉ mới\n\nGiờ làm việc",service.extractedText(revision));
+    }
 }

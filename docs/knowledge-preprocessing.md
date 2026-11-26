@@ -103,6 +103,10 @@ correcting the value of an existing fact or answer. Upload a revised file if
 the question, subject or structure itself changes.
 Editing is limited to 20,000 characters per chunk. A failed edited revision
 can be retried without re-extracting the original and losing the edit.
+For completed documents indexed before `extracted_text` was introduced, the
+first `GET /{id}/extracted-text` reconstructs and saves the normalized text
+from ordered stored chunks. A document without retained chunks cannot be
+reconstructed by this fallback and still returns a 409 conflict.
 
 `POST /api/v1/internal/knowledge/resolve` is for AI Voice only. It requires a
 dedicated `X-Knowledge-Token` header (at least 32 characters), and accepts
