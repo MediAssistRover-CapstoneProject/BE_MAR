@@ -506,7 +506,8 @@ public class PatrolWorkflowService {
     private void requireTemplateDefinition(Workflow workflow) {
         var metadata = workflow.getInputUiJson() == null ? json.missingNode() : workflow.getInputUiJson().path("patrol_template");
         if (!isTemplate(workflow) || metadata.size() != 2 || !metadata.path("version").isIntegralNumber()
-                || (metadata.path("version").asInt()!=1 && metadata.path("version").asInt()!=PatrolTemplateDefinition.VERSION)
+                || (metadata.path("version").asInt()!=1 && metadata.path("version").asInt()!=2
+                    && metadata.path("version").asInt()!=PatrolTemplateDefinition.VERSION)
                 || !metadata.path("checkpointCount").isIntegralNumber())
             throw new BusinessRuleException("Patrol template metadata is invalid");
         int count = metadata.path("checkpointCount").asInt();

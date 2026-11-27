@@ -9,9 +9,11 @@ import com.mediassistrover.backend.repository.*;
 import com.mediassistrover.backend.security.*;
 import com.mediassistrover.backend.service.*;
 import com.mediassistrover.backend.validation.*;
+import jakarta.annotation.PostConstruct;
 import jakarta.validation.constraints.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -54,7 +56,15 @@ public class FallObservationService {
     private final MqttSessionRegistry registry;
     private final PlatformTransactionManager transactions;
     private final Clock clock;
-    @org.springframework.beans.factory.annotation.Value("${app.operations.scheduler-enabled:true}") private boolean schedulerEnabled=true;
+    @Value("${app.operations.scheduler-enabled:true}") private boolean schedulerEnabled=true;
+    @Value("${app.fall.observation-settle-ms:500}") private long settleMs=500;
+    @Value("${app.fall.observation-duration-ms:3000}") private long observationMs=3000;
+
+    @PostConstruct
+    void validateWindow() {
+        if(settleMs<200 || settleMs>2000 || observationMs<1000 || observationMs>8000)
+            throw new IllegalStateException("Invalid fall observation window");
+    }
 
     @Transactional
     public Result request(Request input,DevicePrincipal device) {
@@ -135,7 +145,7 @@ public class FallObservationService {
         } else {
             if(input.incidentId()!=null)fail("FALL_OBSERVATION_UNEXPECTED_INCIDENT");
             if(observation.getStopConfirmedAt()==null)fail("FALL_OBSERVATION_STOP_NOT_CONFIRMED");
-            if(input.outcome()==Outcome.INCONCLUSIVE && clock.instant().isBefore(observation.getObserveUntil()))
+            if(clock.instant().isBefore(observation.getObserveUntil()))
                 fail("FALL_OBSERVATION_WINDOW_NOT_FINISHED");
         }
         finish(observation,target,input.outcome().name());
@@ -205,11 +215,14 @@ public class FallObservationService {
         if(observation.getStopConfirmedAt()==null && job.getStatus()==JobStatus.SUSPENDED
                 && Boolean.TRUE.equals(command.getPhysicalStopConfirmed()) && job.getSuspendedAt()!=null) {
             Instant stopped=job.getSuspendedAt();
-            observation.setStopConfirmedAt(stopped);observation.setObserveAfter(stopped.plusMillis(500));
-            observation.setObserveUntil(stopped.plusMillis(3500));
+            observation.setStopConfirmedAt(stopped);
+            observation.setObserveAfter(stopped.plusMillis(settleMs));
+            observation.setObserveUntil(observation.getObserveAfter().plusMillis(observationMs));
             Instant grace=observation.getObserveUntil().plusSeconds(12);
             if(grace.isBefore(observation.getExpiresAt()))observation.setExpiresAt(grace);
             observation.setState(State.STOP_CONFIRMED);
+            log.info("FALL_OBSERVATION_STOP_CONFIRMED observation={} step={} observeUntil={}",
+                    observation.getObservationId(),observation.getJobStepId(),observation.getObserveUntil());
         }
         if(!observation.getExpiresAt().isAfter(now)){
             finish(observation,State.EXPIRED,"OBSERVATION_WINDOW_EXPIRED");suspensions.release(job,SOURCE,observation.getObservationId());return;
@@ -238,6 +251,15 @@ public class FallObservationService {
             throw new ConflictException("Fall observation ID was already used for a different candidate");
     }
     private boolean capable(RobotMqttSession link){for(var c:link.getHelloJson().path("capabilities"))if("fall-observation-v1".equals(c.asText()))return true;return false;}
-    private Result result(FallObservation row){return new Result(row.getObservationId(),row.getRobotId(),row.getJobId(),row.getJobStepId(),row.getOperationKey(),row.getMonitoringSessionId(),row.getTrackingRevision(),row.getTrackId(),row.getCandidateReason(),row.getState(),.5,3.,row.getStopConfirmedAt(),row.getObserveAfter(),row.getObserveUntil(),row.getExpiresAt(),row.getIncidentId(),row.getCompletionReason());}
+    private Result result(FallObservation row){
+        long settled=row.getObserveAfter()==null ? settleMs
+                : Duration.between(row.getStopConfirmedAt(),row.getObserveAfter()).toMillis();
+        long observed=row.getObserveUntil()==null ? observationMs
+                : Duration.between(row.getObserveAfter(),row.getObserveUntil()).toMillis();
+        return new Result(row.getObservationId(),row.getRobotId(),row.getJobId(),row.getJobStepId(),row.getOperationKey(),
+                row.getMonitoringSessionId(),row.getTrackingRevision(),row.getTrackId(),row.getCandidateReason(),
+                row.getState(),settled/1000.,observed/1000.,row.getStopConfirmedAt(),row.getObserveAfter(),
+                row.getObserveUntil(),row.getExpiresAt(),row.getIncidentId(),row.getCompletionReason());
+    }
     private static void fail(String message){throw new BusinessRuleException(message);}
 }

@@ -230,7 +230,7 @@ public class NavigationTargetService {
                 && Set.of("NAV_GATE_BLOCKED","BRAKING_OBSTACLE","LIDAR_BRAKING_STOP","TURN_ENVELOPE_BLOCKED",
                         "REAR_OBSTACLE","LIVE_ROUTE_OBSTACLE").contains(evidence.path("obstacleReason").asText());
         boolean planner="PATH_UNAVAILABLE".equals(evidence.path("category").asText())
-                && "PLANNER_NO_PATH".equals(evidence.path("obstacleReason").asText());
+                && Set.of("PLANNER_NO_PATH","ENDPOINT_FOOTPRINT_NOT_CLEAR").contains(evidence.path("obstacleReason").asText());
         if(!(obstacle||planner) || !evidence.path("recoveryExhausted").asBoolean()
                 || !evidence.path("poseFresh").asBoolean() || !evidence.path("scanFresh").asBoolean()
                 || !evidence.path("tfFresh").asBoolean()
@@ -239,6 +239,10 @@ public class NavigationTargetService {
         for(String field:List.of("xM","yM","yawRad"))
             if(!evidence.path("pose").path(field).isNumber() || !Double.isFinite(evidence.path("pose").path(field).asDouble()))
                 fail("Fallback path evidence pose is invalid");
+        JsonNode policy=attempted.getResolvedInputsJson().path("path_search");
+        if(!policy.isMissingNode() && evidence.has("selectionId")
+                && !policy.path("selection_id").asText().equals(evidence.path("selectionId").asText()))
+            fail("Fallback path evidence belongs to another endpoint selection");
     }
 
     private boolean usable(Endpoint e,Job job) {return e.isActive()&&e.isAccessible()&&e.getMap().getMapId().equals(job.getMap().getMapId())

@@ -12,8 +12,8 @@ import java.util.List;
 
 /** A bounded, route-independent patrol round. All destination authority comes from frozen Job inputs. */
 final class PatrolTemplateDefinition {
-    static final int VERSION = 2;
-    static final String CODE_PREFIX = "WF_PATROL_TEMPLATE_V2_";
+    static final int VERSION = 3;
+    static final String CODE_PREFIX = "WF_PATROL_TEMPLATE_V3_";
     private PatrolTemplateDefinition() { }
 
     static String code(int count) { requireCount(count); return CODE_PREFIX + count; }
@@ -29,7 +29,7 @@ final class PatrolTemplateDefinition {
 
     static GraphCreateRequest graph(ObjectMapper json, int count, String code, int version) {
         requireCount(count);
-        if(version!=1 && version!=VERSION) throw new BusinessRuleException("Unsupported patrol template version");
+        if(version!=1 && version!=2 && version!=VERSION) throw new BusinessRuleException("Unsupported patrol template version");
         List<GraphStepRequest> actions = new ArrayList<>();
         List<GraphTransitionRequest> routes = new ArrayList<>();
         for (int index = 0; index < count; index++) {
@@ -49,11 +49,12 @@ final class PatrolTemplateDefinition {
             directInputs.set("map_id", ref(json, "/inputs/map_id"));
             directInputs.set("endpoint_id", ref(json, path + "/endpoint_id"));
             directInputs.set("max_speed_mps", ref(json, "/inputs/max_speed_mps"));
-            add(json, actions, StepType.MOVE, direct, 60, json.createObjectNode().put("mode", "PATROL"), directInputs);
+            int moveTimeout=version>=3 ? 120 : 60;
+            add(json, actions, StepType.MOVE, direct, moveTimeout, json.createObjectNode().put("mode", "PATROL"), directInputs);
             success(routes, direct, sense); failures(routes, direct);
             EndpointGroupWorkflowSupport.append(json, actions, routes, "PATROL", group,
                     ref(json, path + "/endpoint_group_id"), ref(json, "/inputs/map_id"), "PATROL", .25,
-                    60, 2, sense, TerminalStatus.FAILED, version>=2,
+                    moveTimeout, 2, sense, TerminalStatus.FAILED, version>=2,
                     number==count ? null : "CHECKPOINT_"+(number+1));
             // Keep the shared group's committed SELECT_TARGET reference, while speed remains a Job input.
             for (int position = 0; position < actions.size(); position++) {

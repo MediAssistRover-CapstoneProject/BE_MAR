@@ -155,6 +155,122 @@ Staff được gán xem camera, xác nhận incident rồi xử lý/đóng qua l
 
 ## Trạng thái kiểm tra và nghiệm thu
 
+### Bổ sung ngày 26/11/2026: chuyển điểm dự phòng và dừng quan sát
+
+Hai tính năng cần triển khai đồng bộ BE, AI và Pi. Migration V70 thêm chính
+sách/ngân sách endpoint group; V71 lưu lease quan sát. Migration V72 thống nhất
+nhóm endpoint dùng một chính sách `ON_PATH_UNAVAILABLE`, giữ nguyên cờ
+`allowFallback` và ngân sách đã cấu hình. Triển khai BE với migration trước,
+sau đó AI và Pi lúc stack dừng, rồi mở phiên mới để thương lượng capability.
+Catalog MAR-STEP-2 đã pin không đổi. Không sửa các migration đã áp dụng.
+
+Migration V73 bỏ loại endpoint chờ chưa có handler riêng, chuyển các bản ghi
+đó về `WAYPOINT`, giữ nguyên ID, tọa độ, room và thành viên group. Danh mục
+endpoint còn `WAYPOINT`, `PARK`, `CHARGER`. Nếu cần điểm chờ nghiệp vụ, dùng
+`WAYPOINT` cùng step `WAIT`, không cần loại endpoint riêng.
+
+**Nhóm endpoint:** các API tạo/cập nhật nhóm và `room-pair` nhận thêm:
+
+```json
+{
+  "fallbackTrigger": "ON_PATH_UNAVAILABLE",
+  "pathSearchBudgetSec": 10
+}
+```
+
+Đây là các field bổ sung, không phải toàn bộ body PUT. Khi cập nhật qua
+`PUT /api/v1/endpoint-groups/{id}`, giữ các field map, tên, mã, phòng, trạng
+thái và selection policy hiện tại. `ON_PATH_UNAVAILABLE` là giá trị duy nhất
+của `fallbackTrigger`, dùng mặc định khi API không gửi field này. Không yêu cầu
+robot đã tới trong bán kính cửa. `fallbackRadiusM` còn trong DTO/DB để giữ tương
+thích dữ liệu nhưng không quyết định chuyển điểm. Ngân sách nhận số nguyên
+5–30 giây, mặc định 10. Trang `mapping.html` chỉ cấu hình ngân sách, không còn
+lựa chọn cơ chế gần cửa. `allowFallback=false` vẫn tắt chuyển điểm dự phòng.
+Tạo job mới sau cập nhật; snapshot job đã ghim chính sách cũ bị từ chối rõ ràng
+thay vì tự đổi ý nghĩa của nhiệm vụ đang lưu.
+
+Job phải chọn group, không chọn riêng endpoint 1. BE gửi Pi một đích cụ thể
+kèm `path_search` sau khi kiểm tra quyền chọn đích. Pi có capability
+`group-path-budget-v1`, tối đa một lần phục hồi trong cùng ngân sách, lưu thời
+gian theo selection UUID qua reconnect/tiếp tục tuần tra. Không tính thời gian
+đi bình thường hoặc tạm ngưng vào ngân sách. Timeout MOVE phải lớn hơn hoặc
+bằng ngân sách +5 giây. Chỉ sau lỗi đường có bằng chứng mới và xác nhận dừng
+mới chọn thành viên kế tiếp. Lỗi planner không phản hồi, scan/TF/localization
+không được đổi thành lỗi cửa bị chặn. Không giảm footprint/inflation để ép path.
+
+Mẫu tuần tra mới do `POST /api/v1/admin/patrol-workflows/templates` với body
+`{"checkpointCount":3}` (3–11) tạo định nghĩa V2. V2 ghi checkpoint `BLOCKED`
+và bỏ sensing của checkpoint đó khi hết điểm trong group, rồi sang checkpoint
+kế tiếp. Mẫu V1 và job cũ giữ định nghĩa cũ. Lịch và job mới dùng workflowId
+V2 trả về, thông qua các API lịch/job đang có; không tạo một hàng đợi riêng.
+
+**Quan sát nghi ngã:** AI trả thêm ứng viên cùng người duy trì một giây, dùng
+chung inference. Pi chuyển yêu cầu bất đồng bộ trước kiểm tra depth/TF hoặc
+LOCALIZED. Chỉ MOVE tuần tra có cơ chế này; không tự tạm ngưng delivery/escort.
+Capability `fall-observation-v1` và monitor CONTINUOUS phải có. Không dùng màu
+vàng hoặc person confidence riêng lẻ làm bằng chứng té ngã.
+
+| API | Quyền / ý nghĩa |
+|---|---|
+| `POST /api/v1/pi/fall-observations` | DEVICE, xin tạm ngưng đúng MOVE đang chạy |
+| `GET /api/v1/pi/fall-observations/{id}` | DEVICE, đọc xác nhận dừng và cửa sổ quan sát |
+| `POST /api/v1/pi/fall-observations/{id}/complete` | DEVICE, kết thúc riêng hold quan sát |
+| `GET /api/v1/robots/{id}/fall-observation` | ADMIN/STAFF, trạng thái mới nhất; 404 nếu chưa có |
+| `POST /api/v1/pi/fall-events` | DEVICE, sự kiện đủ bằng chứng; thêm `observationId` tùy chọn |
+
+Body yêu cầu quan sát:
+
+```json
+{
+  "observationId": "<UUID mới, giữ nguyên khi retry>",
+  "monitoringSessionId": "<phiên giám sát Pi>",
+  "trackingRevision": "<UUID tracker AI>",
+  "jobId": "<job tuần tra>",
+  "jobStepId": "<MOVE đang chạy>",
+  "operationKey": "<operation hiện tại>",
+  "detectedAt": "<ISO timestamp của ảnh>",
+  "trackId": 1,
+  "candidateReason": "LOW_HORIZONTAL_POSTURE",
+  "continuousDurationSec": 1.0,
+  "captureId": "<định danh ảnh>"
+}
+```
+
+Hai reason khác là `PARTIAL_LOW_HORIZONTAL_POSTURE`, `END_ON_LOWER_BODY`.
+BE đối chiếu robot/job/operation/map/transport, chống trùng, giới hạn yêu cầu
+và lưu lease ban đầu tối đa 20 giây. Dùng quy trình tạm ngưng và MQTT hiện có:
+`SUSPENDING → physicalStopConfirmed → STOP_CONFIRMED → OBSERVING`.
+Camera ổn định 0,5 giây, sau đó quan sát tĩnh 3 giây. Pi đặt lại thời gian quan
+sát nếu có chuyển động mới, trong cùng lease không gia hạn vô hạn. BE chừa
+tối đa 12 giây sau cửa sổ quan sát cho báo cáo, vẫn bị giới hạn lease ban đầu.
+
+Complete body `{"outcome":"CLEAR"}` hoặc `{"outcome":"INCONCLUSIVE"}`.
+Kết quả `INCIDENT` cần `incidentId` thuộc đúng robot/map và incident nghi ngã
+đang mở. Ưu tiên gửi sự kiện có `observationId` để BE thiết lập INCIDENT hold
+trước khi giải phóng observation hold trong cùng giao dịch. Lease hết hạn
+không được làm mất một sự kiện té ngã độc lập còn hợp lệ. Reconciler giải
+phóng riêng nguồn observation khi hết hạn/đổi context; các hold voice, media,
+incident hoặc job ưu tiên vẫn có hiệu lực. Chưa xác nhận dừng vẫn đi recovery.
+
+Depth/TF dùng sau lúc dừng để xác minh gần sàn/vị trí người. Thiếu tọa độ không
+được ghi vị trí robot thành vị trí bệnh nhân. Nhánh camera-only đủ điều kiện
+vẫn có thể yêu cầu staff xem camera, với vị trí người chưa biết. Không có staff
+SOS phù hợp thì incident vẫn lưu và admin đang hoạt động nhận thông báo.
+
+Cooldown báo cáo gắn định danh người thực sự tạo sự kiện. Observation có cặp
+tracking revision/trackId và giới hạn toàn robot; reset tracker không gắn nhầm
+người. Báo cáo gửi lỗi không đặt cooldown chung 60 giây cho mọi người. Incident
+đã CLOSED/RESOLVED/FALSE_ALARM không che cảnh báo mới.
+
+Khi tuần tra tiếp tục, dùng cùng endpoint selection và ngân sách đã dùng;
+thời gian quan sát không tính thành path failure, không tăng index group.
+Giữ nguyên vận tốc, planner/controller, footprint và inflation.
+
+Kiểm tra offline không thay thế nghiệm thu phần cứng: chặn cửa endpoint 1,
+kiểm tra stop receipt rồi endpoint 2; giả lập tư thế thấp khi patrol đang MOVE,
+kiểm tra lease, cửa sổ tĩnh, incident/camera và tiếp tục sau khi staff xử lý.
+Không xác nhận độ chính xác AI hoặc thời gian dừng thực tế chỉ từ unit test.
+
 Đọc production ngày 18/11/2026 ghi nhận chưa có workflow, lịch hoặc job PATROL và chưa có `AiSensingProfile`. Không tự tạo tuyến trên map bất kỳ. Sau khi admin chọn tuyến, cần nghiệm thu robot thật: một vòng, lặp nhiều vòng, tạm dừng/tiếp tục giữa MOVE, delivery ưu tiên, voice, cảnh báo té ngã, restricted alert, mất MQTT và đổi map khi đang tạm dừng. Các kiểm thử tự động không thay cho đo dừng vật lý và kiểm tra camera/AI trên robot.
 
 ## Giao diện và bản Pi đã đồng bộ ngày 18/11/2026
